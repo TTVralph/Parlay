@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ParlayBot Step 16</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <div id="app" class="shell">
+    <div class="hero">
+      <div>
+        <h1>ParlayBot Step 16</h1><!-- Backward compatibility: ParlayBot Step 12 / ParlayBot Step 13 / Saved admin sessions -->
+        <p class="muted">Stripe-ready billing flows, cancel/resume controls, and a richer account dashboard.</p>
+      </div>
+      <div class="row compact">
+        <a class="button secondary" href="/leaderboard">Legacy pages</a>
+        <button id="refreshBtn" class="button">Refresh</button>
+      </div>
+    </div>
+
+    <div class="grid metrics">
+      <div class="card"><div class="label">Public cappers</div><div id="metricCappers" class="value">—</div></div>
+      <div class="card"><div class="label">Settled slips</div><div id="metricSettled" class="value">—</div></div>
+      <div class="card"><div class="label">Average hit rate</div><div id="metricHitRate" class="value">—</div></div>
+      <div class="card"><div class="label">Best ROI</div><div id="metricBestRoi" class="value">—</div></div>
+    </div>
+
+    <div class="grid two-up">
+      <section class="card stack">
+        <h2>Auth</h2>
+        <div class="tabs">
+          <button data-mode="login" class="tab active">Login</button>
+          <button data-mode="register" class="tab">Register</button>
+        </div>
+        <input id="username" placeholder="Username" />
+        <input id="email" placeholder="Email (optional)" />
+        <input id="password" type="password" placeholder="Password" />
+        <select id="role">
+          <option value="member">member</option>
+          <option value="capper">capper</option>
+        </select>
+        <input id="linkedCapper" placeholder="Linked capper username (for cappers)" />
+        <div class="row compact">
+          <button id="submitAuth" class="button">Submit</button>
+          <button id="logoutBtn" class="button secondary">Logout</button>
+        </div>
+        <pre id="authState" class="pre"></pre>
+      </section>
+
+      <section class="card stack">
+        <h2>Billing & account</h2>
+        <div class="row compact">
+          <button id="loadBillingBtn" class="button secondary">Load account</button>
+          <button id="openPortalBtn" class="button secondary">Billing portal</button>
+        </div>
+        <select id="planCode">
+          <option value="free">free</option>
+          <option value="pro">pro</option>
+          <option value="pro_plus">pro_plus</option>
+        </select>
+        <div class="row compact">
+          <button id="startCheckoutBtn" class="button">Start Stripe checkout</button>
+          <button id="cancelEndBtn" class="button secondary">Cancel at period end</button>
+          <button id="resumeBtn" class="button secondary">Resume</button>
+        </div>
+        <pre id="billingState" class="pre"></pre>
+      </section>
+    </div>
+
+    <div class="grid two-up">
+      <section class="card stack">
+        <h2>Capper self-service</h2>
+        <div class="muted">Available to capper or admin accounts with a linked capper profile.</div>
+        <input id="displayName" placeholder="Display name" />
+        <textarea id="bio" placeholder="Bio"></textarea>
+        <label class="checkbox"><input id="isPublic" type="checkbox" checked /> Public profile</label>
+        <div class="row compact">
+          <button id="loadCapperBtn" class="button secondary">Load my capper profile</button>
+          <button id="saveCapperBtn" class="button">Save profile</button>
+        </div>
+        <pre id="capperState" class="pre"></pre>
+      </section>
+
+      <section class="card stack">
+        <h2>Available plans</h2>
+        <pre id="plansState" class="pre">Loading…</pre>
+      </section>
+    </div>
+
+    <section class="card stack">
+      <h2>Public leaderboard</h2>
+      <table>
+        <thead><tr><th>Capper</th><th>Hit Rate</th><th>ROI</th><th>Settled</th></tr></thead>
+        <tbody id="leaderboardBody"><tr><td colspan="4">Loading…</td></tr></tbody>
+      </table>
+    </section>
+  </div>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,688 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal, Optional
+
+from pydantic import BaseModel, Field
+
+Sport = Literal['NBA', 'NFL', 'MLB']
+MarketType = Literal[
+    'moneyline',
+    'spread',
+    'game_total',
+    'player_points',
+    'player_rebounds',
+    'player_assists',
+    'player_threes',
+    'player_pra',
+    'player_passing_yards',
+    'player_rushing_yards',
+    'player_receiving_yards',
+    'player_hits',
+]
+Direction = Literal['over', 'under']
+Settlement = Literal['win', 'loss', 'pending', 'push', 'unmatched']
+ReviewStatus = Literal['open', 'approved', 'rejected']
+ReviewPriority = Literal['low', 'normal', 'high']
+
+
+class ParseRequest(BaseModel):
+    text: str = Field(..., description='Raw parlay text pasted by user')
+    sport_hint: Optional[Sport] = None
+
+
+class Leg(BaseModel):
+    raw_text: str
+    sport: Sport = 'NBA'
+    market_type: MarketType
+    team: Optional[str] = None
+    player: Optional[str] = None
+    direction: Optional[Direction] = None
+    line: Optional[float] = None
+    display_line: Optional[str] = None
+    confidence: float = 0.0
+    notes: list[str] = Field(default_factory=list)
+    event_id: Optional[str] = None
+    event_label: Optional[str] = None
+    event_start_time: Optional[datetime] = None
+    matched_by: Optional[str] = None
+
+
+class ParseResponse(BaseModel):
+    legs: list[Leg]
+
+
+class GradeRequest(BaseModel):
+    text: str
+    sport_hint: Optional[Sport] = None
+    posted_at: Optional[datetime] = Field(default=None, description='Timestamp for the original post/slip, used for event/date resolution')
+
+
+class GradedLeg(BaseModel):
+    leg: Leg
+    settlement: Settlement
+    actual_value: Optional[float] = None
+    reason: str
+
+
+class GradeResponse(BaseModel):
+    overall: Literal['cashed', 'lost', 'pending', 'needs_review']
+    legs: list[GradedLeg]
+
+
+class TweetIngestRequest(BaseModel):
+    tweet_id: Optional[str] = None
+    username: Optional[str] = None
+    text: str
+    quoted_text: Optional[str] = None
+    note_text: Optional[str] = None
+    media_text: list[str] = Field(default_factory=list)
+    posted_at: Optional[datetime] = None
+
+
+class XFetchRequest(BaseModel):
+    tweet_id: str
+    posted_at: Optional[datetime] = None
+
+
+class OCRExtractResponse(BaseModel):
+    filename: str
+    raw_text: str
+    cleaned_text: str
+    provider: str
+    confidence: float
+    notes: list[str] = Field(default_factory=list)
+
+
+class IngestGradeResponse(BaseModel):
+    source_type: Literal['tweet', 'screenshot']
+    source_ref: Optional[str] = None
+    extracted_text: str
+    cleaned_text: str
+    posted_at: Optional[datetime] = None
+    bookmaker: Optional[str] = None
+    stake_amount: Optional[float] = None
+    to_win_amount: Optional[float] = None
+    american_odds: Optional[int] = None
+    decimal_odds: Optional[float] = None
+    result: GradeResponse
+
+
+class ReviewQueueItemResponse(BaseModel):
+    review_id: int
+    ticket_id: str
+    status: ReviewStatus
+    priority: ReviewPriority
+    reason_code: str
+    summary: str
+    resolution_note: Optional[str] = None
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+
+
+class ReviewResolveRequest(BaseModel):
+    status: Literal['approved', 'rejected']
+    resolution_note: str
+
+
+class TicketFinancialsUpdateRequest(BaseModel):
+    stake_amount: Optional[float] = None
+    to_win_amount: Optional[float] = None
+    american_odds: Optional[int] = None
+    decimal_odds: Optional[float] = None
+    bookmaker: Optional[str] = None
+
+
+class LegManualEdit(BaseModel):
+    leg_index: int
+    team: Optional[str] = None
+    player: Optional[str] = None
+    market_type: Optional[MarketType] = None
+    direction: Optional[Direction] = None
+    line: Optional[float] = None
+    display_line: Optional[str] = None
+    confidence: Optional[float] = None
+    notes: Optional[list[str]] = None
+    event_id: Optional[str] = None
+    event_label: Optional[str] = None
+    matched_by: Optional[str] = None
+
+
+class ManualTicketRegradeRequest(BaseModel):
+    legs: list[LegManualEdit] = Field(default_factory=list)
+    posted_at: Optional[datetime] = None
+    financials: Optional[TicketFinancialsUpdateRequest] = None
+    resolve_review_id: Optional[int] = None
+    resolution_note: Optional[str] = None
+
+
+class SlipTemplateResponse(BaseModel):
+    bookmaker: str
+    title: str
+    template_text: str
+    notes: list[str] = Field(default_factory=list)
+
+
+class CapperRoiDashboardRow(BaseModel):
+    username: str
+    settled_with_stake: int
+    wins_with_stake: int
+    losses_with_stake: int
+    total_staked: float
+    total_profit: float
+    roi: float
+    avg_stake: float
+
+
+class CapperRoiDashboardResponse(BaseModel):
+    rows: list[CapperRoiDashboardRow] = Field(default_factory=list)
+
+
+class TicketDetailResponse(BaseModel):
+    ticket_id: str
+    raw_text: str
+    overall: Literal['cashed', 'lost', 'pending', 'needs_review']
+    created_at: datetime
+    posted_at: Optional[datetime] = None
+    source_type: Optional[str] = None
+    source_ref: Optional[str] = None
+    bookmaker: Optional[str] = None
+    stake_amount: Optional[float] = None
+    to_win_amount: Optional[float] = None
+    american_odds: Optional[int] = None
+    decimal_odds: Optional[float] = None
+    profit_amount: Optional[float] = None
+    is_duplicate: bool = False
+    duplicate_of_ticket_id: Optional[str] = None
+    dedupe_key: Optional[str] = None
+    result: GradeResponse
+    review_items: list[ReviewQueueItemResponse] = Field(default_factory=list)
+
+
+class WatchAccountRequest(BaseModel):
+    username: str
+    poll_interval_minutes: int = 15
+    is_enabled: bool = True
+
+
+class WatchAccountResponse(BaseModel):
+    id: int
+    username: str
+    poll_interval_minutes: int
+    is_enabled: bool
+    last_polled_at: Optional[datetime] = None
+    last_seen_source_ref: Optional[str] = None
+    created_at: datetime
+
+
+class PollAccountRequest(BaseModel):
+    max_tweets: int = 5
+
+
+class PollRunResponse(BaseModel):
+    run_id: int
+    watched_account_id: Optional[int] = None
+    username: str
+    status: str
+    fetched_count: int
+    saved_count: int
+    detail: Optional[str] = None
+    created_at: datetime
+
+
+class AliasUpsertRequest(BaseModel):
+    alias_type: Literal['player', 'team', 'market']
+    alias: str
+    canonical_value: str
+    created_by: Optional[str] = None
+
+
+class AliasResponse(BaseModel):
+    id: int
+    alias_type: str
+    alias: str
+    canonical_value: str
+    created_by: Optional[str] = None
+    created_at: datetime
+
+
+class SlipParseRequest(BaseModel):
+    text: str
+    bookmaker_hint: Optional[str] = None
+
+
+class SlipParseResponse(BaseModel):
+    bookmaker: str
+    cleaned_text: str
+    notes: list[str] = Field(default_factory=list)
+    stake_amount: Optional[float] = None
+    to_win_amount: Optional[float] = None
+    american_odds: Optional[int] = None
+    decimal_odds: Optional[float] = None
+
+
+class SchedulerStatusResponse(BaseModel):
+    enabled: bool
+    interval_seconds: int
+
+
+class SchedulerRunResponse(BaseModel):
+    triggered_accounts: int
+    created_runs: int
+
+
+class TicketDeduplicationResponse(BaseModel):
+    is_duplicate: bool
+    duplicate_of_ticket_id: Optional[str] = None
+    dedupe_key: str
+
+
+class CapperDashboardRow(BaseModel):
+    username: str
+    total_tickets: int
+    unique_tickets: int
+    duplicate_tickets: int
+    cashed: int
+    lost: int
+    pending: int
+    needs_review: int
+    settled_tickets: int
+    hit_rate: float
+
+
+class CapperDashboardResponse(BaseModel):
+    rows: list[CapperDashboardRow] = Field(default_factory=list)
+
+
+class OddsMatchLegResponse(BaseModel):
+    raw_text: str
+    bookmaker: str
+    matched: bool
+    event_id: Optional[str] = None
+    market_type: Optional[MarketType] = None
+    selection: Optional[str] = None
+    line: Optional[float] = None
+    offered_american_odds: Optional[int] = None
+    reason: str
+
+
+class OddsMatchRequest(BaseModel):
+    text: str
+    bookmaker: str
+    posted_at: Optional[datetime] = None
+
+
+class OddsMatchResponse(BaseModel):
+    bookmaker: str
+    matched_legs: list[OddsMatchLegResponse] = Field(default_factory=list)
+    matched_count: int
+    total_count: int
+
+
+class PublicCapperProfileResponse(BaseModel):
+    username: str
+    verified: bool = False
+    verification_badge: Optional[str] = None
+    summary: CapperDashboardRow
+    roi_summary: Optional[CapperRoiDashboardRow] = None
+    recent_tickets: list[TicketDetailResponse] = Field(default_factory=list)
+
+
+class AdminAuthStatusResponse(BaseModel):
+    authenticated: bool
+
+
+class ModerationRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class CapperModerationResponse(BaseModel):
+    username: str
+    is_public: bool
+    moderation_note: Optional[str] = None
+
+
+class PublicLeaderboardRow(BaseModel):
+    username: str
+    hit_rate: float
+    roi: Optional[float] = None
+    settled_tickets: int
+
+
+class PublicLeaderboardResponse(BaseModel):
+    rows: list[PublicLeaderboardRow] = Field(default_factory=list)
+
+
+class UserRegisterRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+    role: Literal['member', 'capper'] = 'member'
+    linked_capper_username: Optional[str] = None
+
+
+class UserLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserProfileResponse(BaseModel):
+    id: int
+    username: str
+    email: Optional[str] = None
+    is_admin: bool = False
+    role: str = 'member'
+    linked_capper_username: Optional[str] = None
+    created_at: datetime
+
+
+class SessionResponse(BaseModel):
+    access_token: str
+    token_type: str = 'bearer'
+    expires_at: Optional[datetime] = None
+    user: UserProfileResponse
+
+
+class LogoutResponse(BaseModel):
+    success: bool
+
+
+class AdminSessionRow(BaseModel):
+    session_id: int
+    username: str
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+    is_active: bool
+
+
+class AdminSessionsResponse(BaseModel):
+    rows: list[AdminSessionRow] = Field(default_factory=list)
+
+
+class UserRoleUpdateRequest(BaseModel):
+    role: Literal['member', 'capper', 'admin']
+    linked_capper_username: Optional[str] = None
+
+
+class CapperSelfProfileResponse(BaseModel):
+    username: str
+    is_public: bool
+    moderation_note: Optional[str] = None
+    claimed_by_user_id: Optional[int] = None
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+    verified: bool = False
+    verification_badge: Optional[str] = None
+
+
+class CapperSelfProfileUpdateRequest(BaseModel):
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+    is_public: Optional[bool] = None
+
+
+class SubscriptionPlanResponse(BaseModel):
+    code: str
+    name: str
+    price_monthly: float
+    features: list[str] = Field(default_factory=list)
+    is_active: bool = True
+
+
+class SubscriptionPlansResponse(BaseModel):
+    rows: list[SubscriptionPlanResponse] = Field(default_factory=list)
+
+
+class SubscriptionCheckoutRequest(BaseModel):
+    plan_code: str
+    provider: str = 'mock_stripe'
+
+
+class SubscriptionCheckoutResponse(BaseModel):
+    subscription_id: int
+    plan_code: str
+    status: str
+    provider: str
+    checkout_url: str
+
+
+class UserSubscriptionResponse(BaseModel):
+    subscription_id: int
+    plan_code: str
+    status: str
+    provider: str
+    provider_customer_id: Optional[str] = None
+    provider_subscription_id: Optional[str] = None
+    started_at: Optional[datetime] = None
+    current_period_end: Optional[datetime] = None
+    cancel_at_period_end: bool = False
+
+
+class AffiliateLinkUpsertRequest(BaseModel):
+    bookmaker: str
+    base_url: str
+    affiliate_code: Optional[str] = None
+    campaign_code: Optional[str] = None
+    is_active: bool = True
+
+
+class AffiliateLinkResponse(BaseModel):
+    bookmaker: str
+    base_url: str
+    affiliate_code: Optional[str] = None
+    campaign_code: Optional[str] = None
+    is_active: bool = True
+
+
+class AffiliateResolveRequest(BaseModel):
+    bookmaker: str
+    capper_username: Optional[str] = None
+    ticket_id: Optional[str] = None
+    source: str = 'parlaybot'
+
+
+class AffiliateResolveResponse(BaseModel):
+    bookmaker: str
+    resolved_url: str
+    campaign_code: Optional[str] = None
+    click_token: Optional[str] = None
+
+
+class CapperVerificationRequest(BaseModel):
+    badge: str = 'verified'
+    note: Optional[str] = None
+
+
+class CapperVerificationResponse(BaseModel):
+    username: str
+    verified: bool
+    verification_badge: Optional[str] = None
+    verification_note: Optional[str] = None
+
+
+class BillingEntitlementsResponse(BaseModel):
+    plan_code: str = 'free'
+    is_active: bool = False
+    entitlements: list[str] = Field(default_factory=list)
+
+
+class StripeCheckoutRequest(BaseModel):
+    plan_code: str
+    success_url: Optional[str] = None
+    cancel_url: Optional[str] = None
+
+
+class StripeWebhookEventRequest(BaseModel):
+    id: str
+    type: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class StripeWebhookResponse(BaseModel):
+    ok: bool = True
+    processed: bool = True
+    event_id: str
+    event_type: str
+
+
+class AffiliateAnalyticsRow(BaseModel):
+    bookmaker: str
+    clicks: int = 0
+    conversions: int = 0
+    conversion_rate: float = 0.0
+    revenue: float = 0.0
+    unique_cappers: int = 0
+    latest_click_at: Optional[datetime] = None
+
+
+class AffiliateAnalyticsResponse(BaseModel):
+    rows: list[AffiliateAnalyticsRow] = Field(default_factory=list)
+
+
+class SubscriptionCancelRequest(BaseModel):
+    immediate: bool = False
+
+
+class BillingPortalRequest(BaseModel):
+    return_url: Optional[str] = None
+
+
+class BillingPortalResponse(BaseModel):
+    url: str
+
+
+class BillingEventRow(BaseModel):
+    event_id: str
+    event_type: str
+    processed_at: datetime
+
+
+class BillingAccountResponse(BaseModel):
+    user: UserProfileResponse
+    entitlements: BillingEntitlementsResponse
+    subscription: Optional[UserSubscriptionResponse] = None
+    plans: list[SubscriptionPlanResponse] = Field(default_factory=list)
+    recent_billing_events: list[BillingEventRow] = Field(default_factory=list)
+
+
+class BillingInvoiceRow(BaseModel):
+    invoice_id: str
+    provider_invoice_id: Optional[str] = None
+    subscription_id: Optional[int] = None
+    status: str
+    amount_paid: float = 0.0
+    currency: str = 'usd'
+    hosted_invoice_url: Optional[str] = None
+    pdf_download_token: Optional[str] = None
+    pdf_filename: Optional[str] = None
+    pdf_generated_at: Optional[datetime] = None
+    period_start: Optional[datetime] = None
+    period_end: Optional[datetime] = None
+    paid_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class BillingInvoicesResponse(BaseModel):
+    rows: list[BillingInvoiceRow] = Field(default_factory=list)
+
+
+class BillingHistoryResponse(BaseModel):
+    invoices: list[BillingInvoiceRow] = Field(default_factory=list)
+    recent_billing_events: list[BillingEventRow] = Field(default_factory=list)
+    email_notifications: list["EmailNotificationRow"] = Field(default_factory=list)
+
+
+class EmailNotificationRow(BaseModel):
+    notification_id: int
+    to_email: str
+    template_key: str
+    event_type: str
+    subject: str
+    provider: Optional[str] = None
+    provider_message_id: Optional[str] = None
+    status: str
+    error_message: Optional[str] = None
+    created_at: datetime
+    sent_at: Optional[datetime] = None
+
+
+class EmailNotificationsResponse(BaseModel):
+    rows: list[EmailNotificationRow] = Field(default_factory=list)
+
+
+class AffiliateConversionRecordRequest(BaseModel):
+    click_token: str
+    bookmaker: Optional[str] = None
+    revenue_amount: Optional[float] = None
+    currency: str = 'usd'
+    external_ref: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AffiliateConversionRow(BaseModel):
+    conversion_id: int
+    click_token: str
+    bookmaker: str
+    revenue_amount: float = 0.0
+    currency: str = 'usd'
+    external_ref: Optional[str] = None
+    created_at: datetime
+
+
+class AffiliateConversionsResponse(BaseModel):
+    rows: list[AffiliateConversionRow] = Field(default_factory=list)
+
+
+class BillingInvoiceLinksResponse(BaseModel):
+    invoice_id: str
+    hosted_invoice_url: Optional[str] = None
+    pdf_download_url: Optional[str] = None
+    signed_public_pdf_url: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    pdf_filename: Optional[str] = None
+
+
+class AffiliatePostbackRequest(BaseModel):
+    click_token: Optional[str] = None
+    bookmaker: Optional[str] = None
+    revenue_amount: Optional[float] = None
+    currency: str = 'usd'
+    external_ref: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AffiliateWebhookIngestRequest(BaseModel):
+    click_token: Optional[str] = None
+    bookmaker: Optional[str] = None
+    revenue_amount: Optional[float] = None
+    currency: str = 'usd'
+    external_ref: Optional[str] = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AffiliateWebhookEventRow(BaseModel):
+    event_id: int
+    source_type: str
+    network: Optional[str] = None
+    external_ref: Optional[str] = None
+    click_token: Optional[str] = None
+    status: str
+    conversion_id: Optional[int] = None
+    payload_summary: Optional[str] = None
+    created_at: datetime
+
+
+class AffiliateWebhookEventsResponse(BaseModel):
+    rows: list[AffiliateWebhookEventRow] = Field(default_factory=list)
+
+
+class SignedInvoiceLinkResponse(BaseModel):
+    invoice_id: str
+    public_url: str
+    expires_at: datetime

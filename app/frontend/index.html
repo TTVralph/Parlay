@@ -1,0 +1,223 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ParlayBot Dashboard</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin:0; font-family: Inter, Arial, sans-serif; background:#0b1020; color:#edf2ff; }
+    .shell { max-width:1200px; margin:0 auto; padding:24px; }
+    .hero { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:24px; }
+    .title { font-size:32px; font-weight:800; margin:0; }
+    .subtitle { color:#aab4d6; margin-top:8px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:16px; }
+    .card { background:#131a31; border:1px solid #26304f; border-radius:20px; padding:18px; box-shadow:0 12px 30px rgba(0,0,0,.25); }
+    .card h3 { margin:0 0 10px; }
+    .muted { color:#96a3c9; }
+    input, button { border-radius:14px; border:1px solid #31406b; padding:12px 14px; font:inherit; }
+    input { background:#0f1630; color:white; width:100%; box-sizing:border-box; }
+    button { background:#4f7cff; color:white; cursor:pointer; font-weight:700; }
+    button.secondary { background:#1a2342; }
+    .row { display:flex; gap:10px; }
+    .row > * { flex:1; }
+    .stack { display:flex; flex-direction:column; gap:10px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:10px 8px; border-bottom:1px solid #243052; text-align:left; }
+    .badge { display:inline-block; padding:4px 10px; border-radius:999px; background:#1f2b50; color:#c7d7ff; font-size:12px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+    .success { color:#7ef29a; }
+    .danger { color:#ff8f8f; }
+    .warn { color:#ffd36e; }
+    a { color:#8bb4ff; }
+    textarea { width:100%; min-height:120px; border-radius:14px; border:1px solid #31406b; background:#0f1630; color:white; padding:12px 14px; box-sizing:border-box; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useEffect, useMemo, useState } = React;
+
+function useBearer() {
+  const [token, setToken] = useState(localStorage.getItem('parlaybot_token') || '');
+  useEffect(() => {
+    if (token) localStorage.setItem('parlaybot_token', token);
+    else localStorage.removeItem('parlaybot_token');
+  }, [token]);
+  return [token, setToken];
+}
+
+async function api(path, options = {}, token = '') {
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const resp = await fetch(path, { ...options, headers });
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const data = await resp.json();
+      detail = data.detail || JSON.stringify(data);
+    } catch {}
+    throw new Error(detail);
+  }
+  return resp.json();
+}
+
+function Metric({ label, value, hint }) {
+  return <div className="card"><div className="muted">{label}</div><div style={{fontSize:28,fontWeight:800,marginTop:6}}>{value}</div>{hint && <div className="muted" style={{marginTop:8}}>{hint}</div>}</div>;
+}
+
+function AuthPanel({ token, setToken, me, setMe }) {
+  const [mode, setMode] = useState('login');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async () => {
+    setLoading(true); setError('');
+    try {
+      const payload = mode === 'register' ? { username, password, email: email || null } : { username, password };
+      const data = await api(mode === 'register' ? '/auth/register' : '/auth/login', { method:'POST', body: JSON.stringify(payload) });
+      setToken(data.access_token);
+      setMe(data.user);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  };
+
+  if (me) {
+    return <div className="card stack">
+      <div className="row" style={{justifyContent:'space-between',alignItems:'center'}}>
+        <div>
+          <h3 style={{marginBottom:6}}>Signed in as @{me.username}</h3>
+          <div className="muted">{me.email || 'No email set'} · {me.is_admin ? 'admin' : 'member'}</div>
+        </div>
+        <button className="secondary" onClick={async()=>{ await api('/auth/logout',{method:'POST'},token); setToken(''); setMe(null);} }>Log out</button>
+      </div>
+      <div className="mono muted">Bearer {token}</div>
+    </div>
+  }
+
+  return <div className="card stack">
+    <div className="row">
+      <button className={mode==='login' ? '' : 'secondary'} onClick={()=>setMode('login')}>Login</button>
+      <button className={mode==='register' ? '' : 'secondary'} onClick={()=>setMode('register')}>Register</button>
+    </div>
+    <input placeholder="Username" value={username} onChange={e=>setUsername(e.target.value)} />
+    {mode === 'register' && <input placeholder="Email (optional)" value={email} onChange={e=>setEmail(e.target.value)} />}
+    <input type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} />
+    <button onClick={submit} disabled={loading}>{loading ? 'Working...' : (mode === 'register' ? 'Create account' : 'Login')}</button>
+    {error && <div className="danger">{error}</div>}
+  </div>
+}
+
+function TicketWorkbench({ token }) {
+  const [text, setText] = useState('Denver ML\nJokic over 24.5 points\nOdds +240\nStake 25');
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+  const grade = async () => {
+    setError('');
+    try {
+      const parsed = await api('/slips/parse', { method:'POST', body: JSON.stringify({ text }) }, token);
+      const graded = await api('/grade', { method:'POST', body: JSON.stringify({ text, posted_at:'2026-03-07T18:00:00' }) }, token);
+      setResult({ parsed, graded });
+    } catch (e) { setError(e.message); }
+  };
+  return <div className="card stack">
+    <h3>Slip workbench</h3>
+    <textarea value={text} onChange={e=>setText(e.target.value)} />
+    <button onClick={grade}>Parse + grade</button>
+    {error && <div className="danger">{error}</div>}
+    {result && <div className="stack">
+      <div className="badge">Bookmaker: {result.parsed.bookmaker}</div>
+      <div className="muted">Overall: <strong>{result.graded.overall}</strong></div>
+      <div className="muted">Stake: {result.parsed.stake_amount ?? '—'} · American odds: {result.parsed.american_odds ?? '—'}</div>
+      <table><thead><tr><th>Leg</th><th>Status</th><th>Reason</th></tr></thead><tbody>
+        {result.graded.legs.map((leg, idx)=><tr key={idx}><td>{leg.leg.raw_text}</td><td>{leg.settlement}</td><td>{leg.reason}</td></tr>)}
+      </tbody></table>
+    </div>}
+  </div>;
+}
+
+function Dashboard() {
+  const [token, setToken] = useBearer();
+  const [me, setMe] = useState(null);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [adminSessions, setAdminSessions] = useState([]);
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    setError('');
+    try {
+      const board = await api('/public/leaderboard');
+      setLeaderboard(board.rows || []);
+      if (token) {
+        try { setMe(await api('/auth/me', {}, token)); } catch { setMe(null); }
+        try { const sessions = await api('/admin/auth/sessions', {}, token); setAdminSessions(sessions.rows || []); } catch { setAdminSessions([]); }
+      } else {
+        setMe(null); setAdminSessions([]);
+      }
+    } catch (e) { setError(e.message); }
+  };
+
+  useEffect(() => { load(); }, [token]);
+
+  const metrics = useMemo(() => {
+    const settled = leaderboard.reduce((sum, row) => sum + (row.settled_tickets || 0), 0);
+    const avgHit = leaderboard.length ? leaderboard.reduce((sum, row) => sum + (row.hit_rate || 0), 0) / leaderboard.length : 0;
+    const bestRoi = leaderboard.filter(x => x.roi !== null).sort((a,b)=>(b.roi||0)-(a.roi||0))[0];
+    return { settled, avgHit, bestRoi };
+  }, [leaderboard]);
+
+  return <div className="shell stack" style={{gap:20}}>
+    <div className="hero">
+      <div>
+        <h1 className="title">ParlayBot Step 12</h1>
+        <div className="subtitle">Real user login, persistent admin sessions, and a dashboard UI for grading, leaderboard browsing, and moderation ops.</div>
+      </div>
+      <a href="/leaderboard">Legacy HTML pages</a>
+    </div>
+
+    <div className="grid">
+      <Metric label="Public cappers" value={leaderboard.length} hint="Visible on the public leaderboard" />
+      <Metric label="Tracked settled slips" value={metrics.settled} hint="Across public leaderboard rows" />
+      <Metric label="Average hit rate" value={`${(metrics.avgHit*100).toFixed(1)}%`} />
+      <Metric label="Best ROI" value={metrics.bestRoi ? `${(metrics.bestRoi.roi*100).toFixed(1)}%` : '—'} hint={metrics.bestRoi ? `@${metrics.bestRoi.username}` : 'No ROI data yet'} />
+    </div>
+
+    <div className="grid" style={{alignItems:'start'}}>
+      <AuthPanel token={token} setToken={setToken} me={me} setMe={setMe} />
+      <TicketWorkbench token={token} />
+    </div>
+
+    <div className="card">
+      <h3>Public leaderboard</h3>
+      {error && <div className="danger">{error}</div>}
+      <table>
+        <thead><tr><th>Capper</th><th>Hit Rate</th><th>ROI</th><th>Settled</th></tr></thead>
+        <tbody>
+          {leaderboard.length ? leaderboard.map(row => <tr key={row.username}><td><a href={`/cappers/${row.username}`}>@{row.username}</a></td><td>{(row.hit_rate*100).toFixed(1)}%</td><td>{row.roi === null ? '—' : `${(row.roi*100).toFixed(1)}%`}</td><td>{row.settled_tickets}</td></tr>) : <tr><td colSpan="4">No public cappers yet.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+
+    <div className="card">
+      <h3>Saved admin sessions</h3>
+      <div className="muted" style={{marginBottom:12}}>Use <span className="mono">POST /admin/auth/login</span> to create admin-backed sessions, then load them here with the returned bearer token.</div>
+      <table>
+        <thead><tr><th>User</th><th>Created</th><th>Last seen</th><th>Status</th></tr></thead>
+        <tbody>
+          {adminSessions.length ? adminSessions.map(row => <tr key={row.session_id}><td>@{row.username}</td><td>{row.created_at}</td><td>{row.last_seen_at || '—'}</td><td><span className="badge">{row.is_active ? 'active' : 'inactive'}</span></td></tr>) : <tr><td colSpan="4">No admin session data for this token.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  </div>
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Dashboard />);
+</script>
+</body>
+</html>

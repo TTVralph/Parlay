@@ -1,0 +1,116 @@
+TEAM_ALIASES = {
+    # NBA
+    'den': 'Denver Nuggets',
+    'denver': 'Denver Nuggets',
+    'nuggets': 'Denver Nuggets',
+    'lal': 'Los Angeles Lakers',
+    'lakers': 'Los Angeles Lakers',
+    'bos': 'Boston Celtics',
+    'celtics': 'Boston Celtics',
+    'gsw': 'Golden State Warriors',
+    'warriors': 'Golden State Warriors',
+    'okc': 'Oklahoma City Thunder',
+    'thunder': 'Oklahoma City Thunder',
+
+    # NFL
+    'kc': 'Kansas City Chiefs',
+    'chiefs': 'Kansas City Chiefs',
+    'buf': 'Buffalo Bills',
+    'bills': 'Buffalo Bills',
+    'sf': 'San Francisco 49ers',
+    '49ers': 'San Francisco 49ers',
+    'niners': 'San Francisco 49ers',
+    'dal': 'Dallas Cowboys',
+    'cowboys': 'Dallas Cowboys',
+
+    # MLB
+    'nyy': 'New York Yankees',
+    'yankees': 'New York Yankees',
+    'bosox': 'Boston Red Sox',
+    'red sox': 'Boston Red Sox',
+    'boston red sox': 'Boston Red Sox',
+    'lad': 'Los Angeles Dodgers',
+    'dodgers': 'Los Angeles Dodgers',
+    'sd': 'San Diego Padres',
+    'padres': 'San Diego Padres',
+}
+
+PLAYER_ALIASES = {
+    # NBA
+    'jokic': 'Nikola Jokic',
+    'joker': 'Nikola Jokic',
+    'murray': 'Jamal Murray',
+    'tatum': 'Jayson Tatum',
+    'jt': 'Jayson Tatum',
+    'lebron': 'LeBron James',
+    'bron': 'LeBron James',
+    'curry': 'Stephen Curry',
+    'sga': 'Shai Gilgeous-Alexander',
+
+    # NFL
+    'mahomes': 'Patrick Mahomes',
+    'allen': 'Josh Allen',
+    'cmc': 'Christian McCaffrey',
+    'mccaffrey': 'Christian McCaffrey',
+    'lamb': 'CeeDee Lamb',
+    'ceedee': 'CeeDee Lamb',
+
+    # MLB
+    'judge': 'Aaron Judge',
+    'ohtani': 'Shohei Ohtani',
+    'betts': 'Mookie Betts',
+    'soto': 'Juan Soto',
+}
+
+MARKET_ALIASES = {
+    'pts': 'player_points',
+    'points': 'player_points',
+    'reb': 'player_rebounds',
+    'rebounds': 'player_rebounds',
+    'ast': 'player_assists',
+    'assists': 'player_assists',
+    '3s': 'player_threes',
+    '3pm': 'player_threes',
+    'threes': 'player_threes',
+    'pra': 'player_pra',
+    'pass yds': 'player_passing_yards',
+    'passing yards': 'player_passing_yards',
+    'rush yds': 'player_rushing_yards',
+    'rushing yards': 'player_rushing_yards',
+    'rec yds': 'player_receiving_yards',
+    'receiving yards': 'player_receiving_yards',
+    'hits': 'player_hits',
+}
+
+TEAM_SPORTS = {
+    'Denver Nuggets': 'NBA',
+    'Los Angeles Lakers': 'NBA',
+    'Boston Celtics': 'NBA',
+    'Golden State Warriors': 'NBA',
+    'Oklahoma City Thunder': 'NBA',
+    'Kansas City Chiefs': 'NFL',
+    'Buffalo Bills': 'NFL',
+    'San Francisco 49ers': 'NFL',
+    'Dallas Cowboys': 'NFL',
+    'New York Yankees': 'MLB',
+    'Boston Red Sox': 'MLB',
+    'Los Angeles Dodgers': 'MLB',
+    'San Diego Padres': 'MLB',
+}
+
+PLAYER_SPORTS = {
+    'Nikola Jokic': 'NBA',
+    'Jamal Murray': 'NBA',
+    'Jayson Tatum': 'NBA',
+    'LeBron James': 'NBA',
+    'Stephen Curry': 'NBA',
+    'Shai Gilgeous-Alexander': 'NBA',
+    'Patrick Mahomes': 'NFL',
+    'Josh Allen': 'NFL',
+    'Christian McCaffrey': 'NFL',
+    'CeeDee Lamb': 'NFL',
+    'Aaron Judge': 'MLB',
+    'Shohei Ohtani': 'MLB',
+    'Mookie Betts': 'MLB',
+    'Juan Soto': 'MLB',
+}
