@@ -18,7 +18,7 @@ def test_check_slip_uses_public_provider_and_maps_pending_to_still_live(monkeypa
             return None
 
     monkeypatch.setattr(main_module, '_public_check_provider', LiveOnlyProvider())
-    resp = client.post('/check-slip', json={'text': 'Jokic over 25.5 points'})
+    resp = client.post('/check-slip', json={'text': 'Stephen Curry over 25.5 points'})
     assert resp.status_code == 200
     body = resp.json()
     assert body['parlay_result'] == 'still_live'

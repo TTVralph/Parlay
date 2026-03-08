@@ -94,7 +94,7 @@ class ESPNNBAResultsProvider(ResultsProvider):
 
     def _candidate_days(self, as_of: datetime | None) -> list[str]:
         anchor = as_of or datetime.now(timezone.utc)
-        days = [anchor + timedelta(days=delta) for delta in (-1, 0, 1)]
+        days = [anchor + timedelta(days=delta) for delta in (-3, -2, -1, 0, 1)]
         return [self._day_key(day) for day in days]
 
     def _event_info_from_scoreboard(self, event: dict[str, Any]) -> EventInfo | None:
@@ -139,7 +139,8 @@ class ESPNNBAResultsProvider(ResultsProvider):
                 return self._event_status_from_comp(header[0])
         return None
 
-    def resolve_team_event(self, team: str, as_of: datetime | None) -> EventInfo | None:
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None) -> list[EventInfo]:
+        matches: list[EventInfo] = []
         for day_key in self._candidate_days(as_of):
             board = self._scoreboard_for_day(day_key)
             if not board:
@@ -149,11 +150,15 @@ class ESPNNBAResultsProvider(ResultsProvider):
                 if not comps:
                     continue
                 competitors = comps[0].get('competitors') or []
-                if any(self._team_matches(team, comp) for comp in competitors):
-                    return self._event_info_from_scoreboard(event)
-        return None
+                if not any(self._team_matches(team, comp) for comp in competitors):
+                    continue
+                info = self._event_info_from_scoreboard(event)
+                if info is not None:
+                    matches.append(info)
+        return matches
 
-    def resolve_player_event(self, player: str, as_of: datetime | None) -> EventInfo | None:
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None) -> list[EventInfo]:
+        matches: list[EventInfo] = []
         for day_key in self._candidate_days(as_of):
             board = self._scoreboard_for_day(day_key)
             if not board:
@@ -166,8 +171,16 @@ class ESPNNBAResultsProvider(ResultsProvider):
                 if not summary:
                     continue
                 if self._resolve_player_name(summary, player) is not None:
-                    return info
-        return None
+                    matches.append(info)
+        return matches
+
+    def resolve_team_event(self, team: str, as_of: datetime | None) -> EventInfo | None:
+        candidates = self.resolve_team_event_candidates(team, as_of)
+        return candidates[0] if len(candidates) == 1 else None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None) -> EventInfo | None:
+        candidates = self.resolve_player_event_candidates(player, as_of)
+        return candidates[0] if len(candidates) == 1 else None
 
     def get_team_result(self, team: str, event_id: str | None = None) -> TeamResult | None:
         if not event_id:

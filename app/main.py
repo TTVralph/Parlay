@@ -606,7 +606,7 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
         }
 
     try:
-        graded = grade_text(normalized, provider=_public_check_provider, posted_at=datetime.utcnow())
+        graded = grade_text(normalized, provider=_public_check_provider, posted_at=None)
     except Exception:
         return {
             'ok': False,
@@ -620,11 +620,14 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
 
     legs = []
     unmatched_count = 0
+    ambiguous_count = 0
     for item in graded.legs:
         result = item.settlement
         if item.settlement == 'unmatched':
             unmatched_count += 1
             result = 'review'
+            if any('multiple possible games' in note.lower() for note in item.leg.notes):
+                ambiguous_count += 1
         legs.append({'leg': item.leg.raw_text, 'result': result, 'matched_event': item.leg.event_label})
 
     parlay_result = 'still_live' if graded.overall == 'pending' else graded.overall
@@ -643,6 +646,9 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
     elif unmatched_count > 0:
         out['message'] = f'{unmatched_count} leg(s) need manual review.'
         out['grading_warning'] = f'ESPN matching could not settle {unmatched_count} parsed leg(s).'
+
+    if ambiguous_count > 0:
+        out['grading_warning'] = 'This leg matches multiple possible games. Add opponent/date or upload the full slip.'
 
     if stake_amount is not None:
         financials = extract_financials(normalized)
