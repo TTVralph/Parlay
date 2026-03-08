@@ -116,13 +116,19 @@ from .models import (
     CapperVerificationResponse,
     AllSportsGamesResponse,
     AllSportsStatsResponse,
+    ProviderCapabilitiesResponse,
 )
 from .ocr import get_ocr_provider
 from .ocr.providers import validate_image_upload
 from .parser import parse_text
 from .odds_matcher import match_ticket_odds
 from .providers.allsports_client import AllSportsClient, AllSportsError
-from .providers.allsports_normalizer import normalize_games, normalize_match_stats
+from .providers.allsports_normalizer import (
+    ALLSPORTS_PROVIDER_CAPABILITIES,
+    normalize_games,
+    normalize_match_stats,
+    summarize_stats_payload_shape,
+)
 from .providers.espn_provider import ESPNNBAResultsProvider
 from .polling import poll_account_once
 from .scheduler import get_scheduler_config, run_due_polls_once, start_scheduler_thread
@@ -375,7 +381,119 @@ def allsports_match_stats(match_id: str) -> AllSportsStatsResponse:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     if not payload:
         raise HTTPException(status_code=404, detail='Match statistics not found')
+    shape_summary = summarize_stats_payload_shape(payload)
+    logger.info('AllSports stats normalized shape match_id=%s summary=%s', match_id, shape_summary)
     return AllSportsStatsResponse(**normalize_match_stats(match_id, payload))
+
+
+@app.get('/api/providers/capabilities', response_model=ProviderCapabilitiesResponse)
+def provider_capabilities() -> ProviderCapabilitiesResponse:
+    return ProviderCapabilitiesResponse(providers={'allsports': ALLSPORTS_PROVIDER_CAPABILITIES})
+
+
+@app.get('/api/allsports/match/{match_id}/stats/debug')
+def allsports_match_stats_debug(match_id: str) -> dict[str, object]:
+    if not match_id.strip():
+        raise HTTPException(status_code=400, detail='match_id is required')
+    client = _build_allsports_client()
+    try:
+        payload = client.get_match_statistics(match_id)
+    except AllSportsError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    if not payload:
+        raise HTTPException(status_code=404, detail='Match statistics not found')
+
+    normalized = normalize_match_stats(match_id, payload)
+    payload_shape = summarize_stats_payload_shape(payload)
+    return {
+        'matchId': normalized['matchId'],
+        'payloadShape': payload_shape,
+        'normalizedPreview': {
+            'homeTeam': normalized.get('homeTeam'),
+            'awayTeam': normalized.get('awayTeam'),
+            'teamStatsCount': len(normalized.get('teamStats') or []),
+            'playerStatsPresent': normalized.get('playerStats') is not None,
+            'playerStatsCount': len(normalized.get('playerStats') or []),
+        },
+    }
+
+
+
+@app.get('/allsports-test', response_class=HTMLResponse)
+def allsports_test_page() -> HTMLResponse:
+    html = '''<!doctype html>
+<html>
+<head>
+  <title>AllSports Test Page</title>
+  <style>
+    body{font-family:Arial,Helvetica,sans-serif;margin:24px;max-width:1000px;color:#0f172a;}
+    input,button{padding:8px 10px;border-radius:8px;border:1px solid #cbd5e1;}
+    button{cursor:pointer;background:#0f172a;color:#fff;border-color:#0f172a;}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+    .layout{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;}
+    ul{padding-left:18px;}
+    li{margin-bottom:8px;cursor:pointer;}
+    pre{background:#f8fafc;padding:12px;border-radius:10px;overflow:auto;max-height:600px;}
+  </style>
+</head>
+<body>
+  <h1>AllSports API Test</h1>
+  <div class='row'>
+    <label for='dateInput'>Date:</label>
+    <input id='dateInput' type='date'>
+    <button id='loadGamesBtn'>Load Games</button>
+  </div>
+  <p id='msg'></p>
+  <div class='layout'>
+    <div>
+      <h3>Games</h3>
+      <ul id='games'></ul>
+    </div>
+    <div>
+      <h3>Normalized Match Stats</h3>
+      <pre id='stats'>{}</pre>
+    </div>
+  </div>
+  <script>
+    const msg = document.getElementById('msg');
+    const gamesEl = document.getElementById('games');
+    const statsEl = document.getElementById('stats');
+    const dateInput = document.getElementById('dateInput');
+    const today = new Date().toISOString().slice(0, 10);
+    dateInput.value = today;
+
+    async function loadGames() {
+      const date = dateInput.value;
+      gamesEl.innerHTML = '';
+      statsEl.textContent = '{}';
+      msg.textContent = 'Loading games...';
+      const resp = await fetch(`/api/allsports/games?date=${encodeURIComponent(date)}`);
+      const data = await resp.json();
+      if (!resp.ok) {
+        msg.textContent = `Error: ${data.detail || 'Failed to load games'}`;
+        return;
+      }
+      msg.textContent = `Loaded ${data.games.length} game(s) for ${data.date}. Click one to inspect stats.`;
+      for (const game of data.games) {
+        const li = document.createElement('li');
+        li.textContent = `${game.awayTeam || 'Away'} @ ${game.homeTeam || 'Home'} (${game.id})`;
+        li.addEventListener('click', () => loadStats(game.id));
+        gamesEl.appendChild(li);
+      }
+    }
+
+    async function loadStats(matchId) {
+      statsEl.textContent = 'Loading...';
+      const resp = await fetch(`/api/allsports/match/${encodeURIComponent(matchId)}/stats`);
+      const data = await resp.json();
+      statsEl.textContent = JSON.stringify(data, null, 2);
+    }
+
+    document.getElementById('loadGamesBtn').addEventListener('click', loadGames);
+  </script>
+</body>
+</html>'''
+    return HTMLResponse(html)
 
 
 @app.get('/', response_class=HTMLResponse)

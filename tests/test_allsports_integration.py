@@ -104,7 +104,7 @@ def test_match_stats_endpoint_normalizes_payload(monkeypatch) -> None:
     assert body['homeTeam'] == 'Nuggets'
     assert body['awayTeam'] == 'Suns'
     assert isinstance(body['teamStats'], list)
-    assert isinstance(body['playerStats'], list)
+    assert body['playerStats'] is None
 
 
 def test_client_invalid_json_raises_error(monkeypatch) -> None:
@@ -121,3 +121,62 @@ def test_client_invalid_json_raises_error(monkeypatch) -> None:
         assert False, 'Expected AllSportsError'
     except AllSportsError as exc:
         assert 'invalid JSON' in exc.message
+
+
+def test_match_stats_endpoint_populates_player_stats_when_present(monkeypatch) -> None:
+    monkeypatch.setenv('RAPIDAPI_KEY', 'test-key')
+
+    def _fake_get(url: str, headers: dict, timeout: float):
+        return _StubResponse(200, payload={
+            'event': {
+                'id': 777,
+                'homeTeam': {'name': 'Heat'},
+                'awayTeam': {'name': 'Knicks'},
+            },
+            'statistics': [{'groupName': 'Team', 'items': []}],
+            'players': [
+                {'team': {'name': 'Heat'}, 'players': [{'name': 'A', 'points': 25}]},
+            ],
+        })
+
+    monkeypatch.setattr('app.providers.allsports_client.httpx.get', _fake_get)
+
+    resp = client.get('/api/allsports/match/777/stats')
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body['playerStats'], list)
+    assert len(body['playerStats']) == 1
+
+
+def test_provider_capabilities_endpoint_returns_allsports_caps() -> None:
+    resp = client.get('/api/providers/capabilities')
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['providers']['allsports'] == {
+        'supports_game_results': True,
+        'supports_team_stats': True,
+        'supports_player_props': False,
+        'supports_live_status': True,
+    }
+
+
+def test_match_stats_debug_endpoint_returns_shape_summary(monkeypatch) -> None:
+    monkeypatch.setenv('RAPIDAPI_KEY', 'test-key')
+
+    def _fake_get(url: str, headers: dict, timeout: float):
+        return _StubResponse(200, payload={
+            'event': {'id': 555, 'homeTeam': {'name': 'Nuggets'}, 'awayTeam': {'name': 'Suns'}},
+            'statistics': [{'groupName': 'Team', 'items': []}],
+            'players': [{'team': 'Nuggets', 'players': []}],
+        })
+
+    monkeypatch.setattr('app.providers.allsports_client.httpx.get', _fake_get)
+
+    resp = client.get('/api/allsports/match/555/stats/debug')
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['payloadShape']['teamStatsCount'] == 1
+    assert body['payloadShape']['playerBlockCount'] == 1
+    assert body['payloadShape']['playerRowCount'] == 0
+    assert body['payloadShape']['hasPlayerStats'] is False
+    assert body['normalizedPreview']['playerStatsPresent'] is False
