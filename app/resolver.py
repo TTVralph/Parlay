@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 import re
 
 from .models import Leg
+from .player_identity import resolve_player_identity, team_name_from_id
 from .providers.base import EventInfo, ResultsProvider
 
 AMBIGUOUS_EVENT_WARNING = 'This leg matches multiple possible games. Add opponent/date or upload the full slip.'
@@ -134,6 +135,14 @@ def _player_team_for_date(provider: ResultsProvider, player: str, posted_at: dat
         return resolver(player, posted_at)
 
 
+
+def _resolve_player_team(provider: ResultsProvider, player: str, posted_at: datetime | None, include_historical: bool) -> str | None:
+    identity = resolve_player_identity(player)
+    if identity:
+        return team_name_from_id(identity.team_id)
+    return _player_team_for_date(provider, player, posted_at, include_historical=include_historical)
+
+
 def _resolve_anchor(posted_at: datetime | None) -> datetime:
     if posted_at is not None:
         return posted_at
@@ -169,13 +178,18 @@ def resolve_leg_events(
         opponent = _opponent_from_leg(leg)
         player_team: str | None = None
         if leg.player:
-            player_team = _player_team_for_date(provider, leg.player, anchor, include_historical=include_historical)
+            identity = resolve_player_identity(leg.player)
+            if identity and leg.player != identity.canonical_name:
+                updates['player'] = identity.canonical_name
+            player_lookup_name = updates.get('player', leg.player)
+            player_team = _resolve_player_team(provider, str(player_lookup_name), anchor, include_historical)
 
         if leg.market_type in {'moneyline', 'spread'} and leg.team:
             candidates = _team_candidates(provider, leg.team, anchor, include_historical=include_historical)
             updates['matched_by'] = 'team_schedule_lookup'
         elif leg.player:
-            candidates = _player_candidates(provider, leg.player, anchor, include_historical=include_historical)
+            player_lookup_name = str(updates.get('player', leg.player))
+            candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
             if player_team:
                 candidates = [event for event in candidates if _event_contains_team(event, player_team)]
                 team_links = resolved_team_event_ids.get(_norm(player_team), set())
