@@ -361,6 +361,43 @@ def compute_capper_roi_dashboard(db: Session, username: str | None = None, inclu
 
 
 
+
+
+def list_capper_profiles(db: Session) -> list[CapperProfileORM]:
+    return list(db.scalars(select(CapperProfileORM).order_by(CapperProfileORM.username.asc())).all())
+
+
+def get_capper_profile(db: Session, username: str) -> CapperProfileORM | None:
+    username_key = username.lower().lstrip('@').strip()
+    return db.scalar(select(CapperProfileORM).where(func.lower(CapperProfileORM.username) == username_key))
+
+
+def create_capper_profile(db: Session, username: str, display_name: str | None = None, bio: str | None = None, is_public: bool = True, moderation_note: str | None = None) -> CapperProfileORM:
+    username_key = username.lower().lstrip('@').strip()
+    existing = get_capper_profile(db, username_key)
+    if existing:
+        raise ValueError('Capper profile already exists')
+    row = CapperProfileORM(username=username_key, is_public=is_public, moderation_note=moderation_note, display_name=(display_name.strip() or None) if display_name else None, bio=(bio.strip() or None) if bio else None)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def update_capper_profile_admin(db: Session, username: str, display_name: str | None = None, bio: str | None = None, is_public: bool | None = None, moderation_note: str | None = None) -> CapperProfileORM:
+    row = get_or_create_capper_profile(db, username)
+    if display_name is not None:
+        row.display_name = display_name.strip() or None
+    if bio is not None:
+        row.bio = bio.strip() or None
+    if is_public is not None:
+        row.is_public = is_public
+    if moderation_note is not None:
+        row.moderation_note = moderation_note.strip() or None
+    db.commit()
+    db.refresh(row)
+    return row
+
 def get_or_create_capper_profile(db: Session, username: str) -> CapperProfileORM:
     username_key = username.lower().lstrip('@').strip()
     existing = db.scalar(select(CapperProfileORM).where(func.lower(CapperProfileORM.username) == username_key))
