@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import os
 import threading
 import time
+from uuid import uuid4
 
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse
@@ -37,6 +38,8 @@ from .models import (
     AliasUpsertRequest,
     GradeRequest,
     GradeResponse,
+    CheckJobCreateResponse,
+    CheckJobStatusResponse,
     IngestGradeResponse,
     OCRExtractResponse,
     ParseRequest,
@@ -194,6 +197,27 @@ run_lightweight_migrations()
 
 _public_check_rate_limit_lock = threading.Lock()
 _public_check_rate_limit_hits: dict[str, list[float]] = {}
+_public_check_jobs_lock = threading.Lock()
+_public_check_jobs: dict[str, dict] = {}
+
+
+def _cleanup_public_check_jobs() -> None:
+    ttl_seconds = int(os.getenv('PUBLIC_CHECK_JOB_TTL_SECONDS', '900'))
+    max_jobs = int(os.getenv('PUBLIC_CHECK_JOB_MAX_STORED', '1000'))
+    now = time.time()
+    expired = []
+    for job_id, item in _public_check_jobs.items():
+        if item.get('status') == 'pending':
+            continue
+        completed_at = item.get('completed_at', now)
+        if now - completed_at > ttl_seconds:
+            expired.append(job_id)
+    for job_id in expired:
+        _public_check_jobs.pop(job_id, None)
+    if len(_public_check_jobs) > max_jobs:
+        ordered = sorted(_public_check_jobs.items(), key=lambda kv: kv[1].get('submitted_at', 0.0))
+        for job_id, _row in ordered[: max(0, len(_public_check_jobs) - max_jobs)]:
+            _public_check_jobs.pop(job_id, None)
 
 
 def _extract_client_ip(request: Request) -> str:
@@ -335,6 +359,12 @@ Yankees +1.5
 Game Total Over 8.5',sample_nfl:'Chiefs ML
 Mahomes over 265.5 passing yards
 Kelce over 68.5 receiving yards'};const slip=document.getElementById('slip');const slipImage=document.getElementById('slipImage');const btn=document.getElementById('checkBtn');const copyBtn=document.getElementById('copyBtn');const summaryOut=document.getElementById('summaryOut');const msg=document.getElementById('message');const wrap=document.getElementById('resultWrap');const overall=document.getElementById('overall');const legsBody=document.getElementById('legsBody');const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};const overallLabel={cashed:'CASHED',lost:'LOST',pending:'PENDING',needs_review:'NEEDS REVIEW'};document.querySelectorAll('[data-sample]').forEach((node)=>{node.addEventListener('click',()=>{const key=node.getAttribute('data-sample');slip.value=sampleSlips[key]||'';slip.focus();});});function renderRows(legs){legsBody.innerHTML='';for(const item of legs||[]){const tr=document.createElement('tr');const legCell=document.createElement('td');const resultCell=document.createElement('td');const eventCell=document.createElement('td');legCell.textContent=item.leg||'—';resultCell.textContent=resultLabel[item.result]||String(item.result||'review');eventCell.textContent=item.matched_event||'—';tr.appendChild(legCell);tr.appendChild(resultCell);tr.appendChild(eventCell);legsBody.appendChild(tr);}}function buildSummary(payload){const lines=(payload.legs||[]).map((item)=>`${item.leg} ${resultEmoji[item.result]||'🧐'}`);lines.push('');lines.push(`Parlay: ${overallLabel[payload.parlay_result]||'NEEDS REVIEW'}`);return lines.join('\\n');}function normalizeScreenshotPayload(body){return {ok:true,legs:(body.result?.legs||[]).map((item)=>({leg:item.leg?.raw_text||'—',result:(item.settlement==='unmatched'?'review':item.settlement),matched_event:item.leg?.event_label||null})),parlay_result:body.result?.overall||'needs_review'};}btn.addEventListener('click',async()=>{const text=slip.value.trim();const file=slipImage.files&&slipImage.files[0];wrap.hidden=true;legsBody.innerHTML='';copyBtn.disabled=true;summaryOut.value='';if(!text&&!file){msg.textContent='Paste at least one leg first, or upload a screenshot.';return;}if(file&&file.type&&!file.type.startsWith('image/')){msg.textContent='Please upload an image file for screenshot grading.';return;}if(file&&file.size>8*1024*1024){msg.textContent='Screenshot is too large. Please use an image under 8MB.';return;}btn.disabled=true;msg.textContent='Checking your slip...';try{let data;let res;if(file){const form=new FormData();form.append('file',file);res=await fetch('/ingest/screenshot/grade',{method:'POST',body:form});const body=await res.json();if(!res.ok){msg.textContent='Could not check this screenshot right now.';return;}data=normalizeScreenshotPayload(body);}else{res=await fetch('/check-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});data=await res.json();}if(!res.ok||data.ok===false){msg.textContent=data.message||'Could not check this slip right now.';return;}msg.textContent='Done.';overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');renderRows(data.legs||[]);summaryOut.value=buildSummary(data);copyBtn.disabled=false;wrap.hidden=false;}catch(err){msg.textContent='Could not check this slip right now.';}finally{btn.disabled=false;}});copyBtn.addEventListener('click',async()=>{const text=summaryOut.value.trim();if(!text){return;}try{await navigator.clipboard.writeText(text);msg.textContent='Summary copied.';}catch(err){summaryOut.focus();summaryOut.select();msg.textContent='Copy blocked. Summary selected for manual copy.';}});</script></body></html>"""
+    return HTMLResponse(html)
+
+
+def _process_public_check_text(text: str) -> dict:
+    normalized = text.strip()
+    if not normalized:
 Kelce over 68.5 receiving yards'};const slip=document.getElementById('slip');const slipImage=document.getElementById('slipImage');const btn=document.getElementById('checkBtn');const copyBtn=document.getElementById('copyBtn');const summaryOut=document.getElementById('summaryOut');const msg=document.getElementById('message');const wrap=document.getElementById('resultWrap');const overall=document.getElementById('overall');const legsBody=document.getElementById('legsBody');const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};const overallLabel={cashed:'CASHED',lost:'LOST',pending:'PENDING',needs_review:'NEEDS REVIEW'};document.querySelectorAll('[data-sample]').forEach((node)=>{node.addEventListener('click',()=>{const key=node.getAttribute('data-sample');slip.value=sampleSlips[key]||'';slip.focus();});});function renderRows(legs){legsBody.innerHTML='';for(const item of legs||[]){const tr=document.createElement('tr');const legCell=document.createElement('td');const resultCell=document.createElement('td');const eventCell=document.createElement('td');legCell.textContent=item.leg||'—';resultCell.textContent=resultLabel[item.result]||String(item.result||'review');eventCell.textContent=item.matched_event||'—';tr.appendChild(legCell);tr.appendChild(resultCell);tr.appendChild(eventCell);legsBody.appendChild(tr);}}function buildSummary(payload){const lines=(payload.legs||[]).map((item)=>`${item.leg} ${resultEmoji[item.result]||'🧐'}`);lines.push('');lines.push(`Parlay: ${overallLabel[payload.parlay_result]||'NEEDS REVIEW'}`);return lines.join('
 ');}function normalizeScreenshotPayload(body){return {ok:true,legs:(body.result?.legs||[]).map((item)=>({leg:item.leg?.raw_text||'—',result:(item.settlement==='unmatched'?'review':item.settlement),matched_event:item.leg?.event_label||null})),parlay_result:body.result?.overall||'needs_review'};}btn.addEventListener('click',async()=>{const text=slip.value.trim();const file=slipImage.files&&slipImage.files[0];wrap.hidden=true;legsBody.innerHTML='';copyBtn.disabled=true;summaryOut.value='';if(!text&&!file){msg.textContent='Paste at least one leg first, or upload a screenshot.';return;}btn.disabled=true;msg.textContent='Checking your slip...';try{let data;let res;if(file){const form=new FormData();form.append('file',file);res=await fetch('/ingest/screenshot/grade',{method:'POST',body:form});const body=await res.json();if(!res.ok){msg.textContent='Could not check this screenshot right now.';return;}data=normalizeScreenshotPayload(body);}else{res=await fetch('/check-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});data=await res.json();}if(!res.ok||data.ok===false){msg.textContent=data.message||'Could not check this slip right now.';return;}msg.textContent='Done.';overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');renderRows(data.legs||[]);summaryOut.value=buildSummary(data);copyBtn.disabled=false;wrap.hidden=false;}catch(err){msg.textContent='Could not check this slip right now.';}finally{btn.disabled=false;}});copyBtn.addEventListener('click',async()=>{const text=summaryOut.value.trim();if(!text){return;}try{await navigator.clipboard.writeText(text);msg.textContent='Summary copied.';}catch(err){summaryOut.focus();summaryOut.select();msg.textContent='Copy blocked. Summary selected for manual copy.';}});</script></body></html>"""
 
@@ -368,6 +398,7 @@ def public_check_slip(payload: dict = Body(...)):
             'parlay_result': 'needs_review',
         }
 
+    parsed_legs = parse_text(normalized)
     parsed_legs = parse_text(text)
     if not parsed_legs:
         return {
@@ -378,6 +409,7 @@ def public_check_slip(payload: dict = Body(...)):
         }
 
     try:
+        graded = grade_text(normalized)
         graded = grade_text(text)
     except Exception:
         return {
@@ -389,6 +421,77 @@ def public_check_slip(payload: dict = Body(...)):
 
     legs = []
     for item in graded.legs:
+        result = 'review' if item.settlement == 'unmatched' else item.settlement
+        legs.append({'leg': item.leg.raw_text, 'result': result, 'matched_event': item.leg.event_label})
+
+    return {'ok': True, 'message': 'Slip checked.', 'legs': legs, 'parlay_result': graded.overall}
+
+
+def _run_public_check_job(job_id: str, text: str) -> None:
+    try:
+        result = _process_public_check_text(text)
+        with _public_check_jobs_lock:
+            row = _public_check_jobs.get(job_id)
+            if row is None:
+                return
+            row['status'] = 'complete'
+            row['result'] = result
+            row['error'] = None
+            row['completed_at'] = time.time()
+    except Exception as exc:
+        with _public_check_jobs_lock:
+            row = _public_check_jobs.get(job_id)
+            if row is None:
+                return
+            row['status'] = 'failed'
+            row['result'] = None
+            row['error'] = str(exc)
+            row['completed_at'] = time.time()
+
+
+@app.post('/check')
+@app.post('/check-slip')
+def public_check_slip(request: Request, response: Response, payload: dict = Body(...)):
+    _enforce_public_check_rate_limit(request, response, 'check-slip')
+    return _process_public_check_text(str(payload.get('text', '')))
+
+
+@app.post('/check/jobs', response_model=CheckJobCreateResponse)
+def submit_public_check_job(request: Request, response: Response, payload: dict = Body(...)) -> CheckJobCreateResponse:
+    _enforce_public_check_rate_limit(request, response, 'check-job')
+    text = str(payload.get('text', '')).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail='Paste at least one leg first.')
+
+    job_id = uuid4().hex
+    with _public_check_jobs_lock:
+        _cleanup_public_check_jobs()
+        _public_check_jobs[job_id] = {
+            'status': 'pending',
+            'submitted_at': time.time(),
+            'completed_at': None,
+            'result': None,
+            'error': None,
+        }
+
+    worker = threading.Thread(target=_run_public_check_job, args=(job_id, text), daemon=True)
+    worker.start()
+    return CheckJobCreateResponse(job_id=job_id, status='pending')
+
+
+@app.get('/check/jobs/{job_id}', response_model=CheckJobStatusResponse)
+def get_public_check_job(job_id: str) -> CheckJobStatusResponse:
+    with _public_check_jobs_lock:
+        row = _public_check_jobs.get(job_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Job not found')
+
+    status_value = row.get('status', 'failed')
+    if status_value == 'complete':
+        return CheckJobStatusResponse(job_id=job_id, status='complete', result=row.get('result'))
+    if status_value == 'failed':
+        return CheckJobStatusResponse(job_id=job_id, status='failed', error=(row.get('error') or 'Slip processing failed'))
+    return CheckJobStatusResponse(job_id=job_id, status='pending')
         if item.settlement in {'unmatched'}:
             result = 'review'
         else:

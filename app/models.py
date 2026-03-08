@@ -70,6 +70,20 @@ class GradeResponse(BaseModel):
     legs: list[GradedLeg]
 
 
+
+
+class CheckJobCreateResponse(BaseModel):
+    ok: bool = True
+    job_id: str
+    status: Literal['pending'] = 'pending'
+
+
+class CheckJobStatusResponse(BaseModel):
+    job_id: str
+    status: Literal['pending', 'complete', 'failed']
+    result: Optional[dict[str, Any]] = None
+    error: Optional[str] = None
+
 class TweetIngestRequest(BaseModel):
     tweet_id: Optional[str] = None
     username: Optional[str] = None
