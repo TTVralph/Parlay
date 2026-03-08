@@ -8,14 +8,15 @@ from .models import Leg, Sport
 
 ALT_PATTERN = re.compile(r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+$', re.I)
 OVER_UNDER_PATTERN = re.compile(
-    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|pra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$',
+    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|three pointers made|3 pointers made|pra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$',
     re.I,
 )
 NAMED_MARKET_PATTERN = re.compile(
-    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|pra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$',
+    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|three pointers made|3 pointers made|pra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$',
     re.I,
 )
 ML_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+ml$', re.I)
+MONEYLINE_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+moneyline$', re.I)
 SPREAD_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+(?P<line>[+\-]\d+(?:\.\d+)?)$', re.I)
 TOTAL_ONLY_PATTERN = re.compile(r'^(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)$', re.I)
 GAME_TOTAL_PATTERN = re.compile(r'^(?:game\s+total\s+)?(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?:total\s*points|points)?$', re.I)
@@ -27,7 +28,14 @@ def _normalize_whitespace(text: str) -> str:
 
 
 def _team_lookup(token: str) -> str | None:
-    return get_alias_map('team').get(token.lower().strip())
+    normalized = token.lower().strip()
+    aliases = get_alias_map('team')
+    if normalized in aliases:
+        return aliases[normalized]
+    for team in TEAM_SPORTS:
+        if normalized == team.lower():
+            return team
+    return None
 
 
 def _player_lookup(token: str) -> str | None:
@@ -42,7 +50,10 @@ def _player_lookup(token: str) -> str | None:
 
 
 def _market_lookup(token: str) -> str:
-    return get_alias_map('market').get(token.lower().strip(), 'player_points')
+    normalized = token.lower().strip()
+    if normalized in {'three pointers made', '3 pointers made'}:
+        normalized = 'threes'
+    return get_alias_map('market').get(normalized, 'player_points')
 
 
 def _infer_sport(team: str | None = None, player: str | None = None, sport_hint: Sport | None = None) -> Sport:
@@ -75,14 +86,16 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
         if re.match(r'^(odds|american odds|stake|risk|to\s*win|payout|profit|draftkings|fanduel|bet365|caesars)\b', clean_lower):
             continue
 
-        ml_match = ML_PATTERN.match(clean_lower)
+        normalized_lower = clean_lower.replace('three pointers made', 'threes').replace('3 pointers made', 'threes')
+
+        ml_match = ML_PATTERN.match(normalized_lower) or MONEYLINE_PATTERN.match(normalized_lower)
         if ml_match:
             team = _team_lookup(ml_match.group('team'))
             sport = _infer_sport(team=team, sport_hint=line_sport_hint)
             legs.append(Leg(raw_text=clean_line, sport=sport, market_type='moneyline', team=team, confidence=0.95 if team else 0.3, notes=[] if team else ['Unrecognized team alias']))
             continue
 
-        spread_match = SPREAD_PATTERN.match(clean_lower)
+        spread_match = SPREAD_PATTERN.match(normalized_lower)
         if spread_match:
             team = _team_lookup(spread_match.group('team'))
             line_value = float(spread_match.group('line'))
@@ -90,7 +103,7 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             legs.append(Leg(raw_text=clean_line, sport=sport, market_type='spread', team=team, line=line_value, display_line=spread_match.group('line'), confidence=0.93 if team else 0.35, notes=[] if team else ['Unrecognized team alias']))
             continue
 
-        total_match = GAME_TOTAL_PATTERN.match(clean_lower) or TOTAL_ONLY_PATTERN.match(clean_lower)
+        total_match = GAME_TOTAL_PATTERN.match(normalized_lower) or TOTAL_ONLY_PATTERN.match(normalized_lower)
         if total_match:
             direction_token = total_match.group('dir').lower()
             direction = 'over' if direction_token in {'o', 'over'} else 'under'
@@ -98,7 +111,7 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='game_total', direction=direction, line=line_value, display_line=str(line_value), confidence=0.82, notes=['Will infer event from other legs in same ticket when possible']))
             continue
 
-        ou_match = OVER_UNDER_PATTERN.match(clean_lower)
+        ou_match = OVER_UNDER_PATTERN.match(normalized_lower)
         if ou_match:
             player = _player_lookup(ou_match.group('name'))
             market_type = _market_lookup((ou_match.group('market') or 'points').lower())
@@ -109,7 +122,7 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction=direction, line=line_value, display_line=str(line_value), confidence=0.92 if player else 0.35, notes=[] if player else ['Unrecognized player alias']))
             continue
 
-        named_market_match = NAMED_MARKET_PATTERN.match(clean_lower)
+        named_market_match = NAMED_MARKET_PATTERN.match(normalized_lower)
         if named_market_match:
             player = _player_lookup(named_market_match.group('name'))
             market_type = _market_lookup(named_market_match.group('market').lower())

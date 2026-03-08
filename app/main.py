@@ -115,6 +115,7 @@ from .models import (
     CapperVerificationResponse,
 )
 from .ocr import get_ocr_provider
+from .ocr.providers import validate_image_upload
 from .parser import parse_text
 from .odds_matcher import match_ticket_odds
 from .polling import poll_account_once
@@ -480,7 +481,7 @@ Murray over 2.5 threes'></textarea>
           form.append('file',file);
           res=await fetch('/ingest/screenshot/grade',{method:'POST',body:form});
           const body=await res.json();
-          if(!res.ok){msg.textContent='Could not check this screenshot right now.';return;}
+          if(!res.ok){msg.textContent=body.detail||body.message||'Could not check this screenshot right now.';return;}
           data=normalizeScreenshotPayload(body);
         }else{
           const stakeRaw=(stakeAmount.value||'').trim();
@@ -555,7 +556,6 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
         }
 
     parsed_legs = parse_text(normalized)
-    parsed_legs = parse_text(text)
     if not parsed_legs:
         return {
             'ok': False,
@@ -566,7 +566,6 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
 
     try:
         graded = grade_text(normalized)
-        graded = grade_text(text)
     except Exception:
         return {
             'ok': False,
@@ -576,11 +575,20 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
         }
 
     legs = []
+    unmatched_count = 0
     for item in graded.legs:
-        result = 'review' if item.settlement == 'unmatched' else item.settlement
+        result = item.settlement
+        if item.settlement == 'unmatched':
+            unmatched_count += 1
+            result = 'review'
         legs.append({'leg': item.leg.raw_text, 'result': result, 'matched_event': item.leg.event_label})
 
     out = {'ok': True, 'message': 'Slip checked.', 'legs': legs, 'parlay_result': graded.overall}
+    if unmatched_count == len(legs):
+        out['message'] = 'Could not confidently match this slip to settled results. Please review manually.'
+    elif unmatched_count > 0:
+        out['message'] = f'{unmatched_count} leg(s) need manual review.'
+
     if stake_amount is not None:
         financials = extract_financials(normalized)
         if financials.american_odds is None:
@@ -628,7 +636,6 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
         except (TypeError, ValueError):
             return {'ok': False, 'message': 'Enter a valid numeric stake amount.', 'legs': [], 'parlay_result': 'needs_review'}
     return _process_public_check_text(str(payload.get('text', '')), stake_amount=parsed_stake)
-    return _process_public_check_text(str(payload.get('text', '')))
 
 
 @app.post('/check/jobs', response_model=CheckJobCreateResponse)
@@ -658,7 +665,6 @@ def submit_public_check_job(request: Request, response: Response, payload: dict 
         }
 
     worker = threading.Thread(target=_run_public_check_job, args=(job_id, text, parsed_stake), daemon=True)
-    worker = threading.Thread(target=_run_public_check_job, args=(job_id, text), daemon=True)
     worker.start()
     return CheckJobCreateResponse(job_id=job_id, status='pending')
 
@@ -1409,8 +1415,12 @@ def ingest_x_webhook_grade_and_save(req: TweetIngestRequest, db: Session = Depen
 @app.post('/ingest/screenshot/ocr', response_model=OCRExtractResponse)
 async def ingest_screenshot_ocr(file: UploadFile = File(...)) -> OCRExtractResponse:
     content = await file.read()
-    ocr = get_ocr_provider()
-    result = ocr.extract_text(file.filename or 'upload', content)
+    try:
+        validate_image_upload(file.filename or 'upload', content)
+        ocr = get_ocr_provider()
+        result = ocr.extract_text(file.filename or 'upload', content)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return OCRExtractResponse(
         filename=file.filename or 'upload',
         raw_text=result.raw_text,
@@ -1431,8 +1441,12 @@ async def ingest_screenshot_grade(
 ) -> IngestGradeResponse:
     _enforce_public_check_rate_limit(request, response, 'screenshot-grade')
     content = await file.read()
-    ocr = get_ocr_provider()
-    ocr_result = ocr.extract_text(file.filename or 'upload', content)
+    try:
+        validate_image_upload(file.filename or 'upload', content)
+        ocr = get_ocr_provider()
+        ocr_result = ocr.extract_text(file.filename or 'upload', content)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     parsed_posted_at = datetime.fromisoformat(posted_at) if posted_at else None
     parsed_slip = parse_slip_text(ocr_result.cleaned_text, bookmaker_hint=bookmaker_hint)
     financials = extract_financials(ocr_result.raw_text, bookmaker_hint=parsed_slip.bookmaker)
@@ -1460,8 +1474,12 @@ async def ingest_screenshot_grade_and_save(
     bookmaker_hint: str | None = Form(default=None),
 ) -> TicketDetailResponse:
     content = await file.read()
-    ocr = get_ocr_provider()
-    ocr_result = ocr.extract_text(file.filename or 'upload', content)
+    try:
+        validate_image_upload(file.filename or 'upload', content)
+        ocr = get_ocr_provider()
+        ocr_result = ocr.extract_text(file.filename or 'upload', content)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     parsed_posted_at = datetime.fromisoformat(posted_at) if posted_at else None
     parsed_slip = parse_slip_text(ocr_result.cleaned_text, bookmaker_hint=bookmaker_hint)
     financials = extract_financials(ocr_result.raw_text, bookmaker_hint=parsed_slip.bookmaker)

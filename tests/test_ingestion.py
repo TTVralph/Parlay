@@ -28,16 +28,24 @@ def test_tweet_ingestion_grades_cleaned_text() -> None:
     assert body['result']['overall'] == 'cashed'
 
 
-def test_mock_ocr_screenshot_grade() -> None:
+def test_screenshot_grade_rejects_non_image_upload() -> None:
     os.environ['OCR_PROVIDER'] = 'mock'
-    fake_image_bytes = b'Parlay\nDenver ML\nJokic 25+ pts\n+145\n'
     response = client.post(
         '/ingest/screenshot/grade',
-        files={'file': ('slip.txt', io.BytesIO(fake_image_bytes), 'text/plain')},
+        files={'file': ('slip.txt', io.BytesIO(b'not-an-image'), 'text/plain')},
         data={'posted_at': '2026-03-07T18:15:00'},
     )
-    assert response.status_code == 200
-    body = response.json()
-    assert body['source_type'] == 'screenshot'
-    assert body['cleaned_text'] == 'Denver ML\nJokic 25+ pts'
-    assert body['result']['overall'] == 'cashed'
+    assert response.status_code == 400
+    assert 'valid image file' in response.json()['detail'].lower()
+
+
+def test_mock_ocr_screenshot_grade_fails_cleanly() -> None:
+    os.environ['OCR_PROVIDER'] = 'mock'
+    fake_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + b'0' * 32
+    response = client.post(
+        '/ingest/screenshot/grade',
+        files={'file': ('slip.png', io.BytesIO(fake_png), 'image/png')},
+        data={'posted_at': '2026-03-07T18:15:00'},
+    )
+    assert response.status_code == 400
+    assert 'ocr is unavailable' in response.json()['detail'].lower()
