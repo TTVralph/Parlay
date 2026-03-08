@@ -248,6 +248,18 @@ def health() -> dict[str, str]:
     return {'status': 'ok'}
 
 
+@app.get('/', response_class=HTMLResponse)
+def public_home_page() -> HTMLResponse:
+    html = """<!doctype html><html><head><title>ParlayBot</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:820px;}a{color:#0a58ca;text-decoration:none;}ul{line-height:1.8;}</style></head><body><h1>ParlayBot</h1><p>Public tools:</p><ul><li><a href='/check'>Slip checker</a></li><li><a href='/leaderboard'>Leaderboard</a></li><li><a href='/app'>Web app</a></li></ul></body></html>"""
+    return HTMLResponse(html)
+
+
+@app.get('/check', response_class=HTMLResponse)
+def public_check_page() -> HTMLResponse:
+    html = """<!doctype html><html><head><title>Slip Checker</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:900px;}textarea{width:100%;min-height:220px;padding:12px;border:1px solid #ddd;border-radius:8px;font-family:inherit;}button{margin-top:12px;padding:10px 14px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer;}pre{margin-top:16px;background:#111;color:#eee;padding:16px;border-radius:10px;overflow:auto;white-space:pre-wrap;}</style></head><body><h1>Slip checker</h1><p>Paste a ticket and run the existing <code>/grade</code> endpoint.</p><textarea id='slip' placeholder='Paste your bet slip text here'></textarea><br><button id='checkBtn'>Check slip</button><pre id='result'>Result will appear here.</pre><script>const slip=document.getElementById('slip');const result=document.getElementById('result');document.getElementById('checkBtn').addEventListener('click',async()=>{const text=slip.value.trim();if(!text){result.textContent='Please paste a slip first.';return;}result.textContent='Checking...';try{const res=await fetch('/grade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});const body=await res.text();try{result.textContent=JSON.stringify(JSON.parse(body),null,2);}catch(e){result.textContent=body||'No response body';}}catch(err){result.textContent='Request failed: '+(err?.message||String(err));}});</script></body></html>"""
+    return HTMLResponse(html)
+
+
 @app.post('/auth/register', response_model=SessionResponse)
 def register_endpoint(req: UserRegisterRequest, db: Session = Depends(get_db)) -> SessionResponse:
     username = req.username.strip().lower().lstrip('@')
@@ -1140,6 +1152,7 @@ def pro_capper_roi_dashboard(db: Session = Depends(get_db), _: _db_models.UserSe
 def pro_capper_roi_dashboard_single(username: str, db: Session = Depends(get_db), _: _db_models.UserSessionORM = Depends(require_entitlement('roi_dashboard'))) -> CapperRoiDashboardResponse:
     rows = [CapperRoiDashboardRow(**row) for row in compute_capper_roi_dashboard(db, username=username)]
     return CapperRoiDashboardResponse(rows=rows)
+
 
 @app.post("/check-slip")
 def check_slip(payload: dict = Body(...)):
