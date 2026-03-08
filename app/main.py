@@ -542,6 +542,7 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
         }
 
     parsed_legs = parse_text(normalized)
+    parsed_legs = parse_text(text)
     if not parsed_legs:
         return {
             'ok': False,
@@ -552,6 +553,7 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
 
     try:
         graded = grade_text(normalized)
+        graded = grade_text(text)
     except Exception:
         return {
             'ok': False,
@@ -581,6 +583,12 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
 def _run_public_check_job(job_id: str, text: str, stake_amount: float | None = None) -> None:
     try:
         result = _process_public_check_text(text, stake_amount=stake_amount)
+    return {'ok': True, 'message': 'Slip checked.', 'legs': legs, 'parlay_result': graded.overall}
+
+
+def _run_public_check_job(job_id: str, text: str) -> None:
+    try:
+        result = _process_public_check_text(text)
         with _public_check_jobs_lock:
             row = _public_check_jobs.get(job_id)
             if row is None:
@@ -613,6 +621,7 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
         except (TypeError, ValueError):
             return {'ok': False, 'message': 'Enter a valid numeric stake amount.', 'legs': [], 'parlay_result': 'needs_review'}
     return _process_public_check_text(str(payload.get('text', '')), stake_amount=parsed_stake)
+    return _process_public_check_text(str(payload.get('text', '')))
 
 
 @app.post('/check/jobs', response_model=CheckJobCreateResponse)
@@ -642,6 +651,7 @@ def submit_public_check_job(request: Request, response: Response, payload: dict 
         }
 
     worker = threading.Thread(target=_run_public_check_job, args=(job_id, text, parsed_stake), daemon=True)
+    worker = threading.Thread(target=_run_public_check_job, args=(job_id, text), daemon=True)
     worker.start()
     return CheckJobCreateResponse(job_id=job_id, status='pending')
 
@@ -659,6 +669,24 @@ def get_public_check_job(job_id: str) -> CheckJobStatusResponse:
     if status_value == 'failed':
         return CheckJobStatusResponse(job_id=job_id, status='failed', error=(row.get('error') or 'Slip processing failed'))
     return CheckJobStatusResponse(job_id=job_id, status='pending')
+        if item.settlement in {'unmatched'}:
+            result = 'review'
+        else:
+            result = item.settlement
+        legs.append(
+            {
+                'leg': item.leg.raw_text,
+                'result': result,
+                'matched_event': item.leg.event_label,
+            }
+        )
+
+    return {
+        'ok': True,
+        'message': 'Slip checked.',
+        'legs': legs,
+        'parlay_result': graded.overall,
+    }
 
 
 @app.post('/auth/register', response_model=SessionResponse)
