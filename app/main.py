@@ -1303,6 +1303,72 @@ def pro_capper_roi_dashboard_single(username: str, db: Session = Depends(get_db)
 
 
 
+@app.get('/check', response_class=HTMLResponse)
+def check_page() -> HTMLResponse:
+    html = """<!doctype html>
+<html>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <title>Parlay Check</title>
+  <style>
+    body { font-family: Inter, Arial, sans-serif; max-width: 860px; margin: 28px auto; padding: 0 16px; }
+    h1 { margin-bottom: 8px; }
+    p { color: #475569; }
+    textarea { width: 100%; min-height: 130px; border-radius: 10px; border: 1px solid #cbd5e1; padding: 12px; box-sizing: border-box; }
+    .row { display: flex; gap: 8px; margin-top: 10px; }
+    button { border: 1px solid #334155; background: #0f172a; color: #fff; border-radius: 10px; padding: 10px 14px; cursor: pointer; }
+    button.secondary { background: #fff; color: #0f172a; }
+    #status { margin-top: 12px; color: #334155; }
+    #results { margin-top: 14px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
+    #summaryOut { min-height: 170px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Check your parlay</h1>
+  <p>Paste legs, then copy a social-friendly summary for Twitter/Discord.</p>
+  <textarea id='slipText' placeholder='Jokic 25+ pts\nDenver ML\nMurray over 1.5 threes'></textarea>
+  <div class='row'>
+    <button id='checkBtn'>Check results</button>
+    <button id='copyBtn' class='secondary' disabled>Copy Summary</button>
+  </div>
+  <div id='status'></div>
+  <div id='results' hidden>
+    <strong>Paste-ready summary</strong>
+    <textarea id='summaryOut' readonly></textarea>
+  </div>
+
+  <script>
+    const settlementEmoji = { win: '✅', loss: '❌', push: '➖', pending: '⏳', unmatched: '⏳' };
+    const overallLabel = { cashed: 'WON', lost: 'LOST', pending: 'PENDING', needs_review: 'NEEDS REVIEW' };
+
+    async function checkSlip() {
+      const text = document.getElementById('slipText').value || '';
+      document.getElementById('status').textContent = 'Checking...';
+      const res = await fetch('/check-slip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || res.statusText);
+      }
+      return res.json();
+    }
+
+    function buildSummary(payload) {
+      const lines = (payload.legs || []).map((item) => {
+        const emoji = settlementEmoji[item.result] || '⏳';
+        return `${item.leg} ${emoji}`;
+      });
+      lines.push('');
+      lines.push(`Parlay: ${overallLabel[payload.parlay_result] || String(payload.parlay_result || '').toUpperCase()}`);
+      return lines.join('\n');
+    }
+
+
+
 @app.post('/check')
 @app.post('/check-slip')
 def check_slip(payload: dict = Body(...)):
@@ -1344,7 +1410,47 @@ def check_slip(payload: dict = Body(...)):
             'parlay_result': 'needs_review',
         }
 
+
+    document.getElementById('checkBtn').addEventListener('click', async () => {
+      try {
+        const payload = await checkSlip();
+        const summary = buildSummary(payload);
+        document.getElementById('summaryOut').value = summary;
+        document.getElementById('results').hidden = false;
+        document.getElementById('copyBtn').disabled = false;
+        document.getElementById('status').textContent = 'Done.';
+      } catch (err) {
+        document.getElementById('status').textContent = `Error: ${err.message}`;
+      }
+    });
+
+    document.getElementById('copyBtn').addEventListener('click', async () => {
+      const text = document.getElementById('summaryOut').value || '';
+      try {
+        await navigator.clipboard.writeText(text);
+        document.getElementById('status').textContent = 'Summary copied to clipboard.';
+      } catch (err) {
+        document.getElementById('summaryOut').focus();
+        document.getElementById('summaryOut').select();
+        document.getElementById('status').textContent = 'Clipboard blocked. Selected summary so you can copy manually.';
+      }
+    });
+  </script>
+</body>
+</html>
+"""
+    return HTMLResponse(html)
+
+@app.post("/check-slip")
+def check_slip(payload: dict = Body(...)):
+    text = str(payload.get('text', ''))
+    graded = grade_text(text)
+    legs = [{'leg': item.leg.raw_text, 'result': item.settlement} for item in graded.legs]
     return {
+
+        'legs': legs,
+        'parlay_result': graded.overall,
+
         'ok': True,
         'message': 'Slip checked successfully.',
         'legs': [
@@ -1356,4 +1462,5 @@ def check_slip(payload: dict = Body(...)):
             for item in grade.legs
         ],
         'parlay_result': grade.overall,
+
     }
