@@ -333,6 +333,75 @@ def ops_affiliate_webhooks_page() -> str:
     return _ops_page_html('Affiliate Webhook Ops', '/affiliate/webhooks')
 
 
+
+@app.get('/', response_class=HTMLResponse)
+def landing_page() -> str:
+    return """<!doctype html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <title>Parlay</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #0b1020;
+      color: #edf2ff;
+      font-family: Inter, Arial, sans-serif;
+    }
+    main {
+      max-width: 560px;
+      padding: 24px;
+      text-align: center;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(2rem, 5vw, 3rem);
+      line-height: 1.1;
+    }
+    p {
+      margin: 0 0 24px;
+      color: #b4c0e3;
+      font-size: 1.1rem;
+    }
+    .actions {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .cta {
+      background: #4f7cff;
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 12px;
+      text-decoration: none;
+      font-weight: 700;
+    }
+    .secondary {
+      color: #8bb4ff;
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Did This Parlay Cash?</h1>
+    <p>Paste your bet slip and instantly see if it hit.</p>
+    <div class='actions'>
+      <a class='cta' href='/check'>Check a Slip</a>
+      <a class='secondary' href='/app'>Open app</a>
+    </div>
+  </main>
+</body>
+</html>"""
+
 @app.get('/check', response_class=HTMLResponse)
 def check_page() -> HTMLResponse:
     html = """<!doctype html>
@@ -409,6 +478,7 @@ def check_page() -> HTMLResponse:
 </html>
 """
     return HTMLResponse(html)
+
 
 
 @app.get('/app')
