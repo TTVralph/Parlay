@@ -127,15 +127,15 @@ def settle_ticket_profit(overall: str, stake_amount: float | None = None, to_win
 
 
 def build_grade_from_legs(graded_legs: list[GradedLeg]) -> GradeResponse:
-    settlements = {item.settlement for item in graded_legs}
-    if 'loss' in settlements:
+    settlements = [item.settlement for item in graded_legs]
+    if any(settlement == 'loss' for settlement in settlements):
         overall = 'lost'
-    elif 'unmatched' in settlements:
-        overall = 'needs_review'
-    elif settlements <= {'win', 'push'}:
+    elif settlements and all(settlement == 'win' for settlement in settlements):
         overall = 'cashed'
-    else:
+    elif any(settlement == 'pending' for settlement in settlements) and not any(settlement == 'unmatched' for settlement in settlements):
         overall = 'pending'
+    else:
+        overall = 'needs_review'
     return GradeResponse(overall=overall, legs=graded_legs)
 
 

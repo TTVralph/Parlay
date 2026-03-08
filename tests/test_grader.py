@@ -8,3 +8,21 @@ def test_grade_sample_parlay() -> None:
     assert result.legs[0].settlement == 'win'
     assert result.legs[1].settlement == 'win'
     assert result.legs[2].settlement == 'loss'
+
+
+def test_grade_unverified_slip_is_needs_review() -> None:
+    result = grade_text('Leg A\nLeg B')
+    assert result.overall == 'needs_review'
+    assert all(item.settlement == 'unmatched' for item in result.legs)
+
+
+def test_grade_live_or_unresolved_stats_is_pending() -> None:
+    result = grade_text('Nikola Jokic over 250.5 passing yards')
+    assert result.overall == 'pending'
+    assert result.legs[0].settlement == 'pending'
+
+
+def test_grade_only_verified_wins_is_cashed() -> None:
+    result = grade_text('Jokic 25+ pts\nDenver ML')
+    assert result.overall == 'cashed'
+    assert all(item.settlement == 'win' for item in result.legs)

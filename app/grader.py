@@ -8,7 +8,6 @@ from .providers.factory import get_results_provider
 from .resolver import resolve_leg_events
 from .parser import parse_text
 
-
 def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     if leg.confidence < 0.75:
         return GradedLeg(leg=leg, settlement='unmatched', reason='Low-confidence parse; send to manual review')
@@ -29,7 +28,7 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             return GradedLeg(leg=leg, settlement='unmatched', reason='No team/event context identified')
         team_result = provider.get_team_result(lookup_team, event_id=leg.event_id)
         if not team_result:
-            return GradedLeg(leg=leg, settlement='unmatched', reason='No team result found for resolved event')
+            return GradedLeg(leg=leg, settlement='pending', reason='Event resolved but final team result is not available yet')
 
         if leg.market_type == 'moneyline':
             won = team_result.moneyline_win if leg.team == lookup_team else provider.get_team_result(leg.team or '', event_id=leg.event_id).moneyline_win  # type: ignore[union-attr]
@@ -63,8 +62,10 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         return GradedLeg(leg=leg, settlement='unmatched', reason='No player identified')
 
     actual_value = provider.get_player_result(leg.player, leg.market_type, event_id=leg.event_id)
-    if actual_value is None or leg.line is None or leg.direction is None:
+    if leg.line is None or leg.direction is None:
         return GradedLeg(leg=leg, settlement='unmatched', reason='Missing values required for settlement')
+    if actual_value is None:
+        return GradedLeg(leg=leg, settlement='pending', reason='Event resolved but final player result is not available yet')
 
     if leg.direction == 'over':
         won = actual_value > leg.line
@@ -90,14 +91,14 @@ def grade_text(text: str, provider: ResultsProvider | None = None, posted_at: da
     resolved_legs = resolve_leg_events(legs, provider, posted_at)
     graded = [settle_leg(leg, provider) for leg in resolved_legs]
 
-    settlements = {item.settlement for item in graded}
-    if 'loss' in settlements:
+    settlements = [item.settlement for item in graded]
+    if any(settlement == 'loss' for settlement in settlements):
         overall = 'lost'
-    elif 'unmatched' in settlements:
-        overall = 'needs_review'
-    elif settlements <= {'win', 'push'}:
+    elif settlements and all(settlement == 'win' for settlement in settlements):
         overall = 'cashed'
-    else:
+    elif any(settlement == 'pending' for settlement in settlements) and not any(settlement == 'unmatched' for settlement in settlements):
         overall = 'pending'
+    else:
+        overall = 'needs_review'
 
     return GradeResponse(overall=overall, legs=graded)

@@ -52,3 +52,12 @@ def test_check_rejects_invalid_stake():
     body = res.json()
     assert body['ok'] is False
     assert body['message'] == 'Enter a valid numeric stake amount.'
+
+
+def test_check_maps_pending_to_still_live():
+    res = client.post('/check-slip', json={'text': 'Nikola Jokic over 250.5 passing yards'})
+    assert res.status_code == 200
+    body = res.json()
+    assert body['ok'] is True
+    assert body['parlay_result'] == 'still_live'
+    assert body['legs'][0]['result'] == 'pending'
