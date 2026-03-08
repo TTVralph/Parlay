@@ -125,8 +125,10 @@ from .odds_matcher import match_ticket_odds
 from .providers.allsports_client import AllSportsClient, AllSportsError
 from .providers.allsports_normalizer import (
     ALLSPORTS_PROVIDER_CAPABILITIES,
+    StatsPayloadShapeError,
     normalize_games,
     normalize_match_stats,
+    safe_payload_preview,
     summarize_stats_payload_shape,
 )
 from .providers.espn_provider import ESPNNBAResultsProvider
@@ -377,13 +379,34 @@ def allsports_match_stats(match_id: str) -> AllSportsStatsResponse:
     logger.info('AllSports stats lookup match_id=%s', match_id)
     try:
         payload = client.get_match_statistics(match_id)
+        logger.info(
+            'AllSports stats upstream payload match_id=%s top_level_type=%s top_level_keys=%s',
+            match_id,
+            type(payload).__name__,
+            sorted(payload.keys()) if isinstance(payload, dict) else None,
+        )
+        if not payload:
+            raise HTTPException(status_code=404, detail='Match statistics not found')
+
+        shape_summary = summarize_stats_payload_shape(payload)
+        logger.info('AllSports stats normalized shape match_id=%s summary=%s', match_id, shape_summary)
+        return AllSportsStatsResponse(**normalize_match_stats(match_id, payload))
     except AllSportsError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    if not payload:
-        raise HTTPException(status_code=404, detail='Match statistics not found')
-    shape_summary = summarize_stats_payload_shape(payload)
-    logger.info('AllSports stats normalized shape match_id=%s summary=%s', match_id, shape_summary)
-    return AllSportsStatsResponse(**normalize_match_stats(match_id, payload))
+    except StatsPayloadShapeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                'code': exc.code,
+                'message': exc.message,
+                'details': exc.details,
+            },
+        ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception('Unexpected AllSports stats error match_id=%s error=%s', match_id, exc)
+        raise HTTPException(status_code=500, detail='Unexpected error while processing match statistics') from exc
 
 
 @app.get('/api/providers/capabilities', response_model=ProviderCapabilitiesResponse)
@@ -398,25 +421,98 @@ def allsports_match_stats_debug(match_id: str) -> dict[str, object]:
     client = _build_allsports_client()
     try:
         payload = client.get_match_statistics(match_id)
+        logger.info(
+            'AllSports stats upstream payload match_id=%s top_level_type=%s top_level_keys=%s',
+            match_id,
+            type(payload).__name__,
+            sorted(payload.keys()) if isinstance(payload, dict) else None,
+        )
+        if not payload:
+            raise HTTPException(status_code=404, detail='Match statistics not found')
+
+        payload_shape = summarize_stats_payload_shape(payload)
+        response: dict[str, object] = {
+            'payloadShape': payload_shape,
+            'topLevelType': type(payload).__name__,
+            'topLevelKeys': sorted(payload.keys()) if isinstance(payload, dict) else None,
+        }
+
+        try:
+            normalized = normalize_match_stats(match_id, payload)
+            response.update({
+                'matchId': normalized['matchId'],
+                'normalizedPreview': {
+                    'homeTeam': normalized.get('homeTeam'),
+                    'awayTeam': normalized.get('awayTeam'),
+                    'teamStatsCount': len(normalized.get('teamStats') or []),
+                    'playerStatsPresent': normalized.get('playerStats') is not None,
+                    'playerStatsCount': len(normalized.get('playerStats') or []),
+                },
+            })
+        except StatsPayloadShapeError as exc:
+            response.update({
+                'matchId': match_id,
+                'normalizedPreview': None,
+                'normalizationError': {
+                    'code': exc.code,
+                    'message': exc.message,
+                    'details': exc.details,
+                },
+            })
+        return response
     except AllSportsError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    if not payload:
-        raise HTTPException(status_code=404, detail='Match statistics not found')
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception('Unexpected AllSports stats debug error match_id=%s error=%s', match_id, exc)
+        return {
+            'matchId': match_id,
+            'normalizedPreview': None,
+            'normalizationError': {
+                'code': 'stats_debug_unexpected_error',
+                'message': 'Unexpected error while inspecting match statistics payload',
+                'details': {'exception_type': type(exc).__name__},
+            },
+        }
 
-    normalized = normalize_match_stats(match_id, payload)
-    payload_shape = summarize_stats_payload_shape(payload)
-    return {
-        'matchId': normalized['matchId'],
-        'payloadShape': payload_shape,
-        'normalizedPreview': {
-            'homeTeam': normalized.get('homeTeam'),
-            'awayTeam': normalized.get('awayTeam'),
-            'teamStatsCount': len(normalized.get('teamStats') or []),
-            'playerStatsPresent': normalized.get('playerStats') is not None,
-            'playerStatsCount': len(normalized.get('playerStats') or []),
-        },
-    }
 
+@app.get('/api/allsports/match/{match_id}/stats/raw')
+def allsports_match_stats_raw(match_id: str) -> dict[str, object]:
+    if not match_id.strip():
+        raise HTTPException(status_code=400, detail='match_id is required')
+
+    client = _build_allsports_client()
+    try:
+        payload = client.get_match_statistics(match_id)
+        logger.info(
+            'AllSports stats upstream payload match_id=%s top_level_type=%s top_level_keys=%s',
+            match_id,
+            type(payload).__name__,
+            sorted(payload.keys()) if isinstance(payload, dict) else None,
+        )
+        if not payload:
+            raise HTTPException(status_code=404, detail='Match statistics not found')
+
+        first_item_keys = None
+        if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+            first_item_keys = sorted(payload[0].keys())
+
+        return {
+            'matchId': match_id,
+            'top_level_type': type(payload).__name__,
+            'top_level_keys': sorted(payload.keys()) if isinstance(payload, dict) else None,
+            'list_length': len(payload) if isinstance(payload, list) else None,
+            'first_item_keys': first_item_keys,
+            'preview': safe_payload_preview(payload),
+        }
+    except AllSportsError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception('Unexpected AllSports stats raw inspection error match_id=%s error=%s', match_id, exc)
+        raise HTTPException(status_code=500, detail='Unexpected error while inspecting raw match statistics') from exc
 
 
 @app.get('/allsports-test', response_class=HTMLResponse)
