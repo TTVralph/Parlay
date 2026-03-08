@@ -30,7 +30,7 @@ def test_check_job_submit_and_poll_to_complete(monkeypatch):
 
     assert final is not None
     assert final['result']['ok'] is True
-    assert final['result']['parlay_result'] in {'cashed', 'lost', 'pending', 'needs_review'}
+    assert final['result']['parlay_result'] in {'cashed', 'lost', 'still_live', 'needs_review'}
 
 
 def test_check_job_returns_404_for_missing_job():

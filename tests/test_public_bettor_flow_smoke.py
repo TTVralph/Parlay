@@ -17,5 +17,5 @@ def test_check_slip_grading_route_still_works() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body['ok'] is True
-    assert body['parlay_result'] in {'cashed', 'lost', 'pending', 'needs_review'}
+    assert body['parlay_result'] in {'cashed', 'lost', 'still_live', 'needs_review'}
     assert len(body['legs']) >= 1
