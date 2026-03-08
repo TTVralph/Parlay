@@ -34,3 +34,21 @@ def test_check_grading_error_message(monkeypatch):
     body = res.json()
     assert body['ok'] is False
     assert body['message'] == 'Could not grade this slip right now.'
+
+
+def test_check_with_stake_returns_estimated_payout_and_profit():
+    res = client.post('/check-slip', json={'text': 'Denver ML\nOdds +150', 'stake_amount': 20})
+    assert res.status_code == 200
+    body = res.json()
+    assert body['ok'] is True
+    assert body['estimated_profit'] == 30.0
+    assert body['estimated_payout'] == 50.0
+    assert body['american_odds_used'] == 150
+
+
+def test_check_rejects_invalid_stake():
+    res = client.post('/check-slip', json={'text': 'Denver ML\nOdds +150', 'stake_amount': 'abc'})
+    assert res.status_code == 200
+    body = res.json()
+    assert body['ok'] is False
+    assert body['message'] == 'Enter a valid numeric stake amount.'

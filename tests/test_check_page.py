@@ -54,3 +54,11 @@ def test_check_page_supports_screenshot_upload_flow():
     assert "fetch('/ingest/screenshot/grade'" in html
     assert 'normalizeScreenshotPayload' in html
 
+
+def test_check_page_shows_optional_stake_input():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "id='stakeAmount'" in html
+    assert 'Stake amount (optional)' in html
