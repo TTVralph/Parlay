@@ -71,6 +71,26 @@ class GradeResponse(BaseModel):
 
 
 
+class AllSportsGame(BaseModel):
+    id: str
+    homeTeam: str | None = None
+    awayTeam: str | None = None
+    status: str | None = None
+    startTime: Any = None
+
+
+class AllSportsGamesResponse(BaseModel):
+    date: str
+    games: list[AllSportsGame] = Field(default_factory=list)
+
+
+class AllSportsStatsResponse(BaseModel):
+    matchId: str
+    homeTeam: str | None = None
+    awayTeam: str | None = None
+    teamStats: list[dict[str, Any]] = Field(default_factory=list)
+    playerStats: list[dict[str, Any]] = Field(default_factory=list)
+
 
 class CheckJobCreateResponse(BaseModel):
     ok: bool = True
