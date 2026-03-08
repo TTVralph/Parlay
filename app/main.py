@@ -118,6 +118,7 @@ from .ocr import get_ocr_provider
 from .ocr.providers import validate_image_upload
 from .parser import parse_text
 from .odds_matcher import match_ticket_odds
+from .providers.espn_provider import ESPNNBAResultsProvider
 from .polling import poll_account_once
 from .scheduler import get_scheduler_config, run_due_polls_once, start_scheduler_thread
 from .services.repository import (
@@ -200,6 +201,7 @@ _public_check_rate_limit_lock = threading.Lock()
 _public_check_rate_limit_hits: dict[str, list[float]] = {}
 _public_check_jobs_lock = threading.Lock()
 _public_check_jobs: dict[str, dict] = {}
+_public_check_provider = ESPNNBAResultsProvider()
 
 
 def _cleanup_public_check_jobs() -> None:
@@ -565,7 +567,7 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
         }
 
     try:
-        graded = grade_text(normalized)
+        graded = grade_text(normalized, provider=_public_check_provider, posted_at=datetime.utcnow())
     except Exception:
         return {
             'ok': False,
