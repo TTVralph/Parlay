@@ -583,12 +583,6 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
 def _run_public_check_job(job_id: str, text: str, stake_amount: float | None = None) -> None:
     try:
         result = _process_public_check_text(text, stake_amount=stake_amount)
-    return {'ok': True, 'message': 'Slip checked.', 'legs': legs, 'parlay_result': graded.overall}
-
-
-def _run_public_check_job(job_id: str, text: str) -> None:
-    try:
-        result = _process_public_check_text(text)
         with _public_check_jobs_lock:
             row = _public_check_jobs.get(job_id)
             if row is None:
@@ -1619,6 +1613,5 @@ def pro_capper_roi_dashboard(db: Session = Depends(get_db), _: _db_models.UserSe
 def pro_capper_roi_dashboard_single(username: str, db: Session = Depends(get_db), _: _db_models.UserSessionORM = Depends(require_entitlement('roi_dashboard'))) -> CapperRoiDashboardResponse:
     rows = [CapperRoiDashboardRow(**row) for row in compute_capper_roi_dashboard(db, username=username)]
     return CapperRoiDashboardResponse(rows=rows)
-
 
 
