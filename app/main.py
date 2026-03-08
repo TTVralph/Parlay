@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -1140,21 +1140,58 @@ def pro_capper_roi_dashboard(db: Session = Depends(get_db), _: _db_models.UserSe
 def pro_capper_roi_dashboard_single(username: str, db: Session = Depends(get_db), _: _db_models.UserSessionORM = Depends(require_entitlement('roi_dashboard'))) -> CapperRoiDashboardResponse:
     rows = [CapperRoiDashboardRow(**row) for row in compute_capper_roi_dashboard(db, username=username)]
     return CapperRoiDashboardResponse(rows=rows)
-    from fastapi import Body
 
-@app.post("/check-slip")
+@app.post('/check')
+@app.post('/check-slip')
 def check_slip(payload: dict = Body(...)):
-    text = payload.get("text", "")
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    text = (payload.get('text') or '').strip()
+    if not text:
+        return {
+            'ok': False,
+            'message': 'Paste your bet slip first so we can check it.',
+            'legs': [],
+            'parlay_result': 'needs_review',
+        }
 
-    legs = []
-    for l in lines:
-        legs.append({
-            "leg": l,
-            "result": "pending"
-        })
+    parsed_legs = parse_text(text)
+    if not parsed_legs:
+        return {
+            'ok': False,
+            'message': 'No legs detected. Try pasting one leg per line.',
+            'legs': [],
+            'parlay_result': 'needs_review',
+        }
+
+    unsupported_legs = [leg.raw_text for leg in parsed_legs if leg.confidence <= 0.0]
+    if unsupported_legs:
+        return {
+            'ok': False,
+            'message': 'One or more picks use a market we do not support yet. Try using standard formats like "Player Over 24.5 Points" or "Team ML".',
+            'unsupported_legs': unsupported_legs,
+            'legs': [],
+            'parlay_result': 'needs_review',
+        }
+
+    try:
+        grade = grade_text(text)
+    except Exception:
+        return {
+            'ok': False,
+            'message': 'We hit a grading error while checking your slip. Please try again in a minute.',
+            'legs': [],
+            'parlay_result': 'needs_review',
+        }
 
     return {
-        "legs": legs,
-        "parlay_result": "pending"
+        'ok': True,
+        'message': 'Slip checked successfully.',
+        'legs': [
+            {
+                'leg': item.leg.raw_text,
+                'result': item.settlement,
+                'reason': item.reason,
+            }
+            for item in grade.legs
+        ],
+        'parlay_result': grade.overall,
     }
