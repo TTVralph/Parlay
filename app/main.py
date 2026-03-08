@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+import logging
 import os
 import threading
 import time
@@ -113,11 +114,15 @@ from .models import (
     AffiliateAnalyticsResponse,
     CapperVerificationRequest,
     CapperVerificationResponse,
+    AllSportsGamesResponse,
+    AllSportsStatsResponse,
 )
 from .ocr import get_ocr_provider
 from .ocr.providers import validate_image_upload
 from .parser import parse_text
 from .odds_matcher import match_ticket_odds
+from .providers.allsports_client import AllSportsClient, AllSportsError
+from .providers.allsports_normalizer import normalize_games, normalize_match_stats
 from .providers.espn_provider import ESPNNBAResultsProvider
 from .polling import poll_account_once
 from .scheduler import get_scheduler_config, run_due_polls_once, start_scheduler_thread
@@ -194,6 +199,7 @@ from .services.serializers import (
 from .x_client import get_x_client
 
 app = FastAPI(title='Parlay Cash Checker MVP', version='1.9.0')
+logger = logging.getLogger(__name__)
 run_lightweight_migrations()
 
 
@@ -327,6 +333,49 @@ def on_startup() -> None:
 @app.get('/health')
 def health() -> dict[str, str]:
     return {'status': 'ok'}
+
+
+
+
+def _parse_iso_date(raw_date: str) -> date:
+    try:
+        return date.fromisoformat(raw_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail='Invalid date format. Use YYYY-MM-DD') from exc
+
+
+def _build_allsports_client() -> AllSportsClient:
+    try:
+        return AllSportsClient.from_env()
+    except AllSportsError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+@app.get('/api/allsports/games', response_model=AllSportsGamesResponse)
+def allsports_games(date: str) -> AllSportsGamesResponse:
+    parsed_date = _parse_iso_date(date)
+    client = _build_allsports_client()
+    logger.info('AllSports games lookup date=%s', date)
+    try:
+        events = client.get_games_by_date(parsed_date)
+    except AllSportsError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    games = normalize_games(events)
+    return AllSportsGamesResponse(date=date, games=games)
+
+
+@app.get('/api/allsports/match/{match_id}/stats', response_model=AllSportsStatsResponse)
+def allsports_match_stats(match_id: str) -> AllSportsStatsResponse:
+    if not match_id.strip():
+        raise HTTPException(status_code=400, detail='match_id is required')
+    client = _build_allsports_client()
+    logger.info('AllSports stats lookup match_id=%s', match_id)
+    try:
+        payload = client.get_match_statistics(match_id)
+    except AllSportsError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    if not payload:
+        raise HTTPException(status_code=404, detail='Match statistics not found')
+    return AllSportsStatsResponse(**normalize_match_stats(match_id, payload))
 
 
 @app.get('/', response_class=HTMLResponse)
