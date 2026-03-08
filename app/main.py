@@ -386,6 +386,7 @@ Murray over 2.5 threes'></textarea>
   <div id='resultWrap' hidden>
     <div id='overall'></div>
     <div id='payoutOut' style='margin:8px 0;color:#334155;'></div>
+    <div id='debugOut' style='margin:8px 0 12px;color:#334155;'></div>
     <table>
       <thead><tr><th>Leg</th><th>Result</th><th>Matched event</th></tr></thead>
       <tbody id='legsBody'></tbody>
@@ -412,6 +413,7 @@ Murray over 2.5 threes'></textarea>
     const wrap=document.getElementById('resultWrap');
     const overall=document.getElementById('overall');
     const payoutOut=document.getElementById('payoutOut');
+    const debugOut=document.getElementById('debugOut');
     const legsBody=document.getElementById('legsBody');
     const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
     const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
@@ -451,8 +453,14 @@ Murray over 2.5 threes'></textarea>
     }
 
     function normalizeScreenshotPayload(body){
+      const parsedLegs=(body.result?.legs||[]).map((item)=>item.leg?.raw_text||'—');
+      const allReview=parsedLegs.length>0&&(body.result?.legs||[]).every((item)=>item.settlement==='unmatched');
       return {
         ok:true,
+        extracted_text:body.extracted_text||'',
+        parsed_legs:parsedLegs,
+        parse_warning:parsedLegs.length===0?'No valid bet legs were detected from this input.':null,
+        grading_warning:allReview?'Parsed legs were detected, but ESPN matching could not settle any leg.':null,
         legs:(body.result?.legs||[]).map((item)=>({
           leg:item.leg?.raw_text||'—',
           result:(item.settlement==='unmatched'?'review':item.settlement),
@@ -467,6 +475,7 @@ Murray over 2.5 threes'></textarea>
       const file=slipImage.files&&slipImage.files[0];
       wrap.hidden=true;
       legsBody.innerHTML='';
+      debugOut.innerHTML='';
       copyBtn.disabled=true;
       summaryOut.value='';
       if(!text&&!file){msg.textContent='Paste at least one leg first, or upload a screenshot.';return;}
@@ -493,8 +502,8 @@ Murray over 2.5 threes'></textarea>
           data=await res.json();
         }
 
-        if(!res.ok||data.ok===false){msg.textContent=data.message||'Could not check this slip right now.';return;}
-        msg.textContent='Done.';
+        if(!res.ok){msg.textContent=data.detail||data.message||'Could not check this slip right now.';return;}
+        msg.textContent=data.message||'Done.';
         overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');
         if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){
           payoutOut.textContent=`Estimated payout: $${Number(data.estimated_payout).toFixed(2)} (profit: $${Number(data.estimated_profit).toFixed(2)})`;
@@ -502,6 +511,16 @@ Murray over 2.5 threes'></textarea>
           payoutOut.textContent='';
         }
         renderRows(data.legs||[]);
+        const extracted=(data.extracted_text||'').trim();
+        const parsedLegs=(data.parsed_legs||[]).filter(Boolean);
+        const parseWarning=data.parse_warning?`<div><strong>Parsing:</strong> ${data.parse_warning}</div>`:'';
+        const gradingWarning=data.grading_warning?`<div><strong>Grading:</strong> ${data.grading_warning}</div>`:'';
+        debugOut.innerHTML=`
+          ${extracted?`<div><strong>OCR extracted text:</strong><pre style="white-space:pre-wrap;background:#f8fafc;padding:8px;border-radius:8px;">${extracted.replace(/</g,'&lt;')}</pre></div>`:''}
+          <div><strong>Parsed legs before grading:</strong> ${parsedLegs.length?parsedLegs.join(' | '):'No valid bet legs were detected from this input.'}</div>
+          ${parseWarning}
+          ${gradingWarning}
+        `;
         summaryOut.value=buildSummary(data);
         copyBtn.disabled=false;
         wrap.hidden=false;
@@ -548,21 +567,35 @@ def _estimate_profit_from_american(stake_amount: float, american_odds: int) -> f
 def _process_public_check_text(text: str, stake_amount: float | None = None) -> dict:
     normalized = text.strip()
     if stake_amount is not None and stake_amount <= 0:
-        return {'ok': False, 'message': 'Enter a stake greater than 0.', 'legs': [], 'parlay_result': 'needs_review'}
+        return {
+            'ok': False,
+            'message': 'Enter a stake greater than 0.',
+            'legs': [],
+            'parsed_legs': [],
+            'parse_warning': None,
+            'grading_warning': None,
+            'parlay_result': 'needs_review',
+        }
     if not normalized:
         return {
             'ok': False,
             'message': 'Paste at least one leg first.',
             'legs': [],
+            'parsed_legs': [],
+            'parse_warning': None,
+            'grading_warning': None,
             'parlay_result': 'needs_review',
         }
 
-    parsed_legs = parse_text(normalized)
+    parsed_legs = [leg.raw_text for leg in parse_text(normalized)]
     if not parsed_legs:
         return {
             'ok': False,
             'message': 'No bet legs found. Try one leg per line.',
             'legs': [],
+            'parsed_legs': [],
+            'parse_warning': 'No valid bet legs were detected from this input.',
+            'grading_warning': None,
             'parlay_result': 'needs_review',
         }
 
@@ -573,6 +606,9 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
             'ok': False,
             'message': 'Could not grade this slip right now.',
             'legs': [],
+            'parsed_legs': parsed_legs,
+            'parse_warning': None,
+            'grading_warning': 'Parsed legs were detected, but grading did not complete.',
             'parlay_result': 'needs_review',
         }
 
@@ -586,16 +622,34 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
         legs.append({'leg': item.leg.raw_text, 'result': result, 'matched_event': item.leg.event_label})
 
     parlay_result = 'still_live' if graded.overall == 'pending' else graded.overall
-    out = {'ok': True, 'message': 'Slip checked.', 'legs': legs, 'parlay_result': parlay_result}
+    out = {
+        'ok': True,
+        'message': 'Slip checked.',
+        'legs': legs,
+        'parsed_legs': parsed_legs,
+        'parse_warning': None,
+        'grading_warning': None,
+        'parlay_result': parlay_result,
+    }
     if unmatched_count == len(legs):
         out['message'] = 'Could not confidently match this slip to settled results. Please review manually.'
+        out['grading_warning'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
     elif unmatched_count > 0:
         out['message'] = f'{unmatched_count} leg(s) need manual review.'
+        out['grading_warning'] = f'ESPN matching could not settle {unmatched_count} parsed leg(s).'
 
     if stake_amount is not None:
         financials = extract_financials(normalized)
         if financials.american_odds is None:
-            return {'ok': False, 'message': 'Add odds in your slip text (for example +120) to estimate payout.', 'legs': [], 'parlay_result': 'needs_review'}
+            return {
+                'ok': False,
+                'message': 'Add odds in your slip text (for example +120) to estimate payout.',
+                'legs': [],
+                'parsed_legs': parsed_legs,
+                'parse_warning': None,
+                'grading_warning': out.get('grading_warning'),
+                'parlay_result': 'needs_review',
+            }
         est_profit = _estimate_profit_from_american(stake_amount, financials.american_odds)
         out['stake_amount'] = round(stake_amount, 2)
         out['estimated_profit'] = est_profit
@@ -637,7 +691,7 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
         try:
             parsed_stake = float(stake)
         except (TypeError, ValueError):
-            return {'ok': False, 'message': 'Enter a valid numeric stake amount.', 'legs': [], 'parlay_result': 'needs_review'}
+            return {'ok': False, 'message': 'Enter a valid numeric stake amount.', 'legs': [], 'parsed_legs': [], 'parse_warning': None, 'grading_warning': None, 'parlay_result': 'needs_review'}
     return _process_public_check_text(str(payload.get('text', '')), stake_amount=parsed_stake)
 
 
