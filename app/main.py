@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import os
+import threading
+import time
+from uuid import uuid4
 
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse
@@ -34,6 +38,8 @@ from .models import (
     AliasUpsertRequest,
     GradeRequest,
     GradeResponse,
+    CheckJobCreateResponse,
+    CheckJobStatusResponse,
     IngestGradeResponse,
     OCRExtractResponse,
     ParseRequest,
@@ -68,6 +74,9 @@ from .models import (
     UserRoleUpdateRequest,
     CapperSelfProfileResponse,
     CapperSelfProfileUpdateRequest,
+    AdminCapperCreateRequest,
+    AdminCapperUpdateRequest,
+    AdminCapperProfileResponse,
     SubscriptionPlanResponse,
     SubscriptionPlansResponse,
     SubscriptionCheckoutRequest,
@@ -125,6 +134,10 @@ from .services.repository import (
     manual_regrade_ticket,
     upsert_watched_account,
     get_or_create_capper_profile,
+    list_capper_profiles,
+    get_capper_profile,
+    create_capper_profile,
+    update_capper_profile_admin,
     set_capper_profile_visibility,
     hide_ticket,
     unhide_ticket,
@@ -181,6 +194,59 @@ from .x_client import get_x_client
 app = FastAPI(title='Parlay Cash Checker MVP', version='1.9.0')
 run_lightweight_migrations()
 
+
+_public_check_rate_limit_lock = threading.Lock()
+_public_check_rate_limit_hits: dict[str, list[float]] = {}
+_public_check_jobs_lock = threading.Lock()
+_public_check_jobs: dict[str, dict] = {}
+
+
+def _cleanup_public_check_jobs() -> None:
+    ttl_seconds = int(os.getenv('PUBLIC_CHECK_JOB_TTL_SECONDS', '900'))
+    max_jobs = int(os.getenv('PUBLIC_CHECK_JOB_MAX_STORED', '1000'))
+    now = time.time()
+    expired = []
+    for job_id, item in _public_check_jobs.items():
+        if item.get('status') == 'pending':
+            continue
+        completed_at = item.get('completed_at', now)
+        if now - completed_at > ttl_seconds:
+            expired.append(job_id)
+    for job_id in expired:
+        _public_check_jobs.pop(job_id, None)
+    if len(_public_check_jobs) > max_jobs:
+        ordered = sorted(_public_check_jobs.items(), key=lambda kv: kv[1].get('submitted_at', 0.0))
+        for job_id, _row in ordered[: max(0, len(_public_check_jobs) - max_jobs)]:
+            _public_check_jobs.pop(job_id, None)
+
+
+def _extract_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get('x-forwarded-for')
+    if forwarded_for:
+        return forwarded_for.split(',')[0].strip() or 'unknown'
+    if request.client and request.client.host:
+        return request.client.host
+    return 'unknown'
+
+
+def _enforce_public_check_rate_limit(request: Request, response: Response, route_tag: str) -> None:
+    limit_per_min = int(os.getenv('PUBLIC_CHECK_RATE_LIMIT_PER_MINUTE', '60'))
+    if limit_per_min <= 0:
+        return
+    window_seconds = int(os.getenv('PUBLIC_CHECK_RATE_LIMIT_WINDOW_SECONDS', '60'))
+    now = time.time()
+    cutoff = now - window_seconds
+    key = f'{route_tag}:{_extract_client_ip(request)}'
+
+    with _public_check_rate_limit_lock:
+        hits = [ts for ts in _public_check_rate_limit_hits.get(key, []) if ts >= cutoff]
+        if len(hits) >= limit_per_min:
+            retry_after = max(1, int(hits[0] + window_seconds - now))
+            response.headers['Retry-After'] = str(retry_after)
+            raise HTTPException(status_code=429, detail='Too many slip checks. Please try again shortly.')
+        hits.append(now)
+        _public_check_rate_limit_hits[key] = hits
+
 FRONTEND_DIST = Path(__file__).resolve().parent / 'frontend' / 'dist'
 if FRONTEND_DIST.exists():
     app.mount('/assets', StaticFiles(directory=FRONTEND_DIST / 'assets'), name='assets')
@@ -192,6 +258,18 @@ def _user_to_response(user: _db_models.UserORM) -> UserProfileResponse:
 
 def _session_to_response(session: _db_models.UserSessionORM) -> SessionResponse:
     return SessionResponse(access_token=session.session_token, expires_at=session.expires_at, user=_user_to_response(session.user))
+
+
+def _capper_admin_profile_to_response(row: _db_models.CapperProfileORM) -> AdminCapperProfileResponse:
+    return AdminCapperProfileResponse(
+        username=row.username,
+        is_public=row.is_public,
+        moderation_note=row.moderation_note,
+        display_name=row.display_name,
+        bio=row.bio,
+        verified=row.is_verified,
+        verification_badge=row.verification_badge,
+    )
 
 
 def _billing_to_response(sub: _db_models.UserSubscriptionORM) -> UserSubscriptionResponse:
@@ -250,14 +328,160 @@ def health() -> dict[str, str]:
 
 @app.get('/', response_class=HTMLResponse)
 def public_home_page() -> HTMLResponse:
-    html = """<!doctype html><html><head><title>ParlayBot</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:820px;}a{color:#0a58ca;text-decoration:none;}ul{line-height:1.8;}</style></head><body><h1>ParlayBot</h1><p>Public tools:</p><ul><li><a href='/check'>Slip checker</a></li><li><a href='/leaderboard'>Leaderboard</a></li><li><a href='/app'>Web app</a></li></ul></body></html>"""
+    html = """<!doctype html><html><head><title>ParlayBot</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:760px;color:#0f172a;}h1{margin:0 0 10px;}p{margin:0 0 18px;color:#475569;}.actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;}.cta{background:#0f172a;color:#fff;}.secondary{border:1px solid #cbd5e1;color:#0f172a;}</style></head><body><h1>Did This Parlay Cash?</h1><p>Paste your bet slip and instantly see if it hit.</p><div class='actions'><a class='cta' href='/check'>Check a Slip</a><a class='secondary' href='/app'>Open App</a></div></body></html>"""
     return HTMLResponse(html)
 
 
 @app.get('/check', response_class=HTMLResponse)
 def public_check_page() -> HTMLResponse:
-    html = """<!doctype html><html><head><title>Slip Checker</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:900px;}textarea{width:100%;min-height:220px;padding:12px;border:1px solid #ddd;border-radius:8px;font-family:inherit;}button{margin-top:12px;padding:10px 14px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer;}pre{margin-top:16px;background:#111;color:#eee;padding:16px;border-radius:10px;overflow:auto;white-space:pre-wrap;}</style></head><body><h1>Slip checker</h1><p>Paste a ticket and run the existing <code>/grade</code> endpoint.</p><textarea id='slip' placeholder='Paste your bet slip text here'></textarea><br><button id='checkBtn'>Check slip</button><pre id='result'>Result will appear here.</pre><script>const slip=document.getElementById('slip');const result=document.getElementById('result');document.getElementById('checkBtn').addEventListener('click',async()=>{const text=slip.value.trim();if(!text){result.textContent='Please paste a slip first.';return;}result.textContent='Checking...';try{const res=await fetch('/grade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});const body=await res.text();try{result.textContent=JSON.stringify(JSON.parse(body),null,2);}catch(e){result.textContent=body||'No response body';}}catch(err){result.textContent='Request failed: '+(err?.message||String(err));}});</script></body></html>"""
+    html = """<!doctype html><html><head><title>Did This Parlay Cash?</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:900px;color:#0f172a;}h1{margin-bottom:8px;}p{color:#475569;}textarea{width:100%;min-height:190px;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-family:inherit;box-sizing:border-box;}button{margin-top:12px;padding:10px 14px;border:1px solid #334155;border-radius:10px;background:#0f172a;color:#fff;cursor:pointer;}button[disabled]{opacity:.6;cursor:not-allowed;}button.sample{margin-top:0;background:#fff;color:#0f172a;border:1px solid #cbd5e1;padding:8px 10px;}button.secondary{background:#fff;color:#0f172a;border-color:#cbd5e1;}#samples{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px;}#uploadWrap{margin-top:12px;padding:10px;border:1px dashed #cbd5e1;border-radius:10px;background:#fafafa;}#message{margin-top:12px;color:#334155;font-weight:600;}#resultWrap{margin-top:14px;border:1px solid #e2e8f0;border-radius:12px;padding:14px;}#overall{font-size:18px;font-weight:700;margin-bottom:12px;}#summaryWrap{margin-top:12px;}#summaryOut{min-height:98px;background:#f8fafc;}table{width:100%;border-collapse:collapse;}th,td{text-align:left;padding:8px;border-bottom:1px solid #e2e8f0;vertical-align:top;}th{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:#64748b;}code{background:#f8fafc;padding:2px 6px;border-radius:6px;}</style></head><body><h1>Did This Parlay Cash?</h1><p>One leg per line. Pick a sample, paste your slip, or upload a screenshot, then hit <code>Check Slip</code>.</p><div id='samples'><button type='button' class='sample' data-sample='sample_nba_props'>NBA Props</button><button type='button' class='sample' data-sample='sample_mlb'>MLB Mix</button><button type='button' class='sample' data-sample='sample_nfl'>NFL Mix</button></div><textarea id='slip' placeholder='Jokic over 24.5 points
+Denver ML
+Murray over 2.5 threes'></textarea><input id='stakeAmount' type='number' min='0.01' step='0.01' placeholder='Stake amount (optional)' style='margin-top:10px;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;box-sizing:border-box;'><div id='uploadWrap'><label for='slipImage'><strong>Or upload a slip screenshot</strong></label><input id='slipImage' type='file' accept='image/*'></div><button id='checkBtn'>Check Slip</button><div id='message'></div><div id='resultWrap' hidden><div id='overall'></div><div id='payoutOut' style='margin:8px 0;color:#334155;'></div><table><thead><tr><th>Leg</th><th>Result</th><th>Matched event</th></tr></thead><tbody id='legsBody'></tbody></table><div id='summaryWrap'><button id='copyBtn' class='secondary' type='button' disabled>Copy Summary</button><textarea id='summaryOut' readonly placeholder='Summary will appear here after checking a slip.'></textarea></div></div><script>const sampleSlips={sample_nba_props:'Jokic over 24.5 points
+Murray over 2.5 threes
+Denver ML',sample_mlb:'Dodgers ML
+Yankees +1.5
+Game Total Over 8.5',sample_nfl:'Chiefs ML
+Mahomes over 265.5 passing yards
+Kelce over 68.5 receiving yards'};const slip=document.getElementById('slip');const stakeAmount=document.getElementById('stakeAmount');const slipImage=document.getElementById('slipImage');const btn=document.getElementById('checkBtn');const copyBtn=document.getElementById('copyBtn');const summaryOut=document.getElementById('summaryOut');const msg=document.getElementById('message');const wrap=document.getElementById('resultWrap');const overall=document.getElementById('overall');const payoutOut=document.getElementById('payoutOut');const legsBody=document.getElementById('legsBody');const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};const overallLabel={cashed:'CASHED',lost:'LOST',pending:'PENDING',needs_review:'NEEDS REVIEW'};document.querySelectorAll('[data-sample]').forEach((node)=>{node.addEventListener('click',()=>{const key=node.getAttribute('data-sample');slip.value=sampleSlips[key]||'';slip.focus();});});function renderRows(legs){legsBody.innerHTML='';for(const item of legs||[]){const tr=document.createElement('tr');const legCell=document.createElement('td');const resultCell=document.createElement('td');const eventCell=document.createElement('td');legCell.textContent=item.leg||'—';resultCell.textContent=resultLabel[item.result]||String(item.result||'review');eventCell.textContent=item.matched_event||'—';tr.appendChild(legCell);tr.appendChild(resultCell);tr.appendChild(eventCell);legsBody.appendChild(tr);}}function buildSummary(payload){const lines=(payload.legs||[]).map((item)=>`${item.leg} ${resultEmoji[item.result]||'🧐'}`);lines.push('');lines.push(`Parlay: ${overallLabel[payload.parlay_result]||'NEEDS REVIEW'}`);return lines.join('\\n');}function normalizeScreenshotPayload(body){return {ok:true,legs:(body.result?.legs||[]).map((item)=>({leg:item.leg?.raw_text||'—',result:(item.settlement==='unmatched'?'review':item.settlement),matched_event:item.leg?.event_label||null})),parlay_result:body.result?.overall||'needs_review'};}btn.addEventListener('click',async()=>{const text=slip.value.trim();const file=slipImage.files&&slipImage.files[0];wrap.hidden=true;legsBody.innerHTML='';copyBtn.disabled=true;summaryOut.value='';if(!text&&!file){msg.textContent='Paste at least one leg first, or upload a screenshot.';return;}if(file&&file.type&&!file.type.startsWith('image/')){msg.textContent='Please upload an image file for screenshot grading.';return;}if(file&&file.size>8*1024*1024){msg.textContent='Screenshot is too large. Please use an image under 8MB.';return;}btn.disabled=true;msg.textContent='Checking your slip...';try{let data;let res;if(file){const form=new FormData();form.append('file',file);res=await fetch('/ingest/screenshot/grade',{method:'POST',body:form});const body=await res.json();if(!res.ok){msg.textContent='Could not check this screenshot right now.';return;}data=normalizeScreenshotPayload(body);}else{const stakeRaw=(stakeAmount.value||'').trim();const payload={text};if(stakeRaw){payload.stake_amount=stakeRaw;}res=await fetch('/check-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});data=await res.json();}if(!res.ok||data.ok===false){msg.textContent=data.message||'Could not check this slip right now.';return;}msg.textContent='Done.';overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){payoutOut.textContent=`Estimated payout: $${Number(data.estimated_payout).toFixed(2)} (profit: $${Number(data.estimated_profit).toFixed(2)})`;}else{payoutOut.textContent='';}renderRows(data.legs||[]);summaryOut.value=buildSummary(data);copyBtn.disabled=false;wrap.hidden=false;}catch(err){msg.textContent='Could not check this slip right now.';}finally{btn.disabled=false;}});copyBtn.addEventListener('click',async()=>{const text=summaryOut.value.trim();if(!text){return;}try{await navigator.clipboard.writeText(text);msg.textContent='Summary copied.';}catch(err){summaryOut.focus();summaryOut.select();msg.textContent='Copy blocked. Summary selected for manual copy.';}});</script></body></html>"""
     return HTMLResponse(html)
+
+
+def _estimate_profit_from_american(stake_amount: float, american_odds: int) -> float:
+    if american_odds > 0:
+        return round(stake_amount * (american_odds / 100.0), 2)
+    return round(stake_amount * (100.0 / abs(american_odds)), 2)
+
+
+def _process_public_check_text(text: str, stake_amount: float | None = None) -> dict:
+    normalized = text.strip()
+    if stake_amount is not None and stake_amount <= 0:
+        return {'ok': False, 'message': 'Enter a stake greater than 0.', 'legs': [], 'parlay_result': 'needs_review'}
+    if not normalized:
+        return {
+            'ok': False,
+            'message': 'Paste at least one leg first.',
+            'legs': [],
+            'parlay_result': 'needs_review',
+        }
+
+    parsed_legs = parse_text(normalized)
+    if not parsed_legs:
+        return {
+            'ok': False,
+            'message': 'No bet legs found. Try one leg per line.',
+            'legs': [],
+            'parlay_result': 'needs_review',
+        }
+
+    try:
+        graded = grade_text(normalized)
+    except Exception:
+        return {
+            'ok': False,
+            'message': 'Could not grade this slip right now.',
+            'legs': [],
+            'parlay_result': 'needs_review',
+        }
+
+    legs = []
+    for item in graded.legs:
+        result = 'review' if item.settlement == 'unmatched' else item.settlement
+        legs.append({'leg': item.leg.raw_text, 'result': result, 'matched_event': item.leg.event_label})
+
+    out = {'ok': True, 'message': 'Slip checked.', 'legs': legs, 'parlay_result': graded.overall}
+    if stake_amount is not None:
+        financials = extract_financials(normalized)
+        if financials.american_odds is None:
+            return {'ok': False, 'message': 'Add odds in your slip text (for example +120) to estimate payout.', 'legs': [], 'parlay_result': 'needs_review'}
+        est_profit = _estimate_profit_from_american(stake_amount, financials.american_odds)
+        out['stake_amount'] = round(stake_amount, 2)
+        out['estimated_profit'] = est_profit
+        out['estimated_payout'] = round(stake_amount + est_profit, 2)
+        out['american_odds_used'] = financials.american_odds
+    return out
+
+
+def _run_public_check_job(job_id: str, text: str, stake_amount: float | None = None) -> None:
+    try:
+        result = _process_public_check_text(text, stake_amount=stake_amount)
+        with _public_check_jobs_lock:
+            row = _public_check_jobs.get(job_id)
+            if row is None:
+                return
+            row['status'] = 'complete'
+            row['result'] = result
+            row['error'] = None
+            row['completed_at'] = time.time()
+    except Exception as exc:
+        with _public_check_jobs_lock:
+            row = _public_check_jobs.get(job_id)
+            if row is None:
+                return
+            row['status'] = 'failed'
+            row['result'] = None
+            row['error'] = str(exc)
+            row['completed_at'] = time.time()
+
+
+@app.post('/check')
+@app.post('/check-slip')
+def public_check_slip(request: Request, response: Response, payload: dict = Body(...)):
+    _enforce_public_check_rate_limit(request, response, 'check-slip')
+    stake = payload.get('stake_amount')
+    if stake is None or stake == '':
+        parsed_stake = None
+    else:
+        try:
+            parsed_stake = float(stake)
+        except (TypeError, ValueError):
+            return {'ok': False, 'message': 'Enter a valid numeric stake amount.', 'legs': [], 'parlay_result': 'needs_review'}
+    return _process_public_check_text(str(payload.get('text', '')), stake_amount=parsed_stake)
+
+
+@app.post('/check/jobs', response_model=CheckJobCreateResponse)
+def submit_public_check_job(request: Request, response: Response, payload: dict = Body(...)) -> CheckJobCreateResponse:
+    _enforce_public_check_rate_limit(request, response, 'check-job')
+    text = str(payload.get('text', '')).strip()
+    if not text:
+        raise HTTPException(status_code=400, detail='Paste at least one leg first.')
+    stake = payload.get('stake_amount')
+    if stake is None or stake == '':
+        parsed_stake = None
+    else:
+        try:
+            parsed_stake = float(stake)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail='Enter a valid numeric stake amount.')
+
+    job_id = uuid4().hex
+    with _public_check_jobs_lock:
+        _cleanup_public_check_jobs()
+        _public_check_jobs[job_id] = {
+            'status': 'pending',
+            'submitted_at': time.time(),
+            'completed_at': None,
+            'result': None,
+            'error': None,
+        }
+
+    worker = threading.Thread(target=_run_public_check_job, args=(job_id, text, parsed_stake), daemon=True)
+    worker.start()
+    return CheckJobCreateResponse(job_id=job_id, status='pending')
+
+
+@app.get('/check/jobs/{job_id}', response_model=CheckJobStatusResponse)
+def get_public_check_job(job_id: str) -> CheckJobStatusResponse:
+    with _public_check_jobs_lock:
+        row = _public_check_jobs.get(job_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Job not found')
+
+    status_value = row.get('status', 'failed')
+    if status_value == 'complete':
+        return CheckJobStatusResponse(job_id=job_id, status='complete', result=row.get('result'))
+    if status_value == 'failed':
+        return CheckJobStatusResponse(job_id=job_id, status='failed', error=(row.get('error') or 'Slip processing failed'))
+    return CheckJobStatusResponse(job_id=job_id, status='pending')
 
 
 @app.post('/auth/register', response_model=SessionResponse)
@@ -331,153 +555,6 @@ def ops_emails_page() -> str:
 @app.get('/ops/affiliate-webhooks', response_class=HTMLResponse)
 def ops_affiliate_webhooks_page() -> str:
     return _ops_page_html('Affiliate Webhook Ops', '/affiliate/webhooks')
-
-
-
-@app.get('/', response_class=HTMLResponse)
-def landing_page() -> str:
-    return """<!doctype html>
-<html lang='en'>
-<head>
-  <meta charset='utf-8'>
-  <meta name='viewport' content='width=device-width, initial-scale=1'>
-  <title>Parlay</title>
-  <style>
-    :root { color-scheme: dark; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: #0b1020;
-      color: #edf2ff;
-      font-family: Inter, Arial, sans-serif;
-    }
-    main {
-      max-width: 560px;
-      padding: 24px;
-      text-align: center;
-    }
-    h1 {
-      margin: 0 0 12px;
-      font-size: clamp(2rem, 5vw, 3rem);
-      line-height: 1.1;
-    }
-    p {
-      margin: 0 0 24px;
-      color: #b4c0e3;
-      font-size: 1.1rem;
-    }
-    .actions {
-      display: flex;
-      justify-content: center;
-      gap: 16px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    .cta {
-      background: #4f7cff;
-      color: #fff;
-      padding: 12px 20px;
-      border-radius: 12px;
-      text-decoration: none;
-      font-weight: 700;
-    }
-    .secondary {
-      color: #8bb4ff;
-      text-decoration: none;
-      font-weight: 600;
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Did This Parlay Cash?</h1>
-    <p>Paste your bet slip and instantly see if it hit.</p>
-    <div class='actions'>
-      <a class='cta' href='/check'>Check a Slip</a>
-      <a class='secondary' href='/app'>Open app</a>
-    </div>
-  </main>
-</body>
-</html>"""
-
-@app.get('/check', response_class=HTMLResponse)
-def check_page() -> HTMLResponse:
-    html = """<!doctype html>
-<html>
-<head>
-  <meta charset=\"utf-8\" />
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-  <title>Parlay Slip Check</title>
-  <style>
-    body { margin: 0; font-family: Inter, Arial, sans-serif; background: #0b1020; color: #edf2ff; }
-    .shell { max-width: 820px; margin: 0 auto; padding: 24px 16px 40px; }
-    .card { background: #131a31; border: 1px solid #26304f; border-radius: 16px; padding: 18px; }
-    h1 { margin: 0 0 8px; font-size: 30px; }
-    .muted { color: #aab4d6; margin-bottom: 16px; }
-    .samples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-    button { border-radius: 12px; border: 1px solid #31406b; background: #1a2342; color: #edf2ff; padding: 10px 12px; font: inherit; cursor: pointer; }
-    button.primary { background: #4f7cff; font-weight: 700; }
-    textarea { width: 100%; min-height: 170px; border-radius: 12px; border: 1px solid #31406b; background: #0f1630; color: #fff; padding: 12px; box-sizing: border-box; }
-    pre { background: #0f1630; border: 1px solid #26304f; border-radius: 12px; padding: 12px; overflow-x: auto; margin-top: 12px; }
-  </style>
-</head>
-<body>
-  <div class=\"shell\">
-    <h1>Check a slip</h1>
-    <p class=\"muted\">Paste a ticket and run a quick parser check.</p>
-    <div class=\"card\">
-      <div class=\"samples\">
-        <button type=\"button\" data-sample=\"props\">NBA Player Props</button>
-        <button type=\"button\" data-sample=\"moneyline\">NBA Moneyline</button>
-        <button type=\"button\" data-sample=\"mixed\">Mixed Parlay</button>
-      </div>
-      <textarea id=\"slipText\" placeholder=\"Paste your slip text here...\"></textarea>
-      <div style=\"margin-top:10px;\"><button id=\"checkBtn\" class=\"primary\" type=\"button\">Check slip</button></div>
-      <pre id=\"output\">{\"hint\": \"Select an example or paste a slip, then click Check slip.\"}</pre>
-    </div>
-  </div>
-
-  <script>
-    const samples = {
-      props: `Jokic over 24.5 points\nMurray over 2.5 threes\nOdds +210\nStake 25`,
-      moneyline: `Denver ML\nBoston ML\nOdds +130\nStake 20`,
-      mixed: `Denver ML\nJokic over 24.5 points\nGame Total Over 228.5\nOdds +420\nStake 15`
-    };
-
-    const textEl = document.getElementById('slipText');
-    const outputEl = document.getElementById('output');
-
-    document.querySelectorAll('[data-sample]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        textEl.value = samples[btn.dataset.sample] || '';
-      });
-    });
-
-    document.getElementById('checkBtn').addEventListener('click', async () => {
-      const text = textEl.value.trim();
-      if (!text) {
-        outputEl.textContent = JSON.stringify({ error: 'Enter slip text first.' }, null, 2);
-        return;
-      }
-      try {
-        const resp = await fetch('/check-slip', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-        });
-        const data = await resp.json();
-        outputEl.textContent = JSON.stringify(data, null, 2);
-      } catch (err) {
-        outputEl.textContent = JSON.stringify({ error: String(err) }, null, 2);
-      }
-    });
-  </script>
-</body>
-</html>
-"""
-    return HTMLResponse(html)
 
 
 
@@ -873,6 +950,40 @@ def show_capper_profile_endpoint(username: str, req: ModerationRequest, db: Sess
     row = set_capper_profile_visibility(db, username, is_public=True, moderation_note=req.reason)
     return CapperModerationResponse(username=row.username, is_public=row.is_public, moderation_note=row.moderation_note)
 
+
+@app.get('/admin/cappers', response_model=list[AdminCapperProfileResponse])
+def admin_cappers_list_endpoint(db: Session = Depends(get_db), _: str = Depends(require_admin)) -> list[AdminCapperProfileResponse]:
+    return [_capper_admin_profile_to_response(row) for row in list_capper_profiles(db)]
+
+
+@app.get('/admin/cappers/{username}', response_model=AdminCapperProfileResponse)
+def admin_cappers_get_endpoint(username: str, db: Session = Depends(get_db), _: str = Depends(require_admin)) -> AdminCapperProfileResponse:
+    row = get_capper_profile(db, username)
+    if not row:
+        raise HTTPException(status_code=404, detail='Capper profile not found')
+    return _capper_admin_profile_to_response(row)
+
+
+@app.post('/admin/cappers', response_model=AdminCapperProfileResponse)
+def admin_cappers_create_endpoint(req: AdminCapperCreateRequest, db: Session = Depends(get_db), _: str = Depends(require_admin)) -> AdminCapperProfileResponse:
+    try:
+        row = create_capper_profile(db, req.username, display_name=req.display_name, bio=req.bio, is_public=req.is_public, moderation_note=req.moderation_note)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return _capper_admin_profile_to_response(row)
+
+
+@app.patch('/admin/cappers/{username}', response_model=AdminCapperProfileResponse)
+def admin_cappers_update_endpoint(username: str, req: AdminCapperUpdateRequest, db: Session = Depends(get_db), _: str = Depends(require_admin)) -> AdminCapperProfileResponse:
+    row = update_capper_profile_admin(db, username, display_name=req.display_name, bio=req.bio, is_public=req.is_public, moderation_note=req.moderation_note)
+    return _capper_admin_profile_to_response(row)
+
+
+@app.post('/admin/cappers/{username}/deactivate', response_model=AdminCapperProfileResponse)
+def admin_cappers_deactivate_endpoint(username: str, req: ModerationRequest, db: Session = Depends(get_db), _: str = Depends(require_admin)) -> AdminCapperProfileResponse:
+    row = update_capper_profile_admin(db, username, is_public=False, moderation_note=req.reason)
+    return _capper_admin_profile_to_response(row)
+
 @app.post('/slips/parse', response_model=SlipParseResponse)
 def parse_slip_endpoint(req: SlipParseRequest) -> SlipParseResponse:
     parsed = parse_slip_text(req.text, bookmaker_hint=req.bookmaker_hint)
@@ -1118,10 +1229,13 @@ async def ingest_screenshot_ocr(file: UploadFile = File(...)) -> OCRExtractRespo
 
 @app.post('/ingest/screenshot/grade', response_model=IngestGradeResponse)
 async def ingest_screenshot_grade(
+    request: Request,
+    response: Response,
     file: UploadFile = File(...),
     posted_at: str | None = Form(default=None),
     bookmaker_hint: str | None = Form(default=None),
 ) -> IngestGradeResponse:
+    _enforce_public_check_rate_limit(request, response, 'screenshot-grade')
     content = await file.read()
     ocr = get_ocr_provider()
     ocr_result = ocr.extract_text(file.filename or 'upload', content)
@@ -1303,164 +1417,3 @@ def pro_capper_roi_dashboard_single(username: str, db: Session = Depends(get_db)
 
 
 
-@app.get('/check', response_class=HTMLResponse)
-def check_page() -> HTMLResponse:
-    html = """<!doctype html>
-<html>
-<head>
-  <meta charset='utf-8'>
-  <meta name='viewport' content='width=device-width, initial-scale=1'>
-  <title>Parlay Check</title>
-  <style>
-    body { font-family: Inter, Arial, sans-serif; max-width: 860px; margin: 28px auto; padding: 0 16px; }
-    h1 { margin-bottom: 8px; }
-    p { color: #475569; }
-    textarea { width: 100%; min-height: 130px; border-radius: 10px; border: 1px solid #cbd5e1; padding: 12px; box-sizing: border-box; }
-    .row { display: flex; gap: 8px; margin-top: 10px; }
-    button { border: 1px solid #334155; background: #0f172a; color: #fff; border-radius: 10px; padding: 10px 14px; cursor: pointer; }
-    button.secondary { background: #fff; color: #0f172a; }
-    #status { margin-top: 12px; color: #334155; }
-    #results { margin-top: 14px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
-    #summaryOut { min-height: 170px; margin-top: 10px; }
-  </style>
-</head>
-<body>
-  <h1>Check your parlay</h1>
-  <p>Paste legs, then copy a social-friendly summary for Twitter/Discord.</p>
-  <textarea id='slipText' placeholder='Jokic 25+ pts\nDenver ML\nMurray over 1.5 threes'></textarea>
-  <div class='row'>
-    <button id='checkBtn'>Check results</button>
-    <button id='copyBtn' class='secondary' disabled>Copy Summary</button>
-  </div>
-  <div id='status'></div>
-  <div id='results' hidden>
-    <strong>Paste-ready summary</strong>
-    <textarea id='summaryOut' readonly></textarea>
-  </div>
-
-  <script>
-    const settlementEmoji = { win: '✅', loss: '❌', push: '➖', pending: '⏳', unmatched: '⏳' };
-    const overallLabel = { cashed: 'WON', lost: 'LOST', pending: 'PENDING', needs_review: 'NEEDS REVIEW' };
-
-    async function checkSlip() {
-      const text = document.getElementById('slipText').value || '';
-      document.getElementById('status').textContent = 'Checking...';
-      const res = await fetch('/check-slip', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(body || res.statusText);
-      }
-      return res.json();
-    }
-
-    function buildSummary(payload) {
-      const lines = (payload.legs || []).map((item) => {
-        const emoji = settlementEmoji[item.result] || '⏳';
-        return `${item.leg} ${emoji}`;
-      });
-      lines.push('');
-      lines.push(`Parlay: ${overallLabel[payload.parlay_result] || String(payload.parlay_result || '').toUpperCase()}`);
-      return lines.join('\n');
-    }
-
-
-
-@app.post('/check')
-@app.post('/check-slip')
-def check_slip(payload: dict = Body(...)):
-    text = (payload.get('text') or '').strip()
-    if not text:
-        return {
-            'ok': False,
-            'message': 'Paste your bet slip first so we can check it.',
-            'legs': [],
-            'parlay_result': 'needs_review',
-        }
-
-    parsed_legs = parse_text(text)
-    if not parsed_legs:
-        return {
-            'ok': False,
-            'message': 'No legs detected. Try pasting one leg per line.',
-            'legs': [],
-            'parlay_result': 'needs_review',
-        }
-
-    unsupported_legs = [leg.raw_text for leg in parsed_legs if leg.confidence <= 0.0]
-    if unsupported_legs:
-        return {
-            'ok': False,
-            'message': 'One or more picks use a market we do not support yet. Try using standard formats like "Player Over 24.5 Points" or "Team ML".',
-            'unsupported_legs': unsupported_legs,
-            'legs': [],
-            'parlay_result': 'needs_review',
-        }
-
-    try:
-        grade = grade_text(text)
-    except Exception:
-        return {
-            'ok': False,
-            'message': 'We hit a grading error while checking your slip. Please try again in a minute.',
-            'legs': [],
-            'parlay_result': 'needs_review',
-        }
-
-
-    document.getElementById('checkBtn').addEventListener('click', async () => {
-      try {
-        const payload = await checkSlip();
-        const summary = buildSummary(payload);
-        document.getElementById('summaryOut').value = summary;
-        document.getElementById('results').hidden = false;
-        document.getElementById('copyBtn').disabled = false;
-        document.getElementById('status').textContent = 'Done.';
-      } catch (err) {
-        document.getElementById('status').textContent = `Error: ${err.message}`;
-      }
-    });
-
-    document.getElementById('copyBtn').addEventListener('click', async () => {
-      const text = document.getElementById('summaryOut').value || '';
-      try {
-        await navigator.clipboard.writeText(text);
-        document.getElementById('status').textContent = 'Summary copied to clipboard.';
-      } catch (err) {
-        document.getElementById('summaryOut').focus();
-        document.getElementById('summaryOut').select();
-        document.getElementById('status').textContent = 'Clipboard blocked. Selected summary so you can copy manually.';
-      }
-    });
-  </script>
-</body>
-</html>
-"""
-    return HTMLResponse(html)
-
-@app.post("/check-slip")
-def check_slip(payload: dict = Body(...)):
-    text = str(payload.get('text', ''))
-    graded = grade_text(text)
-    legs = [{'leg': item.leg.raw_text, 'result': item.settlement} for item in graded.legs]
-    return {
-
-        'legs': legs,
-        'parlay_result': graded.overall,
-
-        'ok': True,
-        'message': 'Slip checked successfully.',
-        'legs': [
-            {
-                'leg': item.leg.raw_text,
-                'result': item.settlement,
-                'reason': item.reason,
-            }
-            for item in grade.legs
-        ],
-        'parlay_result': grade.overall,
-
-    }
