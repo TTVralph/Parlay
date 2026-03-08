@@ -69,6 +69,24 @@ def _filter_by_slip_date(candidates: list[EventInfo], slip_value: date | datetim
     return [event for event in candidates if _event_matches_slip_date(event, slip_value)]
 
 
+
+
+def _filter_by_slip_date_with_historical_fallback(
+    candidates: list[EventInfo],
+    slip_value: date | datetime | None,
+    *,
+    explicit_slip_date: date | None,
+    include_historical: bool,
+) -> list[EventInfo]:
+    filtered = _filter_by_slip_date(candidates, slip_value)
+    if filtered:
+        return filtered
+    if explicit_slip_date is not None:
+        return filtered
+    if include_historical:
+        return candidates
+    return filtered
+
 def _event_contains_team(event: EventInfo, team: str | None) -> bool:
     if not team:
         return False
@@ -104,6 +122,16 @@ def _player_candidates(provider: ResultsProvider, player: str, posted_at: dateti
     return [event] if event else []
 
 
+def _player_team_for_date(provider: ResultsProvider, player: str, posted_at: datetime | None, include_historical: bool) -> str | None:
+    resolver = getattr(provider, 'resolve_player_team', None)
+    if not callable(resolver):
+        return None
+    try:
+        return resolver(player, posted_at, include_historical=include_historical)
+    except TypeError:
+        return resolver(player, posted_at)
+
+
 def _resolve_anchor(posted_at: datetime | None) -> datetime:
     if posted_at is not None:
         return posted_at
@@ -133,7 +161,12 @@ def resolve_leg_events(
     moneyline_legs = [leg for leg in legs if leg.market_type == 'moneyline' and leg.team]
     for ml_leg in moneyline_legs:
         ml_candidates = _team_candidates(provider, ml_leg.team or '', anchor, include_historical=include_historical)
-        ml_candidates = _filter_by_slip_date(ml_candidates, slip_filter_value)
+        ml_candidates = _filter_by_slip_date_with_historical_fallback(
+            ml_candidates,
+            slip_filter_value,
+            explicit_slip_date=explicit_slip_date,
+            include_historical=include_historical,
+        )
         if selected_event_id:
             ml_candidates = [event for event in ml_candidates if event.event_id == selected_event_id]
         if len(ml_candidates) == 1:
@@ -150,21 +183,47 @@ def resolve_leg_events(
         notes = list(leg.notes)
         candidates: list[EventInfo] = []
         opponent = _opponent_from_leg(leg)
+        player_team: str | None = None
+        if leg.player:
+            player_team = _player_team_for_date(provider, leg.player, anchor, include_historical=include_historical)
 
         if locked_event is not None:
             if leg.market_type in {'moneyline', 'spread'} and _event_contains_team(locked_event, leg.team):
                 candidates = [locked_event]
             elif leg.market_type in {'player_points', 'player_assists', 'player_rebounds', 'player_threes', 'game_total'}:
-                candidates = [locked_event]
+                if player_team is None or _event_contains_team(locked_event, player_team):
+                    candidates = [locked_event]
         elif leg.market_type in {'moneyline', 'spread'} and leg.team:
             candidates = _team_candidates(provider, leg.team, anchor, include_historical=include_historical)
             updates['matched_by'] = 'team_schedule_lookup'
         elif leg.player:
             candidates = _player_candidates(provider, leg.player, anchor, include_historical=include_historical)
+            if explicit_slip_date is not None:
+                candidates = _filter_by_slip_date_with_historical_fallback(
+                    candidates,
+                    slip_filter_value,
+                    explicit_slip_date=explicit_slip_date,
+                    include_historical=include_historical,
+                )
+            if player_team:
+                candidates = [event for event in candidates if _event_contains_team(event, player_team)]
             candidates = _filter_by_opponent(candidates, opponent)
+            if opponent is None:
+                candidates = _filter_by_slip_date_with_historical_fallback(
+                    candidates,
+                    slip_filter_value,
+                    explicit_slip_date=explicit_slip_date,
+                    include_historical=include_historical,
+                )
             updates['matched_by'] = 'player_boxscore_lookup'
 
-        candidates = _filter_by_slip_date(candidates, slip_filter_value)
+        if not leg.player:
+            candidates = _filter_by_slip_date_with_historical_fallback(
+                candidates,
+                slip_filter_value,
+                explicit_slip_date=explicit_slip_date,
+                include_historical=include_historical,
+            )
 
         if lock_failed:
             candidates = []

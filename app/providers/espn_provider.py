@@ -100,6 +100,13 @@ class ESPNNBAResultsProvider(ResultsProvider):
             days = [anchor + timedelta(days=delta) for delta in (-1, 0, 1)]
         return [self._day_key(day) for day in days]
 
+
+    def _iter_candidate_days(self, as_of: datetime | None, *, include_historical: bool = False) -> list[str]:
+        try:
+            return self._candidate_days(as_of, include_historical=include_historical)
+        except TypeError:
+            return self._candidate_days(as_of)
+
     def _event_info_from_scoreboard(self, event: dict[str, Any]) -> EventInfo | None:
         comps = event.get('competitions') or []
         if not comps:
@@ -144,7 +151,7 @@ class ESPNNBAResultsProvider(ResultsProvider):
 
     def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False) -> list[EventInfo]:
         matches: list[EventInfo] = []
-        for day_key in self._candidate_days(as_of, include_historical=include_historical):
+        for day_key in self._iter_candidate_days(as_of, include_historical=include_historical):
             board = self._scoreboard_for_day(day_key)
             if not board:
                 continue
@@ -162,7 +169,7 @@ class ESPNNBAResultsProvider(ResultsProvider):
 
     def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False) -> list[EventInfo]:
         matches: list[EventInfo] = []
-        for day_key in self._candidate_days(as_of, include_historical=include_historical):
+        for day_key in self._iter_candidate_days(as_of, include_historical=include_historical):
             board = self._scoreboard_for_day(day_key)
             if not board:
                 continue
@@ -176,6 +183,51 @@ class ESPNNBAResultsProvider(ResultsProvider):
                 if self._resolve_player_name(summary, player) is not None:
                     matches.append(info)
         return matches
+
+
+    def _player_team_from_summary(self, summary: dict[str, Any], player: str) -> str | None:
+        resolved_player_name = self._resolve_player_name(summary, player)
+        if not resolved_player_name:
+            return None
+        target = self._norm(resolved_player_name)
+        team_matches: dict[str, str] = {}
+        for team_block in (summary.get('boxscore') or {}).get('players') or []:
+            team_meta = team_block.get('team') or {}
+            team_name = str(team_meta.get('displayName') or team_meta.get('name') or '').strip()
+            if not team_name:
+                continue
+            for stat_block in team_block.get('statistics') or []:
+                for athlete in stat_block.get('athletes') or []:
+                    athlete_obj = athlete.get('athlete') or {}
+                    display_name = str(athlete_obj.get('displayName') or '').strip()
+                    if not display_name or self._norm(display_name) != target:
+                        continue
+                    athlete_id = str(athlete_obj.get('id') or '')
+                    team_matches[athlete_id or target] = team_name
+        if len(set(team_matches.values())) == 1:
+            return next(iter(team_matches.values()))
+        return None
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False) -> str | None:
+        teams: list[str] = []
+        for day_key in self._iter_candidate_days(as_of, include_historical=include_historical):
+            board = self._scoreboard_for_day(day_key)
+            if not board:
+                continue
+            for event in board.get('events') or []:
+                event_id = str(event.get('id') or '')
+                if not event_id:
+                    continue
+                summary = self._summary(event_id)
+                if not summary:
+                    continue
+                team = self._player_team_from_summary(summary, player)
+                if team:
+                    teams.append(team)
+        unique = {self._norm(team): team for team in teams}
+        if len(unique) == 1:
+            return next(iter(unique.values()))
+        return None
 
     def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False) -> EventInfo | None:
         candidates = self.resolve_team_event_candidates(team, as_of, include_historical=include_historical)
