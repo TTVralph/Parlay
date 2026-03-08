@@ -116,6 +116,8 @@ from .models import (
     CapperVerificationResponse,
     AllSportsGamesResponse,
     AllSportsStatsResponse,
+    SportsAPIProGamesResponse,
+    SportsAPIProAthleteGameLogsResponse,
     ProviderCapabilitiesResponse,
     SportsAPIProGamesResponse,
     SportsAPIProAthleteGamesResponse,
@@ -132,6 +134,13 @@ from .providers.allsports_normalizer import (
     normalize_match_stats,
     safe_payload_preview,
     summarize_stats_payload_shape,
+)
+from .providers.sportsapipro_client import SportsAPIProClient, SportsAPIProError
+from .providers.sportsapipro_normalizer import (
+    SPORTSAPIPRO_PROVIDER_CAPABILITIES,
+    SportsAPIProNormalizeError,
+    normalize_athlete_game_logs,
+    normalize_games as normalize_sportsapipro_games,
 )
 from .providers.espn_provider import ESPNNBAResultsProvider
 from .providers.sportsapipro_client import SportsAPIProClient, SportsAPIProError
@@ -424,6 +433,85 @@ def allsports_match_stats(match_id: str) -> AllSportsStatsResponse:
         raise HTTPException(status_code=500, detail='Unexpected error while processing match statistics') from exc
 
 
+
+
+def _build_sportsapipro_client() -> SportsAPIProClient:
+    try:
+        return SportsAPIProClient.from_env()
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={'code': exc.code, 'message': exc.message, 'details': exc.details}) from exc
+
+
+@app.get('/api/sportsapipro/games/current', response_model=SportsAPIProGamesResponse)
+def sportsapipro_games_current() -> SportsAPIProGamesResponse:
+    client = _build_sportsapipro_client()
+    try:
+        payload = client.get_games_current()
+        return SportsAPIProGamesResponse(games=normalize_sportsapipro_games(payload))
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={'code': exc.code, 'message': exc.message, 'details': exc.details}) from exc
+
+
+@app.get('/api/sportsapipro/games/results', response_model=SportsAPIProGamesResponse)
+def sportsapipro_games_results(date: str | None = None) -> SportsAPIProGamesResponse:
+    if date:
+        _parse_iso_date(date)
+    client = _build_sportsapipro_client()
+    try:
+        payload = client.get_games_results(game_date=date)
+        return SportsAPIProGamesResponse(games=normalize_sportsapipro_games(payload))
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={'code': exc.code, 'message': exc.message, 'details': exc.details}) from exc
+
+
+@app.get('/api/sportsapipro/game/{game_id}', response_model=SportsAPIProGamesResponse)
+def sportsapipro_game(game_id: str) -> SportsAPIProGamesResponse:
+    if not game_id.strip():
+        raise HTTPException(status_code=400, detail='game_id is required')
+    client = _build_sportsapipro_client()
+    try:
+        payload = client.get_game(game_id)
+        return SportsAPIProGamesResponse(games=normalize_sportsapipro_games(payload))
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={'code': exc.code, 'message': exc.message, 'details': exc.details}) from exc
+
+
+@app.get('/api/sportsapipro/athlete/{athlete_id}/games')
+def sportsapipro_athlete_games(athlete_id: str) -> dict[str, object]:
+    if not athlete_id.strip():
+        raise HTTPException(status_code=400, detail='athlete_id is required')
+    client = _build_sportsapipro_client()
+    try:
+        return {'athleteId': athlete_id, 'payload': client.get_athlete_games(athlete_id)}
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={'code': exc.code, 'message': exc.message, 'details': exc.details}) from exc
+
+
+@app.get('/api/sportsapipro/athlete/{athlete_id}/game-log-normalized', response_model=SportsAPIProAthleteGameLogsResponse)
+def sportsapipro_athlete_games_normalized(athlete_id: str) -> SportsAPIProAthleteGameLogsResponse:
+    if not athlete_id.strip():
+        raise HTTPException(status_code=400, detail='athlete_id is required')
+    client = _build_sportsapipro_client()
+    try:
+        payload = client.get_athlete_games(athlete_id)
+        logs = normalize_athlete_game_logs(athlete_id, payload)
+        return SportsAPIProAthleteGameLogsResponse(athleteId=athlete_id, logs=logs)
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={'code': exc.code, 'message': exc.message, 'details': exc.details}) from exc
+    except SportsAPIProNormalizeError as exc:
+        raise HTTPException(status_code=422, detail={'code': exc.code, 'message': exc.message, 'details': exc.details}) from exc
+
+
+@app.get('/api/sportsapipro/search')
+def sportsapipro_search(q: str) -> dict[str, object]:
+    if not q.strip():
+        raise HTTPException(status_code=400, detail='q is required')
+    client = _build_sportsapipro_client()
+    try:
+        return {'query': q, 'payload': client.search(q)}
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={'code': exc.code, 'message': exc.message, 'details': exc.details}) from exc
+
 @app.get('/api/providers/capabilities', response_model=ProviderCapabilitiesResponse)
 def provider_capabilities() -> ProviderCapabilitiesResponse:
     return ProviderCapabilitiesResponse(providers={'allsports': ALLSPORTS_PROVIDER_CAPABILITIES, 'sportsapipro': SPORTSAPIPRO_PROVIDER_CAPABILITIES})
@@ -620,6 +708,10 @@ def allsports_test_page() -> HTMLResponse:
 <body>
   <h1>Provider API Test</h1>
   <div class='row'>
+    <label for='providerInput'>Provider:</label>
+    <select id='providerInput'><option value='allsports'>AllSports</option><option value='sportsapipro'>SportsAPI Pro</option></select>
+  </div>
+  <div class='row'>
     <label for='dateInput'>Date:</label>
     <input id='dateInput' type='date'>
     <label for='providerInput'>Provider:</label>
@@ -655,15 +747,20 @@ def allsports_test_page() -> HTMLResponse:
       statsEl.textContent = '{}';
       msg.textContent = 'Loading games...';
       const provider = providerInput.value;
+      const resp = provider === 'sportsapipro'
+        ? await fetch(`/api/sportsapipro/games/results?date=${encodeURIComponent(date)}`)
+        : await fetch(`/api/allsports/games?date=${encodeURIComponent(date)}`);
       const url = provider === 'sportsapipro'
         ? '/api/sportsapipro/games/current'
         : `/api/allsports/games?date=${encodeURIComponent(date)}`;
       const resp = await fetch(url);
       const data = await resp.json();
       if (!resp.ok) {
-        msg.textContent = `Error: ${data.detail || 'Failed to load games'}`;
+        msg.textContent = `Error: ${typeof data.detail === 'object' ? data.detail.message : (data.detail || 'Failed to load games')}`;
         return;
       }
+      msg.textContent = `Loaded ${data.games.length} game(s). Click one to inspect stats.`;
+      for (const game of data.games) {
       msg.textContent = `Loaded ${(data.games || []).length} game(s). Click one to inspect response.`;
       for (const game of (data.games || [])) {
         const li = document.createElement('li');
@@ -676,6 +773,9 @@ def allsports_test_page() -> HTMLResponse:
     async function loadStats(matchId) {
       statsEl.textContent = 'Loading...';
       const provider = providerInput.value;
+      const resp = provider === 'sportsapipro'
+        ? await fetch(`/api/sportsapipro/game/${encodeURIComponent(matchId)}`)
+        : await fetch(`/api/allsports/match/${encodeURIComponent(matchId)}/stats`);
       const url = provider === 'sportsapipro'
         ? `/api/sportsapipro/game/${encodeURIComponent(matchId)}`
         : `/api/allsports/match/${encodeURIComponent(matchId)}/stats`;
