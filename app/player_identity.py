@@ -38,6 +38,13 @@ def normalize_player_name(name: str) -> str:
     return re.sub(r'\s+', ' ', stripped).strip()
 
 
+def _without_suffix(normalized_name: str) -> str:
+    parts = normalized_name.split()
+    if parts and parts[-1] in {'jr', 'sr', 'ii', 'iii', 'iv'}:
+        return ' '.join(parts[:-1]).strip()
+    return normalized_name
+
+
 _PLAYERS: tuple[PlayerRecord, ...] = (
     PlayerRecord('nba-nikola-jokic', 'Nikola Jokic', normalize_player_name('Nikola Jokic'), 'nba-den', 'NBA', '3112335'),
     PlayerRecord('nba-jamal-murray', 'Jamal Murray', normalize_player_name('Jamal Murray'), 'nba-den', 'NBA', '3936299'),
@@ -68,12 +75,18 @@ def resolve_player_identity(player_name: str | None) -> PlayerRecord | None:
     normalized = normalize_player_name(player_name)
     if not normalized:
         return None
-    direct = PLAYERS_BY_NORMALIZED_NAME.get(normalized)
-    if direct:
-        return direct
-    alias = ALIASES_BY_NORMALIZED.get(normalized)
-    if alias:
-        return PLAYERS_BY_ID.get(alias.player_id)
+    candidates = [normalized]
+    without_suffix = _without_suffix(normalized)
+    if without_suffix and without_suffix != normalized:
+        candidates.append(without_suffix)
+
+    for candidate in candidates:
+        direct = PLAYERS_BY_NORMALIZED_NAME.get(candidate)
+        if direct:
+            return direct
+        alias = ALIASES_BY_NORMALIZED.get(candidate)
+        if alias:
+            return PLAYERS_BY_ID.get(alias.player_id)
     return None
 
 
@@ -81,4 +94,3 @@ def team_name_from_id(team_id: str | None) -> str | None:
     if not team_id:
         return None
     return TEAM_ID_TO_NAME.get(team_id)
-

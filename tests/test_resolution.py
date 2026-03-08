@@ -423,3 +423,69 @@ def test_different_date_legs_still_resolve_independently() -> None:
 
     assert resolved[0].event_id == 'nba-2026-03-09-okc-den'
     assert resolved[1].event_id == 'nba-2026-03-07-mem-lal'
+
+
+class ScottyPippenAliasSettlementProvider:
+    def __init__(self) -> None:
+        self._good_event = EventInfo(
+            event_id='nba-2026-03-07-lac-mem',
+            sport='NBA',
+            home_team='Memphis Grizzlies',
+            away_team='LA Clippers',
+            start_time=datetime.fromisoformat('2026-03-08T01:00:00+00:00'),
+        )
+        self._other_mem_event = EventInfo(
+            event_id='nba-2026-03-07-sas-mem',
+            sport='NBA',
+            home_team='Memphis Grizzlies',
+            away_team='San Antonio Spurs',
+            start_time=datetime.fromisoformat('2026-03-08T03:00:00+00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'Cam Spencer':
+            return [self._good_event]
+        if player == 'Scotty Pippen Jr.':
+            return [self._other_mem_event, self._good_event]
+        return []
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player in {'Cam Spencer', 'Scotty Pippen Jr.'}:
+            return 'Memphis Grizzlies'
+        return None
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        if player == 'Cam Spencer' and market_type == 'player_points' and event_id == self._good_event.event_id:
+            return 10.0
+        if player == 'Scotty Pippen Jr.' and market_type == 'player_assists' and event_id == self._good_event.event_id:
+            return 3.0
+        return None
+
+
+def test_scotty_pippen_alias_under_assists_settles_win_on_2026_03_07() -> None:
+    provider = ScottyPippenAliasSettlementProvider()
+    result = grade_text(
+        'Cam Spencer over 9.5 points\nScotty Pippen Under 4.5 Assists',
+        provider=provider,
+        posted_at=date.fromisoformat('2026-03-07'),
+        include_historical=True,
+    )
+
+    assert result.overall == 'cashed'
+    assert result.legs[1].leg.player == 'Scotty Pippen Jr.'
+    assert result.legs[1].leg.event_id == 'nba-2026-03-07-lac-mem'
+    assert result.legs[1].leg.event_label == 'LA Clippers @ Memphis Grizzlies'
+    assert result.legs[1].settlement == 'win'
+    assert result.legs[1].actual_value == 3.0

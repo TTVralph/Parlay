@@ -31,6 +31,29 @@ class ESPNNBAResultsProvider(ResultsProvider):
     def _norm(text: str) -> str:
         return re.sub(r'[^a-z0-9]', '', text.lower())
 
+
+    @staticmethod
+    def _person_tokens(name: str) -> list[str]:
+        cleaned = re.sub(r'[^a-z0-9\s]', ' ', name.lower())
+        parts = [part for part in cleaned.split() if part]
+        while parts and parts[-1] in {'jr', 'sr', 'ii', 'iii', 'iv'}:
+            parts.pop()
+        return parts
+
+    def _person_name_matches(self, requested_name: str, athlete_name: str) -> bool:
+        requested_tokens = self._person_tokens(requested_name)
+        athlete_tokens = self._person_tokens(athlete_name)
+        if not requested_tokens or not athlete_tokens:
+            return False
+        requested_full = ''.join(requested_tokens)
+        athlete_full = ''.join(athlete_tokens)
+        if requested_full == athlete_full:
+            return True
+        if len(requested_tokens) == 1:
+            token = requested_tokens[0]
+            return token in {athlete_tokens[0], athlete_tokens[-1]}
+        return requested_tokens[-1] == athlete_tokens[-1]
+
     def _fetch_json(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
         full_url = url
         if params:
@@ -289,9 +312,6 @@ class ESPNNBAResultsProvider(ResultsProvider):
         )
 
     def _resolve_player_name(self, summary: dict[str, Any], player: str) -> str | None:
-        tokens = [tok for tok in player.split() if tok]
-        target_full = self._norm(player)
-        target_last = self._norm(tokens[-1]) if tokens else ''
         matches: dict[str, str] = {}
         for team_block in (summary.get('boxscore') or {}).get('players') or []:
             for stat_block in team_block.get('statistics') or []:
@@ -301,14 +321,8 @@ class ESPNNBAResultsProvider(ResultsProvider):
                     display_name = str(athlete_obj.get('displayName') or '').strip()
                     if not display_name:
                         continue
-                    athlete_full = self._norm(display_name)
-                    athlete_last = self._norm(display_name.split()[-1]) if display_name.split() else ''
-                    if target_full and target_full == athlete_full:
-                        matches[athlete_id or athlete_full] = display_name
-                        continue
-                    if target_last and athlete_last and target_last == athlete_last:
-                        matches[athlete_id or athlete_full] = display_name
-                        continue
+                    if self._person_name_matches(player, display_name):
+                        matches[athlete_id or self._norm(display_name)] = display_name
         if len(matches) == 1:
             return next(iter(matches.values()))
         return None

@@ -229,6 +229,8 @@ def resolve_leg_events(
             resolved_event_ids.add(event.event_id)
             if leg.team:
                 resolved_team_event_ids.setdefault(_norm(leg.team), set()).add(event.event_id)
+            if player_team:
+                resolved_team_event_ids.setdefault(_norm(player_team), set()).add(event.event_id)
             updates['event_id'] = event.event_id
             updates['event_label'] = event.label
             updates['event_start_time'] = event.start_time
