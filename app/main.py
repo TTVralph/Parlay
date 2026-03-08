@@ -368,6 +368,7 @@ def public_check_page() -> HTMLResponse:
     <button type='button' class='sample' data-sample='sample_mlb'>MLB Mix</button>
     <button type='button' class='sample' data-sample='sample_nfl'>NFL Mix</button>
   </div>
+  <form id='checkForm'>
   <textarea id='slip' placeholder='Jokic over 24.5 points
 Denver ML
 Murray over 2.5 threes'></textarea>
@@ -376,7 +377,8 @@ Murray over 2.5 threes'></textarea>
     <label for='slipImage'><strong>Or upload a slip screenshot</strong></label>
     <input id='slipImage' type='file' accept='image/*'>
   </div>
-  <button id='checkBtn'>Check Slip</button>
+  <button id='checkBtn' type='submit'>Check Slip</button>
+  </form>
   <div id='message'></div>
   <div id='resultWrap' hidden>
     <div id='overall'></div>
@@ -396,6 +398,7 @@ Murray over 2.5 threes'></textarea>
       sample_mlb:'Dodgers ML\nYankees +1.5\nGame Total Over 8.5',
       sample_nfl:'Chiefs ML\nMahomes over 265.5 passing yards\nKelce over 68.5 receiving yards'
     };
+    const form=document.getElementById('checkForm');
     const slip=document.getElementById('slip');
     const stakeAmount=document.getElementById('stakeAmount');
     const slipImage=document.getElementById('slipImage');
@@ -455,7 +458,7 @@ Murray over 2.5 threes'></textarea>
       };
     }
 
-    btn.addEventListener('click',async()=>{
+    async function submitCheck(){
       const text=slip.value.trim();
       const file=slipImage.files&&slipImage.files[0];
       wrap.hidden=true;
@@ -503,6 +506,15 @@ Murray over 2.5 threes'></textarea>
       }finally{
         btn.disabled=false;
       }
+    }
+
+    form.addEventListener('submit',async(event)=>{
+      event.preventDefault();
+      await submitCheck();
+    });
+
+    window.addEventListener('error',()=>{
+      msg.textContent='Something went wrong in the page. Please refresh and try again.';
     });
 
     copyBtn.addEventListener('click',async()=>{
@@ -1595,4 +1607,3 @@ def pro_capper_roi_dashboard(db: Session = Depends(get_db), _: _db_models.UserSe
 def pro_capper_roi_dashboard_single(username: str, db: Session = Depends(get_db), _: _db_models.UserSessionORM = Depends(require_entitlement('roi_dashboard'))) -> CapperRoiDashboardResponse:
     rows = [CapperRoiDashboardRow(**row) for row in compute_capper_roi_dashboard(db, username=username)]
     return CapperRoiDashboardResponse(rows=rows)
-
