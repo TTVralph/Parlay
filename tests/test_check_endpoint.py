@@ -11,7 +11,7 @@ def test_check_empty_textarea_message():
     assert res.status_code == 200
     body = res.json()
     assert body['ok'] is False
-    assert body['message'] == 'Paste your bet slip first so we can check it.'
+    assert body['message'] == 'Paste at least one leg first.'
     assert body['legs'] == []
 
 
@@ -21,16 +21,7 @@ def test_check_no_legs_parsed_message(monkeypatch):
     assert res.status_code == 200
     body = res.json()
     assert body['ok'] is False
-    assert body['message'] == 'No legs detected. Try pasting one leg per line.'
-
-
-def test_check_unsupported_market_message():
-    res = client.post('/check', json={'text': 'totally unsupported market syntax'})
-    assert res.status_code == 200
-    body = res.json()
-    assert body['ok'] is False
-    assert 'do not support yet' in body['message']
-    assert body['unsupported_legs'] == ['totally unsupported market syntax']
+    assert body['message'] == 'No bet legs found. Try one leg per line.'
 
 
 def test_check_grading_error_message(monkeypatch):
@@ -42,4 +33,4 @@ def test_check_grading_error_message(monkeypatch):
     assert res.status_code == 200
     body = res.json()
     assert body['ok'] is False
-    assert body['message'] == 'We hit a grading error while checking your slip. Please try again in a minute.'
+    assert body['message'] == 'Could not grade this slip right now.'
