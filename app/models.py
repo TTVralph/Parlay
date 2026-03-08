@@ -129,6 +129,7 @@ class SportsAPIProPlayerStats(BaseModel):
 
 
 class SportsAPIProAthleteGameLog(BaseModel):
+class SportsAPIProPlayerGameLog(BaseModel):
     athleteId: str
     gameId: str | None = None
     date: str | None = None
@@ -142,6 +143,9 @@ class SportsAPIProAthleteGameLog(BaseModel):
 class SportsAPIProAthleteGameLogsResponse(BaseModel):
     athleteId: str
     logs: list[SportsAPIProAthleteGameLog] = Field(default_factory=list)
+class SportsAPIProAthleteGamesResponse(BaseModel):
+    athleteId: str
+    logs: list[SportsAPIProPlayerGameLog] = Field(default_factory=list)
 
 
 class ProviderCapabilities(BaseModel):

@@ -119,6 +119,8 @@ from .models import (
     SportsAPIProGamesResponse,
     SportsAPIProAthleteGameLogsResponse,
     ProviderCapabilitiesResponse,
+    SportsAPIProGamesResponse,
+    SportsAPIProAthleteGamesResponse,
 )
 from .ocr import get_ocr_provider
 from .ocr.providers import validate_image_upload
@@ -141,6 +143,12 @@ from .providers.sportsapipro_normalizer import (
     normalize_games as normalize_sportsapipro_games,
 )
 from .providers.espn_provider import ESPNNBAResultsProvider
+from .providers.sportsapipro_client import SportsAPIProClient, SportsAPIProError
+from .providers.sportsapipro_normalizer import (
+    SPORTSAPIPRO_PROVIDER_CAPABILITIES,
+    normalize_athlete_games_payload,
+    normalize_games_payload,
+)
 from .polling import poll_account_once
 from .scheduler import get_scheduler_config, run_due_polls_once, start_scheduler_thread
 from .services.repository import (
@@ -365,6 +373,13 @@ def _build_allsports_client() -> AllSportsClient:
     try:
         return AllSportsClient.from_env()
     except AllSportsError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+def _build_sportsapipro_client() -> SportsAPIProClient:
+    try:
+        return SportsAPIProClient.from_env()
+    except SportsAPIProError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 @app.get('/api/allsports/games', response_model=AllSportsGamesResponse)
@@ -603,12 +618,82 @@ def allsports_match_stats_raw(match_id: str) -> dict[str, object]:
         raise HTTPException(status_code=500, detail='Unexpected error while inspecting raw match statistics') from exc
 
 
+
+@app.get('/api/sportsapipro/games/current', response_model=SportsAPIProGamesResponse)
+def sportsapipro_games_current() -> SportsAPIProGamesResponse:
+    client = _build_sportsapipro_client()
+    try:
+        return SportsAPIProGamesResponse(games=normalize_games_payload(client.get_current_games()))
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@app.get('/api/sportsapipro/games/results', response_model=SportsAPIProGamesResponse)
+def sportsapipro_games_results() -> SportsAPIProGamesResponse:
+    client = _build_sportsapipro_client()
+    try:
+        return SportsAPIProGamesResponse(games=normalize_games_payload(client.get_game_results()))
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@app.get('/api/sportsapipro/game/{game_id}', response_model=SportsAPIProGamesResponse)
+def sportsapipro_game(game_id: str) -> SportsAPIProGamesResponse:
+    if not game_id.strip():
+        raise HTTPException(status_code=400, detail='game_id is required')
+    client = _build_sportsapipro_client()
+    try:
+        return SportsAPIProGamesResponse(games=normalize_games_payload(client.get_game(game_id.strip())))
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@app.get('/api/sportsapipro/athlete/{athlete_id}/games')
+def sportsapipro_athlete_games_raw(athlete_id: str) -> dict[str, object]:
+    if not athlete_id.strip():
+        raise HTTPException(status_code=400, detail='athlete_id is required')
+    client = _build_sportsapipro_client()
+    try:
+        payload = client.get_athlete_games(athlete_id.strip())
+        if isinstance(payload, dict):
+            return payload
+        return {'rows': payload}
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@app.get('/api/sportsapipro/athlete/{athlete_id}/game-log-normalized', response_model=SportsAPIProAthleteGamesResponse)
+def sportsapipro_athlete_games_normalized(athlete_id: str) -> SportsAPIProAthleteGamesResponse:
+    if not athlete_id.strip():
+        raise HTTPException(status_code=400, detail='athlete_id is required')
+    client = _build_sportsapipro_client()
+    try:
+        payload = client.get_athlete_games(athlete_id.strip())
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return SportsAPIProAthleteGamesResponse(athleteId=athlete_id.strip(), logs=normalize_athlete_games_payload(athlete_id.strip(), payload))
+
+
+@app.get('/api/sportsapipro/search')
+def sportsapipro_search(q: str) -> dict[str, object]:
+    if not q.strip():
+        raise HTTPException(status_code=400, detail='q is required')
+    client = _build_sportsapipro_client()
+    try:
+        payload = client.search(q.strip())
+        if isinstance(payload, dict):
+            return payload
+        return {'results': payload}
+    except SportsAPIProError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
 @app.get('/allsports-test', response_class=HTMLResponse)
 def allsports_test_page() -> HTMLResponse:
     html = '''<!doctype html>
 <html>
 <head>
-  <title>AllSports Test Page</title>
+  <title>Provider Test Page</title>
   <style>
     body{font-family:Arial,Helvetica,sans-serif;margin:24px;max-width:1000px;color:#0f172a;}
     input,button{padding:8px 10px;border-radius:8px;border:1px solid #cbd5e1;}
@@ -629,7 +714,11 @@ def allsports_test_page() -> HTMLResponse:
   <div class='row'>
     <label for='dateInput'>Date:</label>
     <input id='dateInput' type='date'>
+    <label for='providerInput'>Provider:</label>
+    <select id='providerInput'><option value='allsports'>AllSports</option><option value='sportsapipro'>SportsAPI Pro</option></select>
     <button id='loadGamesBtn'>Load Games</button>
+    <input id='athleteInput' placeholder='Athlete ID (SportsAPI Pro)'>
+    <button id='loadAthleteBtn'>Load Athlete Logs</button>
   </div>
   <p id='msg'></p>
   <div class='layout'>
@@ -638,7 +727,7 @@ def allsports_test_page() -> HTMLResponse:
       <ul id='games'></ul>
     </div>
     <div>
-      <h3>Normalized Match Stats</h3>
+      <h3>Response</h3>
       <pre id='stats'>{}</pre>
     </div>
   </div>
@@ -648,6 +737,7 @@ def allsports_test_page() -> HTMLResponse:
     const statsEl = document.getElementById('stats');
     const dateInput = document.getElementById('dateInput');
     const providerInput = document.getElementById('providerInput');
+    const athleteInput = document.getElementById('athleteInput');
     const today = new Date().toISOString().slice(0, 10);
     dateInput.value = today;
 
@@ -660,6 +750,10 @@ def allsports_test_page() -> HTMLResponse:
       const resp = provider === 'sportsapipro'
         ? await fetch(`/api/sportsapipro/games/results?date=${encodeURIComponent(date)}`)
         : await fetch(`/api/allsports/games?date=${encodeURIComponent(date)}`);
+      const url = provider === 'sportsapipro'
+        ? '/api/sportsapipro/games/current'
+        : `/api/allsports/games?date=${encodeURIComponent(date)}`;
+      const resp = await fetch(url);
       const data = await resp.json();
       if (!resp.ok) {
         msg.textContent = `Error: ${typeof data.detail === 'object' ? data.detail.message : (data.detail || 'Failed to load games')}`;
@@ -667,6 +761,8 @@ def allsports_test_page() -> HTMLResponse:
       }
       msg.textContent = `Loaded ${data.games.length} game(s). Click one to inspect stats.`;
       for (const game of data.games) {
+      msg.textContent = `Loaded ${(data.games || []).length} game(s). Click one to inspect response.`;
+      for (const game of (data.games || [])) {
         const li = document.createElement('li');
         li.textContent = `${game.awayTeam || 'Away'} @ ${game.homeTeam || 'Home'} (${game.id})`;
         li.addEventListener('click', () => loadStats(game.id));
@@ -680,11 +776,29 @@ def allsports_test_page() -> HTMLResponse:
       const resp = provider === 'sportsapipro'
         ? await fetch(`/api/sportsapipro/game/${encodeURIComponent(matchId)}`)
         : await fetch(`/api/allsports/match/${encodeURIComponent(matchId)}/stats`);
+      const url = provider === 'sportsapipro'
+        ? `/api/sportsapipro/game/${encodeURIComponent(matchId)}`
+        : `/api/allsports/match/${encodeURIComponent(matchId)}/stats`;
+      const resp = await fetch(url);
+      const data = await resp.json();
+      statsEl.textContent = JSON.stringify(data, null, 2);
+    }
+
+    async function loadAthlete(){
+      if(providerInput.value !== 'sportsapipro'){
+        msg.textContent='Switch provider to SportsAPI Pro for athlete logs.';
+        return;
+      }
+      const athleteId = athleteInput.value.trim();
+      if(!athleteId){ msg.textContent='Enter athlete ID.'; return; }
+      statsEl.textContent = 'Loading...';
+      const resp = await fetch(`/api/sportsapipro/athlete/${encodeURIComponent(athleteId)}/game-log-normalized`);
       const data = await resp.json();
       statsEl.textContent = JSON.stringify(data, null, 2);
     }
 
     document.getElementById('loadGamesBtn').addEventListener('click', loadGames);
+    document.getElementById('loadAthleteBtn').addEventListener('click', loadAthlete);
   </script>
 </body>
 </html>'''
