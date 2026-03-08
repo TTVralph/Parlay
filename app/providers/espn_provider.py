@@ -15,7 +15,7 @@ _SUPPORTED_PLAYER_MARKETS = {
     'player_points': {'points', 'pts', 'point'},
     'player_assists': {'assists', 'ast', 'assist'},
     'player_rebounds': {'rebounds', 'reb', 'total rebounds'},
-    'player_threes': {'3pt made', '3pt field goals made', 'three point field goals made', 'threes made', '3-pointers made'},
+    'player_threes': {'3pt made', '3pt field goals made', 'three point field goals made', 'threes made', '3-pointers made', '3pt', '3pm'},
 }
 
 
@@ -69,15 +69,28 @@ class ESPNNBAResultsProvider(ResultsProvider):
         return 'scheduled'
 
     def _team_matches(self, team_name: str, competitor: dict[str, Any]) -> bool:
-        team = competitor.get('team') or {}
-        candidates = {
-            str(team.get('displayName') or ''),
-            str(team.get('shortDisplayName') or ''),
-            str(team.get('name') or ''),
-            str(team.get('abbreviation') or ''),
-        }
+        candidates = self._team_name_candidates(competitor)
         norm_target = self._norm(team_name)
         return any(self._norm(item) == norm_target for item in candidates if item)
+
+    def _team_name_candidates(self, competitor: dict[str, Any]) -> set[str]:
+        team = competitor.get('team') or {}
+        location = str(team.get('location') or '').strip()
+        display = str(team.get('displayName') or '').strip()
+        short = str(team.get('shortDisplayName') or '').strip()
+        name = str(team.get('name') or '').strip()
+        candidates = {
+            display,
+            short,
+            name,
+            str(team.get('abbreviation') or '').strip(),
+            location,
+        }
+        if location and name:
+            candidates.add(f'{location} {name}')
+        if location and display:
+            candidates.add(f'{location} {display}')
+        return {item for item in candidates if item}
 
     def _candidate_days(self, as_of: datetime | None) -> list[str]:
         anchor = as_of or datetime.now(timezone.utc)
@@ -141,7 +154,6 @@ class ESPNNBAResultsProvider(ResultsProvider):
         return None
 
     def resolve_player_event(self, player: str, as_of: datetime | None) -> EventInfo | None:
-        target = self._norm(player)
         for day_key in self._candidate_days(as_of):
             board = self._scoreboard_for_day(day_key)
             if not board:
@@ -153,12 +165,8 @@ class ESPNNBAResultsProvider(ResultsProvider):
                 summary = self._summary(info.event_id)
                 if not summary:
                     continue
-                for team_block in (summary.get('boxscore') or {}).get('players') or []:
-                    for stat_block in team_block.get('statistics') or []:
-                        for athlete in stat_block.get('athletes') or []:
-                            name = str((athlete.get('athlete') or {}).get('displayName') or '')
-                            if self._norm(name) == target:
-                                return info
+                if self._resolve_player_name(summary, player) is not None:
+                    return info
         return None
 
     def get_team_result(self, team: str, event_id: str | None = None) -> TeamResult | None:
@@ -168,7 +176,7 @@ class ESPNNBAResultsProvider(ResultsProvider):
         if not summary:
             return None
         status = self.get_event_status(event_id)
-        if status not in {'final', 'live'}:
+        if status != 'final':
             return None
 
         header = (summary.get('header') or {}).get('competitions') or []
@@ -181,9 +189,12 @@ class ESPNNBAResultsProvider(ResultsProvider):
         if not home or not away:
             return None
 
-        home_name = str((home.get('team') or {}).get('displayName') or '')
-        away_name = str((away.get('team') or {}).get('displayName') or '')
-        if self._norm(team) not in {self._norm(home_name), self._norm(away_name)}:
+        home_candidates = self._team_name_candidates(home)
+        away_candidates = self._team_name_candidates(away)
+        home_name = str((home.get('team') or {}).get('displayName') or '') or next(iter(home_candidates), '')
+        away_name = str((away.get('team') or {}).get('displayName') or '') or next(iter(away_candidates), '')
+        norm_team = self._norm(team)
+        if norm_team not in {self._norm(item) for item in (*home_candidates, *away_candidates)}:
             return None
 
         try:
@@ -199,13 +210,53 @@ class ESPNNBAResultsProvider(ResultsProvider):
             away_team=away_name,
             start_time=datetime.fromisoformat(str(comp.get('date')).replace('Z', '+00:00')),
         )
-        ml_winner = home_name if home_score > away_score else away_name
+        if home_score == away_score:
+            return None
+        winning_candidates = home_candidates if home_score > away_score else away_candidates
         return TeamResult(
             event=event,
-            moneyline_win=(self._norm(team) == self._norm(ml_winner)),
+            moneyline_win=any(norm_team == self._norm(item) for item in winning_candidates),
             home_score=home_score,
             away_score=away_score,
         )
+
+    def _resolve_player_name(self, summary: dict[str, Any], player: str) -> str | None:
+        target_full = self._norm(player)
+        target_last = self._norm(player.split()[-1]) if player.split() else ''
+        matches: dict[str, str] = {}
+        for team_block in (summary.get('boxscore') or {}).get('players') or []:
+            for stat_block in team_block.get('statistics') or []:
+                for athlete in stat_block.get('athletes') or []:
+                    athlete_obj = athlete.get('athlete') or {}
+                    athlete_id = str(athlete_obj.get('id') or '')
+                    display_name = str(athlete_obj.get('displayName') or '').strip()
+                    if not display_name:
+                        continue
+                    athlete_full = self._norm(display_name)
+                    athlete_last = self._norm(display_name.split()[-1]) if display_name.split() else ''
+                    if target_full and target_full == athlete_full:
+                        matches[athlete_id or athlete_full] = display_name
+                        continue
+                    if target_last and athlete_last and target_last == athlete_last:
+                        matches[athlete_id or athlete_full] = display_name
+        if len(matches) == 1:
+            return next(iter(matches.values()))
+        return None
+
+    def _parse_stat_value(self, raw_value: Any, market_type: str) -> float | None:
+        text = str(raw_value).strip()
+        if not text or text == '--':
+            return None
+        if market_type == 'player_threes' and '-' in text:
+            made, _sep, _attempts = text.partition('-')
+            try:
+                return float(int(made))
+            except Exception:
+                return None
+        try:
+            return float(text)
+        except Exception:
+            return None
 
     def _extract_player_stat(self, event_id: str, player: str, market_type: str) -> float | None:
         aliases = _SUPPORTED_PLAYER_MARKETS.get(market_type)
@@ -214,14 +265,17 @@ class ESPNNBAResultsProvider(ResultsProvider):
         summary = self._summary(event_id)
         if not summary:
             return None
-        target = self._norm(player)
+        resolved_player_name = self._resolve_player_name(summary, player)
+        if not resolved_player_name:
+            return None
+        target = self._norm(resolved_player_name)
 
         for team_block in (summary.get('boxscore') or {}).get('players') or []:
             for stat_block in team_block.get('statistics') or []:
-                labels = [str(x).strip().lower() for x in (stat_block.get('labels') or [])]
+                labels = [self._norm(str(x).strip().lower()) for x in (stat_block.get('labels') or [])]
                 idx = None
                 for i, label in enumerate(labels):
-                    if label in aliases:
+                    if label in {self._norm(item) for item in aliases}:
                         idx = i
                         break
                 if idx is None:
@@ -233,16 +287,13 @@ class ESPNNBAResultsProvider(ResultsProvider):
                     stats = athlete.get('stats') or []
                     if idx >= len(stats):
                         return None
-                    try:
-                        return float(stats[idx])
-                    except Exception:
-                        return None
+                    return self._parse_stat_value(stats[idx], market_type)
         return None
 
     def get_player_result(self, player: str, market_type: str, event_id: str | None = None) -> float | None:
         if not event_id:
             return None
         status = self.get_event_status(event_id)
-        if status not in {'final', 'live'}:
+        if status != 'final':
             return None
         return self._extract_player_stat(event_id, player, market_type)
