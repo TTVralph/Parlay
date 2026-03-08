@@ -68,6 +68,9 @@ from .models import (
     UserRoleUpdateRequest,
     CapperSelfProfileResponse,
     CapperSelfProfileUpdateRequest,
+    AdminCapperCreateRequest,
+    AdminCapperUpdateRequest,
+    AdminCapperProfileResponse,
     SubscriptionPlanResponse,
     SubscriptionPlansResponse,
     SubscriptionCheckoutRequest,
@@ -125,6 +128,10 @@ from .services.repository import (
     manual_regrade_ticket,
     upsert_watched_account,
     get_or_create_capper_profile,
+    list_capper_profiles,
+    get_capper_profile,
+    create_capper_profile,
+    update_capper_profile_admin,
     set_capper_profile_visibility,
     hide_ticket,
     unhide_ticket,
@@ -192,6 +199,18 @@ def _user_to_response(user: _db_models.UserORM) -> UserProfileResponse:
 
 def _session_to_response(session: _db_models.UserSessionORM) -> SessionResponse:
     return SessionResponse(access_token=session.session_token, expires_at=session.expires_at, user=_user_to_response(session.user))
+
+
+def _capper_admin_profile_to_response(row: _db_models.CapperProfileORM) -> AdminCapperProfileResponse:
+    return AdminCapperProfileResponse(
+        username=row.username,
+        is_public=row.is_public,
+        moderation_note=row.moderation_note,
+        display_name=row.display_name,
+        bio=row.bio,
+        verified=row.is_verified,
+        verification_badge=row.verification_badge,
+    )
 
 
 def _billing_to_response(sub: _db_models.UserSubscriptionORM) -> UserSubscriptionResponse:
@@ -818,6 +837,40 @@ def hide_capper_profile_endpoint(username: str, req: ModerationRequest, db: Sess
 def show_capper_profile_endpoint(username: str, req: ModerationRequest, db: Session = Depends(get_db), _: str = Depends(require_admin)) -> CapperModerationResponse:
     row = set_capper_profile_visibility(db, username, is_public=True, moderation_note=req.reason)
     return CapperModerationResponse(username=row.username, is_public=row.is_public, moderation_note=row.moderation_note)
+
+
+@app.get('/admin/cappers', response_model=list[AdminCapperProfileResponse])
+def admin_cappers_list_endpoint(db: Session = Depends(get_db), _: str = Depends(require_admin)) -> list[AdminCapperProfileResponse]:
+    return [_capper_admin_profile_to_response(row) for row in list_capper_profiles(db)]
+
+
+@app.get('/admin/cappers/{username}', response_model=AdminCapperProfileResponse)
+def admin_cappers_get_endpoint(username: str, db: Session = Depends(get_db), _: str = Depends(require_admin)) -> AdminCapperProfileResponse:
+    row = get_capper_profile(db, username)
+    if not row:
+        raise HTTPException(status_code=404, detail='Capper profile not found')
+    return _capper_admin_profile_to_response(row)
+
+
+@app.post('/admin/cappers', response_model=AdminCapperProfileResponse)
+def admin_cappers_create_endpoint(req: AdminCapperCreateRequest, db: Session = Depends(get_db), _: str = Depends(require_admin)) -> AdminCapperProfileResponse:
+    try:
+        row = create_capper_profile(db, req.username, display_name=req.display_name, bio=req.bio, is_public=req.is_public, moderation_note=req.moderation_note)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return _capper_admin_profile_to_response(row)
+
+
+@app.patch('/admin/cappers/{username}', response_model=AdminCapperProfileResponse)
+def admin_cappers_update_endpoint(username: str, req: AdminCapperUpdateRequest, db: Session = Depends(get_db), _: str = Depends(require_admin)) -> AdminCapperProfileResponse:
+    row = update_capper_profile_admin(db, username, display_name=req.display_name, bio=req.bio, is_public=req.is_public, moderation_note=req.moderation_note)
+    return _capper_admin_profile_to_response(row)
+
+
+@app.post('/admin/cappers/{username}/deactivate', response_model=AdminCapperProfileResponse)
+def admin_cappers_deactivate_endpoint(username: str, req: ModerationRequest, db: Session = Depends(get_db), _: str = Depends(require_admin)) -> AdminCapperProfileResponse:
+    row = update_capper_profile_admin(db, username, is_public=False, moderation_note=req.reason)
+    return _capper_admin_profile_to_response(row)
 
 @app.post('/slips/parse', response_model=SlipParseResponse)
 def parse_slip_endpoint(req: SlipParseRequest) -> SlipParseResponse:
