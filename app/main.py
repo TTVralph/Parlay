@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import os
+import threading
+import time
 
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse
@@ -188,6 +191,38 @@ from .x_client import get_x_client
 app = FastAPI(title='Parlay Cash Checker MVP', version='1.9.0')
 run_lightweight_migrations()
 
+
+_public_check_rate_limit_lock = threading.Lock()
+_public_check_rate_limit_hits: dict[str, list[float]] = {}
+
+
+def _extract_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get('x-forwarded-for')
+    if forwarded_for:
+        return forwarded_for.split(',')[0].strip() or 'unknown'
+    if request.client and request.client.host:
+        return request.client.host
+    return 'unknown'
+
+
+def _enforce_public_check_rate_limit(request: Request, response: Response, route_tag: str) -> None:
+    limit_per_min = int(os.getenv('PUBLIC_CHECK_RATE_LIMIT_PER_MINUTE', '60'))
+    if limit_per_min <= 0:
+        return
+    window_seconds = int(os.getenv('PUBLIC_CHECK_RATE_LIMIT_WINDOW_SECONDS', '60'))
+    now = time.time()
+    cutoff = now - window_seconds
+    key = f'{route_tag}:{_extract_client_ip(request)}'
+
+    with _public_check_rate_limit_lock:
+        hits = [ts for ts in _public_check_rate_limit_hits.get(key, []) if ts >= cutoff]
+        if len(hits) >= limit_per_min:
+            retry_after = max(1, int(hits[0] + window_seconds - now))
+            response.headers['Retry-After'] = str(retry_after)
+            raise HTTPException(status_code=429, detail='Too many slip checks. Please try again shortly.')
+        hits.append(now)
+        _public_check_rate_limit_hits[key] = hits
+
 FRONTEND_DIST = Path(__file__).resolve().parent / 'frontend' / 'dist'
 if FRONTEND_DIST.exists():
     app.mount('/assets', StaticFiles(directory=FRONTEND_DIST / 'assets'), name='assets')
@@ -321,6 +356,8 @@ Kelce over 68.5 receiving yards'};const slip=document.getElementById('slip');con
 
 @app.post('/check')
 @app.post('/check-slip')
+def public_check_slip(request: Request, response: Response, payload: dict = Body(...)):
+    _enforce_public_check_rate_limit(request, response, 'check-slip')
 def public_check_slip(payload: dict = Body(...)):
     text = str(payload.get('text', '')).strip()
     if not text:
@@ -1117,10 +1154,13 @@ async def ingest_screenshot_ocr(file: UploadFile = File(...)) -> OCRExtractRespo
 
 @app.post('/ingest/screenshot/grade', response_model=IngestGradeResponse)
 async def ingest_screenshot_grade(
+    request: Request,
+    response: Response,
     file: UploadFile = File(...),
     posted_at: str | None = Form(default=None),
     bookmaker_hint: str | None = Form(default=None),
 ) -> IngestGradeResponse:
+    _enforce_public_check_rate_limit(request, response, 'screenshot-grade')
     content = await file.read()
     ocr = get_ocr_provider()
     ocr_result = ocr.extract_text(file.filename or 'upload', content)
