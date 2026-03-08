@@ -1082,7 +1082,7 @@ def _estimate_profit_from_american(stake_amount: float, american_odds: int) -> f
 def _process_public_check_text(
     text: str,
     stake_amount: float | None = None,
-    date_of_slip: datetime | None = None,
+    date_of_slip: date | datetime | None = None,
     search_historical: bool = False,
     selected_event_id: str | None = None,
 ) -> dict:
@@ -1232,10 +1232,10 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
             return {'ok': False, 'message': 'Enter a valid numeric stake amount.', 'legs': [], 'parsed_legs': [], 'parse_warning': None, 'grading_warning': None, 'parlay_result': 'needs_review'}
 
     raw_date = str(payload.get('date_of_slip') or '').strip()
-    parsed_date: datetime | None = None
+    parsed_date: date | None = None
     if raw_date:
         try:
-            parsed_date = datetime.fromisoformat(raw_date)
+            parsed_date = date.fromisoformat(raw_date)
         except ValueError:
             return {'ok': False, 'message': 'Enter a valid date of slip.', 'legs': [], 'parsed_legs': [], 'parse_warning': None, 'grading_warning': None, 'parlay_result': 'needs_review'}
 

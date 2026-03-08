@@ -94,3 +94,38 @@ def test_grade_text_falls_back_to_historical_when_recent_empty() -> None:
     provider = HistoricalOnlyProvider()
     result = grade_text('Denver ML', provider=provider, posted_at=datetime(2026, 2, 1, tzinfo=timezone.utc))
     assert result.legs[0].leg.event_id == 'hist-den'
+
+
+def test_slip_date_exact_match_denver_on_2026_03_06_resolves_knicks() -> None:
+    provider = SampleResultsProvider()
+    result = grade_text(
+        'Denver ML',
+        provider=provider,
+        posted_at=datetime.fromisoformat('2026-03-06T00:00:00'),
+        include_historical=True,
+    )
+    assert result.legs[0].leg.event_id == 'nba-2026-03-06-den-nyk'
+
+
+def test_slip_date_exact_match_denver_on_2026_03_05_resolves_lakers() -> None:
+    provider = SampleResultsProvider()
+    result = grade_text(
+        'Denver ML',
+        provider=provider,
+        posted_at=datetime.fromisoformat('2026-03-05T00:00:00'),
+        include_historical=True,
+    )
+    assert result.legs[0].leg.event_id == 'nba-2026-03-05-den-lal'
+
+
+def test_slip_date_never_matches_previous_day_event() -> None:
+    provider = SampleResultsProvider()
+    result = grade_text(
+        'Denver ML\nJokic over 24.5 points',
+        provider=provider,
+        posted_at=datetime.fromisoformat('2026-03-06T00:00:00'),
+        include_historical=True,
+    )
+
+    assert all(item.leg.event_id == 'nba-2026-03-06-den-nyk' for item in result.legs)
+    assert all(item.leg.event_id != 'nba-2026-03-05-den-lal' for item in result.legs)

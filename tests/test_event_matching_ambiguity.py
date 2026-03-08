@@ -103,3 +103,20 @@ def test_public_check_slip_date_strict_guard_blocks_non_date_event_match(monkeyp
     body = resp.json()
     assert body['parlay_result'] == 'lost'
     assert all(leg['matched_event'] == 'New York Knicks @ Denver Nuggets' for leg in body['legs'])
+
+
+def test_explicit_slip_date_with_no_exact_team_event_needs_review(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, '_public_check_provider', SampleResultsProvider())
+
+    resp = client.post(
+        '/check-slip',
+        json={
+            'text': 'Denver ML',
+            'date_of_slip': '2026-03-04',
+            'search_historical': True,
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['parlay_result'] == 'needs_review'
