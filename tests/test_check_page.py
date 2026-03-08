@@ -29,6 +29,9 @@ def test_check_slip_returns_graded_legs_with_event_and_overall():
     assert all('matched_event' in leg for leg in body['legs'])
 
 
+
+
+
 def test_check_page_has_copy_summary_controls_and_format():
     client = TestClient(app)
     page = client.get('/check')
@@ -38,3 +41,6 @@ def test_check_page_has_copy_summary_controls_and_format():
     assert 'buildSummary' in html
     assert 'Parlay:' in html
     assert "resultEmoji={win:'✅',loss:'❌'" in html
+
+
+
