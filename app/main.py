@@ -455,11 +455,17 @@ Murray over 2.5 threes'></textarea>
     function normalizeScreenshotPayload(body){
       const parsedLegs=(body.result?.legs||[]).map((item)=>item.leg?.raw_text||'—');
       const allReview=parsedLegs.length>0&&(body.result?.legs||[]).every((item)=>item.settlement==='unmatched');
+      const extracted=(body.extracted_text||'').trim();
+      const parseWarning=parsedLegs.length===0
+        ?(extracted
+          ?'OCR text was extracted but it was not parseable into bet legs. Try a clearer screenshot.'
+          :'No valid bet legs were detected from this input.')
+        :null;
       return {
         ok:true,
         extracted_text:body.extracted_text||'',
         parsed_legs:parsedLegs,
-        parse_warning:parsedLegs.length===0?'No valid bet legs were detected from this input.':null,
+        parse_warning:parseWarning,
         grading_warning:allReview?'Parsed legs were detected, but ESPN matching could not settle any leg.':null,
         legs:(body.result?.legs||[]).map((item)=>({
           leg:item.leg?.raw_text||'—',
