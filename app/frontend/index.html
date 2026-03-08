@@ -32,6 +32,16 @@
     .success { color:#7ef29a; }
     .danger { color:#ff8f8f; }
     .warn { color:#ffd36e; }
+    .result-banner { border-radius:16px; padding:14px 16px; border:1px solid #2f3f67; background:#172248; }
+    .result-banner strong { font-size:24px; text-transform:uppercase; letter-spacing:0.03em; }
+    .legs-list { display:flex; flex-direction:column; gap:10px; }
+    .leg-card { border:1px solid #243052; border-radius:14px; padding:12px; background:#101a35; }
+    .leg-header { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:8px; }
+    .pill { display:inline-block; padding:4px 9px; border-radius:999px; font-size:12px; font-weight:700; text-transform:uppercase; }
+    .pill.win { background:rgba(41, 201, 115, 0.18); color:#7ef29a; }
+    .pill.loss { background:rgba(225, 80, 80, 0.2); color:#ff8f8f; }
+    .pill.push, .pill.void { background:rgba(241, 188, 29, 0.2); color:#ffd36e; }
+    .pill.pending { background:rgba(117, 139, 192, 0.25); color:#c7d7ff; }
     a { color:#8bb4ff; }
     textarea { width:100%; min-height:120px; border-radius:14px; border:1px solid #31406b; background:#0f1630; color:white; padding:12px 14px; box-sizing:border-box; }
   </style>
@@ -117,8 +127,17 @@ function AuthPanel({ token, setToken, me, setMe }) {
 function TicketWorkbench({ token }) {
   const [text, setText] = useState('Denver ML\nJokic over 24.5 points\nOdds +240\nStake 25');
   const [result, setResult] = useState(null);
+  const [showDebug, setShowDebug] = useState(false);
   const [error, setError] = useState('');
+
   const [loading, setLoading] = useState(false);
+
+
+  const normalizeSettlement = (settlement) => {
+    if (settlement === 'unmatched') return 'void';
+    return settlement || 'pending';
+  };
+
   const grade = async () => {
     setLoading(true);
     setError('');
@@ -136,11 +155,31 @@ function TicketWorkbench({ token }) {
     {error && <div className="danger">{error}</div>}
     {result && <div className="stack">
       <div className="badge">Bookmaker: {result.parsed.bookmaker}</div>
-      <div className="muted">Overall: <strong>{result.graded.overall}</strong></div>
+      <div className="result-banner">
+        <div className="muted">Overall parlay result</div>
+        <strong>{result.graded.overall}</strong>
+      </div>
       <div className="muted">Stake: {result.parsed.stake_amount ?? '—'} · American odds: {result.parsed.american_odds ?? '—'}</div>
-      <table><thead><tr><th>Leg</th><th>Status</th><th>Reason</th></tr></thead><tbody>
-        {result.graded.legs.map((leg, idx)=><tr key={idx}><td>{leg.leg.raw_text}</td><td>{leg.settlement}</td><td>{leg.reason}</td></tr>)}
-      </tbody></table>
+      <div className="legs-list">
+        {result.graded.legs.map((leg, idx) => {
+          const settlement = normalizeSettlement(leg.settlement);
+          return <div className="leg-card" key={idx}>
+            <div className="leg-header">
+              <div>
+                <div><strong>Leg {idx + 1}</strong></div>
+                <div>{leg.leg.raw_text}</div>
+              </div>
+              <span className={`pill ${settlement}`}>{settlement}</span>
+            </div>
+            <div className="muted">Matched event: {leg.leg.event_label || leg.leg.event_id || '—'}</div>
+          </div>;
+        })}
+      </div>
+      <label className="row" style={{alignItems:'center', gap:8}}>
+        <input type="checkbox" checked={showDebug} onChange={e=>setShowDebug(e.target.checked)} style={{width:'auto'}} />
+        <span className="muted">Show raw JSON debug output</span>
+      </label>
+      {showDebug && <pre className="mono" style={{margin:0, whiteSpace:'pre-wrap'}}>{JSON.stringify(result, null, 2)}</pre>}
     </div>}
   </div>;
 }

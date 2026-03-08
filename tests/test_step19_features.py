@@ -84,3 +84,14 @@ def test_resend_and_mailgun_dry_run(monkeypatch):
     mailgun = send_email_message(to_email='a@example.com', subject='Hello', body_text='world')
     assert mailgun.provider == 'mailgun'
     assert mailgun.status in {'queued', 'sent'}
+
+
+def test_landing_page_exists_with_expected_ctas():
+    client = TestClient(app)
+    res = client.get('/')
+    assert res.status_code == 200
+    body = res.text
+    assert 'Did This Parlay Cash?' in body
+    assert 'Paste your bet slip and instantly see if it hit.' in body
+    assert "href='/check'" in body
+    assert "href='/app'" in body
