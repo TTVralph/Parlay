@@ -186,3 +186,73 @@ def test_slip_date_team_leg_locks_event_and_ml_settles_when_player_stats_missing
     assert result.legs[0].settlement == 'unmatched'
     assert result.legs[1].settlement == 'unmatched'
     assert result.overall == 'needs_review'
+
+
+class PlayerTeamDateFilterProvider:
+    def __init__(self) -> None:
+        self._good_event = EventInfo(
+            event_id='nba-2026-03-07-lac-mem',
+            sport='NBA',
+            home_team='Memphis Grizzlies',
+            away_team='LA Clippers',
+            start_time=datetime.fromisoformat('2026-03-08T01:00:00+00:00'),
+        )
+        self._bad_event = EventInfo(
+            event_id='nba-2026-03-07-uta-mil',
+            sport='NBA',
+            home_team='Milwaukee Bucks',
+            away_team='Utah Jazz',
+            start_time=datetime.fromisoformat('2026-03-08T01:00:00+00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player in {'Cam Spencer', 'Scotty Pippen Jr.'}:
+            return [self._good_event, self._bad_event]
+        return []
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player in {'Cam Spencer', 'Scotty Pippen Jr.'}:
+            return 'Memphis Grizzlies'
+        return None
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return None
+
+
+def test_cam_spencer_resolves_only_to_clippers_at_grizzlies_on_slip_date() -> None:
+    provider = PlayerTeamDateFilterProvider()
+    result = grade_text(
+        'Cam Spencer over 9.5 points',
+        provider=provider,
+        posted_at=date.fromisoformat('2026-03-07'),
+        include_historical=True,
+    )
+
+    assert result.legs[0].leg.event_id == 'nba-2026-03-07-lac-mem'
+    assert result.legs[0].leg.event_label == 'LA Clippers @ Memphis Grizzlies'
+    assert result.legs[0].leg.event_id != 'nba-2026-03-07-uta-mil'
+
+
+def test_scotty_pippen_jr_resolves_to_clippers_at_grizzlies_on_slip_date() -> None:
+    provider = PlayerTeamDateFilterProvider()
+    result = grade_text(
+        'Scotty Pippen Jr. over 5.5 assists',
+        provider=provider,
+        posted_at=date.fromisoformat('2026-03-07'),
+        include_historical=True,
+    )
+
+    assert result.legs[0].leg.event_id == 'nba-2026-03-07-lac-mem'
+    assert result.legs[0].leg.event_label == 'LA Clippers @ Memphis Grizzlies'
