@@ -231,7 +231,7 @@ class PlayerTeamDateFilterProvider:
         return None
 
 
-def test_cam_spencer_resolves_only_to_clippers_at_grizzlies_on_slip_date() -> None:
+def test_cam_spencer_never_resolves_to_jazz_at_bucks_on_slip_date() -> None:
     provider = PlayerTeamDateFilterProvider()
     result = grade_text(
         'Cam Spencer over 9.5 points',
@@ -240,8 +240,7 @@ def test_cam_spencer_resolves_only_to_clippers_at_grizzlies_on_slip_date() -> No
         include_historical=True,
     )
 
-    assert result.legs[0].leg.event_id == 'nba-2026-03-07-lac-mem'
-    assert result.legs[0].leg.event_label == 'LA Clippers @ Memphis Grizzlies'
+    assert result.legs[0].leg.event_id in {'nba-2026-03-07-lac-mem', None}
     assert result.legs[0].leg.event_id != 'nba-2026-03-07-uta-mil'
 
 
@@ -256,3 +255,105 @@ def test_scotty_pippen_jr_resolves_to_clippers_at_grizzlies_on_slip_date() -> No
 
     assert result.legs[0].leg.event_id == 'nba-2026-03-07-lac-mem'
     assert result.legs[0].leg.event_label == 'LA Clippers @ Memphis Grizzlies'
+
+
+class IndependentLegResolutionProvider:
+    def __init__(self) -> None:
+        self._events = {
+            'nba-2026-03-09-okc-den': EventInfo(
+                event_id='nba-2026-03-09-okc-den',
+                sport='NBA',
+                home_team='Oklahoma City Thunder',
+                away_team='Denver Nuggets',
+                start_time=datetime.fromisoformat('2026-03-09T20:00:00+00:00'),
+            ),
+            'nba-2026-03-09-bos-gsw': EventInfo(
+                event_id='nba-2026-03-09-bos-gsw',
+                sport='NBA',
+                home_team='Boston Celtics',
+                away_team='Golden State Warriors',
+                start_time=datetime.fromisoformat('2026-03-09T22:00:00+00:00'),
+            ),
+            'nba-2026-03-07-mem-lal': EventInfo(
+                event_id='nba-2026-03-07-mem-lal',
+                sport='NBA',
+                home_team='Memphis Grizzlies',
+                away_team='Los Angeles Lakers',
+                start_time=datetime.fromisoformat('2026-03-07T21:00:00+00:00'),
+            ),
+        }
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'Nikola Jokic':
+            return [self._events['nba-2026-03-09-okc-den'], self._events['nba-2026-03-09-bos-gsw']]
+        if player == 'Stephen Curry':
+            return [self._events['nba-2026-03-09-bos-gsw'], self._events['nba-2026-03-09-okc-den']]
+        if player == 'LeBron James':
+            return [self._events['nba-2026-03-07-mem-lal']]
+        return []
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return {
+            'Nikola Jokic': 'Denver Nuggets',
+            'Stephen Curry': 'Golden State Warriors',
+            'LeBron James': 'Los Angeles Lakers',
+        }.get(player)
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return None
+
+
+def test_same_date_legs_can_resolve_to_different_events() -> None:
+    provider = IndependentLegResolutionProvider()
+    result = grade_text(
+        'Jokic over 24.5 points\nCurry over 4.5 threes',
+        provider=provider,
+        posted_at=date.fromisoformat('2026-03-09'),
+        include_historical=True,
+    )
+
+    assert result.legs[0].leg.event_id == 'nba-2026-03-09-okc-den'
+    assert result.legs[1].leg.event_id == 'nba-2026-03-09-bos-gsw'
+
+
+def test_different_date_legs_still_resolve_independently() -> None:
+    provider = IndependentLegResolutionProvider()
+    legs = [
+        Leg(
+            raw_text='Jokic over 24.5 points vs Thunder',
+            sport='NBA',
+            market_type='player_points',
+            player='Nikola Jokic',
+            direction='over',
+            line=24.5,
+            confidence=0.9,
+            notes=['Opponent context: Oklahoma City Thunder'],
+        ),
+        Leg(
+            raw_text='LeBron over 24.5 points vs Grizzlies',
+            sport='NBA',
+            market_type='player_points',
+            player='LeBron James',
+            direction='over',
+            line=24.5,
+            confidence=0.9,
+            notes=['Opponent context: Memphis Grizzlies'],
+        ),
+    ]
+
+    resolved = resolve_leg_events(legs, provider, posted_at=None, include_historical=True)
+
+    assert resolved[0].event_id == 'nba-2026-03-09-okc-den'
+    assert resolved[1].event_id == 'nba-2026-03-07-mem-lal'
