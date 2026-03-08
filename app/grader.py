@@ -115,10 +115,32 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
 
 
 
-def grade_text(text: str, provider: ResultsProvider | None = None, posted_at: datetime | None = None) -> GradeResponse:
+def grade_text(
+    text: str,
+    provider: ResultsProvider | None = None,
+    posted_at: datetime | None = None,
+    *,
+    include_historical: bool = False,
+    selected_event_id: str | None = None,
+) -> GradeResponse:
     provider = provider or get_results_provider()
     legs = parse_text(text)
-    resolved_legs = resolve_leg_events(legs, provider, posted_at)
+    resolved_legs = resolve_leg_events(
+        legs,
+        provider,
+        posted_at,
+        include_historical=include_historical,
+        selected_event_id=selected_event_id,
+    )
+    has_confident_match = any(leg.event_id for leg in resolved_legs)
+    if not has_confident_match and not include_historical:
+        resolved_legs = resolve_leg_events(
+            legs,
+            provider,
+            posted_at,
+            include_historical=True,
+            selected_event_id=selected_event_id,
+        )
     graded = [settle_leg(leg, provider) for leg in resolved_legs]
 
     settlements = [item.settlement for item in graded]

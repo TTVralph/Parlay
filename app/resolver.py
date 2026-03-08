@@ -13,6 +13,14 @@ def _norm(text: str) -> str:
     return re.sub(r'[^a-z0-9]', '', text.lower())
 
 
+def _event_candidate_payload(event: EventInfo) -> dict[str, object]:
+    return {
+        'event_id': event.event_id,
+        'event_label': event.label,
+        'event_start_time': event.start_time.isoformat(),
+    }
+
+
 def _opponent_from_leg(leg: Leg) -> str | None:
     for note in leg.notes:
         if note.startswith('Opponent context: '):
@@ -36,47 +44,90 @@ def _filter_by_opponent(candidates: list[EventInfo], opponent: str | None) -> li
     return matched or candidates
 
 
-def _team_candidates(provider: ResultsProvider, team: str, posted_at: datetime | None) -> list[EventInfo]:
+def _team_candidates(provider: ResultsProvider, team: str, posted_at: datetime | None, include_historical: bool) -> list[EventInfo]:
     resolver = getattr(provider, 'resolve_team_event_candidates', None)
     if callable(resolver):
-        return resolver(team, posted_at)
-    event = provider.resolve_team_event(team, posted_at)
+        try:
+            return resolver(team, posted_at, include_historical=include_historical)
+        except TypeError:
+            return resolver(team, posted_at)
+    try:
+        event = provider.resolve_team_event(team, posted_at, include_historical=include_historical)
+    except TypeError:
+        event = provider.resolve_team_event(team, posted_at)
     return [event] if event else []
 
 
-def _player_candidates(provider: ResultsProvider, player: str, posted_at: datetime | None) -> list[EventInfo]:
+def _player_candidates(provider: ResultsProvider, player: str, posted_at: datetime | None, include_historical: bool) -> list[EventInfo]:
     resolver = getattr(provider, 'resolve_player_event_candidates', None)
     if callable(resolver):
-        return resolver(player, posted_at)
-    event = provider.resolve_player_event(player, posted_at)
+        try:
+            return resolver(player, posted_at, include_historical=include_historical)
+        except TypeError:
+            return resolver(player, posted_at)
+    try:
+        event = provider.resolve_player_event(player, posted_at, include_historical=include_historical)
+    except TypeError:
+        event = provider.resolve_player_event(player, posted_at)
     return [event] if event else []
 
 
-def resolve_leg_events(legs: list[Leg], provider: ResultsProvider, posted_at: datetime | None) -> list[Leg]:
+def _resolve_anchor(posted_at: datetime | None) -> datetime:
+    if posted_at is not None:
+        return posted_at
+    return datetime.utcnow()
+
+
+def resolve_leg_events(
+    legs: list[Leg],
+    provider: ResultsProvider,
+    posted_at: datetime | None,
+    *,
+    include_historical: bool = False,
+    selected_event_id: str | None = None,
+) -> list[Leg]:
+    anchor = _resolve_anchor(posted_at)
+    shared_event: EventInfo | None = None
     resolved: list[Leg] = []
     for leg in legs:
         updates: dict[str, object | None] = {}
         notes = list(leg.notes)
         candidates: list[EventInfo] = []
         opponent = _opponent_from_leg(leg)
+
         if leg.market_type in {'moneyline', 'spread'} and leg.team:
-            candidates = _team_candidates(provider, leg.team, posted_at)
+            candidates = _team_candidates(provider, leg.team, anchor, include_historical=include_historical)
             updates['matched_by'] = 'team_schedule_lookup'
         elif leg.player:
-            candidates = _player_candidates(provider, leg.player, posted_at)
+            candidates = _player_candidates(provider, leg.player, anchor, include_historical=include_historical)
             candidates = _filter_by_opponent(candidates, opponent)
             updates['matched_by'] = 'player_boxscore_lookup'
 
+
+        if selected_event_id:
+            selected_only = [event for event in candidates if event.event_id == selected_event_id]
+            if selected_only:
+                candidates = selected_only
+
+        if shared_event is not None:
+            linked = [event for event in candidates if event.event_id == shared_event.event_id]
+            if linked:
+                candidates = linked
+
         if len(candidates) == 1:
             event = candidates[0]
+            shared_event = shared_event or event
             updates['event_id'] = event.event_id
             updates['event_label'] = event.label
             updates['event_start_time'] = event.start_time
+            updates['event_candidates'] = []
             resolved.append(leg.model_copy(update=updates))
             continue
 
-        if len(candidates) > 1 and AMBIGUOUS_EVENT_WARNING not in notes:
-            notes.append(AMBIGUOUS_EVENT_WARNING)
+        if len(candidates) > 1:
+            updates['event_candidates'] = [_event_candidate_payload(event) for event in candidates[:5]]
+            if AMBIGUOUS_EVENT_WARNING not in notes:
+                notes.append(AMBIGUOUS_EVENT_WARNING)
             updates['notes'] = notes
             updates['matched_by'] = None
             resolved.append(leg.model_copy(update=updates))
@@ -99,6 +150,7 @@ def resolve_leg_events(legs: list[Leg], provider: ResultsProvider, posted_at: da
                         'event_start_time': donor.event_start_time,
                         'matched_by': 'ticket_event_inference',
                         'notes': list(leg.notes),
+                        'event_candidates': [],
                     }
                 )
             )

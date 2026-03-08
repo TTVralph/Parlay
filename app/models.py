@@ -46,6 +46,7 @@ class Leg(BaseModel):
     event_label: Optional[str] = None
     event_start_time: Optional[datetime] = None
     matched_by: Optional[str] = None
+    event_candidates: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ParseResponse(BaseModel):

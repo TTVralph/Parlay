@@ -13,6 +13,6 @@ def test_check_slip_endpoint_returns_review_when_unmatched_legs():
     assert body['ok'] is True
     assert body['parlay_result'] == 'needs_review'
     assert body['legs'] == [
-        {'leg': 'Leg A', 'result': 'review', 'matched_event': None},
-        {'leg': 'Leg B', 'result': 'review', 'matched_event': None},
+        {'leg': 'Leg A', 'result': 'review', 'matched_event': None, 'candidate_games': []},
+        {'leg': 'Leg B', 'result': 'review', 'matched_event': None, 'candidate_games': []},
     ]

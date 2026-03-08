@@ -851,6 +851,11 @@ def public_check_page() -> HTMLResponse:
 Denver ML
 Murray over 2.5 threes'></textarea>
   <input id='stakeAmount' type='number' min='0.01' step='0.01' placeholder='Stake amount (optional)' style='margin-top:10px;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;box-sizing:border-box;'>
+  <input id='slipDate' type='date' placeholder='Date of slip (optional)' style='margin-top:10px;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;box-sizing:border-box;'>
+  <label style='display:flex;align-items:center;gap:8px;margin-top:10px;'>
+    <input id='searchHistorical' type='checkbox' style='width:auto;'>
+    <span>Search historical results</span>
+  </label>
   <div id='uploadWrap'>
     <label for='slipImage'><strong>Or upload a slip screenshot</strong></label>
     <input id='slipImage' type='file' accept='image/*'>
@@ -881,6 +886,8 @@ Murray over 2.5 threes'></textarea>
     const slip=document.getElementById('slip');
     const stakeAmount=document.getElementById('stakeAmount');
     const slipImage=document.getElementById('slipImage');
+    const slipDate=document.getElementById('slipDate');
+    const searchHistorical=document.getElementById('searchHistorical');
     const btn=document.getElementById('checkBtn');
     const copyBtn=document.getElementById('copyBtn');
     const summaryOut=document.getElementById('summaryOut');
@@ -894,7 +901,9 @@ Murray over 2.5 threes'></textarea>
     const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
     const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
     const emptyTextMessage='Paste at least one leg first.';
+    let selectedEventId='';
 
+    slip.addEventListener('input',()=>{selectedEventId='';});
     document.querySelectorAll('[data-sample]').forEach((node)=>{
       node.addEventListener('click',()=>{
         const key=node.getAttribute('data-sample');
@@ -912,7 +921,29 @@ Murray over 2.5 threes'></textarea>
         const eventCell=document.createElement('td');
         legCell.textContent=item.leg||'—';
         resultCell.textContent=resultLabel[item.result]||String(item.result||'review');
-        eventCell.textContent=item.matched_event||'—';
+        if(item.matched_event){
+          eventCell.textContent=item.matched_event;
+        }else if((item.candidate_games||[]).length){
+          const select=document.createElement('select');
+          const prompt=document.createElement('option');
+          prompt.value='';
+          prompt.textContent='Select candidate game';
+          select.appendChild(prompt);
+          for(const game of item.candidate_games){
+            const opt=document.createElement('option');
+            opt.value=game.event_id;
+            opt.textContent=game.event_label;
+            if(game.event_id===selectedEventId){ opt.selected=true; }
+            select.appendChild(opt);
+          }
+          select.addEventListener('change',()=>{
+            selectedEventId=select.value||'';
+            if(selectedEventId){ submitCheck(); }
+          });
+          eventCell.appendChild(select);
+        }else{
+          eventCell.textContent='—';
+        }
         tr.appendChild(legCell);
         tr.appendChild(resultCell);
         tr.appendChild(eventCell);
@@ -979,6 +1010,9 @@ Murray over 2.5 threes'></textarea>
           const stakeRaw=(stakeAmount.value||'').trim();
           const payload={text};
           if(stakeRaw){payload.stake_amount=stakeRaw;}
+          if(slipDate.value){payload.date_of_slip=slipDate.value;}
+          if(searchHistorical.checked){payload.search_historical=true;}
+          if(selectedEventId){payload.selected_event_id=selectedEventId;}
           res=await fetch('/check-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
           data=await res.json();
         }
@@ -1045,7 +1079,13 @@ def _estimate_profit_from_american(stake_amount: float, american_odds: int) -> f
     return round(stake_amount * (100.0 / abs(american_odds)), 2)
 
 
-def _process_public_check_text(text: str, stake_amount: float | None = None) -> dict:
+def _process_public_check_text(
+    text: str,
+    stake_amount: float | None = None,
+    date_of_slip: datetime | None = None,
+    search_historical: bool = False,
+    selected_event_id: str | None = None,
+) -> dict:
     normalized = text.strip()
     if stake_amount is not None and stake_amount <= 0:
         return {
@@ -1081,7 +1121,13 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
         }
 
     try:
-        graded = grade_text(normalized, provider=_public_check_provider, posted_at=None)
+        graded = grade_text(
+            normalized,
+            provider=_public_check_provider,
+            posted_at=date_of_slip,
+            include_historical=search_historical,
+            selected_event_id=selected_event_id,
+        )
     except Exception:
         return {
             'ok': False,
@@ -1103,7 +1149,12 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
             result = 'review'
             if any('multiple possible games' in note.lower() for note in item.leg.notes):
                 ambiguous_count += 1
-        legs.append({'leg': item.leg.raw_text, 'result': result, 'matched_event': item.leg.event_label})
+        legs.append({
+            'leg': item.leg.raw_text,
+            'result': result,
+            'matched_event': item.leg.event_label,
+            'candidate_games': item.leg.event_candidates,
+        })
 
     parlay_result = 'still_live' if graded.overall == 'pending' else graded.overall
     out = {
@@ -1179,7 +1230,22 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
             parsed_stake = float(stake)
         except (TypeError, ValueError):
             return {'ok': False, 'message': 'Enter a valid numeric stake amount.', 'legs': [], 'parsed_legs': [], 'parse_warning': None, 'grading_warning': None, 'parlay_result': 'needs_review'}
-    return _process_public_check_text(str(payload.get('text', '')), stake_amount=parsed_stake)
+
+    raw_date = str(payload.get('date_of_slip') or '').strip()
+    parsed_date: datetime | None = None
+    if raw_date:
+        try:
+            parsed_date = datetime.fromisoformat(raw_date)
+        except ValueError:
+            return {'ok': False, 'message': 'Enter a valid date of slip.', 'legs': [], 'parsed_legs': [], 'parse_warning': None, 'grading_warning': None, 'parlay_result': 'needs_review'}
+
+    return _process_public_check_text(
+        str(payload.get('text', '')),
+        stake_amount=parsed_stake,
+        date_of_slip=parsed_date,
+        search_historical=bool(payload.get('search_historical', False)),
+        selected_event_id=(str(payload.get('selected_event_id') or '').strip() or None),
+    )
 
 
 @app.post('/check/jobs', response_model=CheckJobCreateResponse)

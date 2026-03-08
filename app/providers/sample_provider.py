@@ -79,39 +79,32 @@ class SampleResultsProvider(ResultsProvider):
 
         return events[0] if len(events) == 1 else None
 
-    def resolve_team_event_candidates(self, team: str, as_of: datetime | None) -> list[EventInfo]:
+    def _recent_window(self, events: list[EventInfo], as_of: datetime | None) -> list[EventInfo]:
+        if as_of is None:
+            return events
+        start = as_of - timedelta(days=1)
+        end = as_of + timedelta(days=1)
+        return [event for event in events if start <= event.start_time <= end]
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False) -> list[EventInfo]:
         events = self._candidate_events_for_team(team)
-        if as_of is None:
-            return events
-        future_buffer = timedelta(hours=8)
-        future_candidates = [e for e in events if as_of <= e.start_time <= as_of + future_buffer]
-        if future_candidates:
-            return future_candidates
-        recent_past = [e for e in events if e.start_time <= as_of <= e.start_time + timedelta(hours=8)]
-        if recent_past:
-            return recent_past
-        historical = [e for e in events if e.start_time <= as_of]
-        return historical or events
+        recent = self._recent_window(events, as_of)
+        if recent:
+            return recent
+        return events if include_historical else []
 
-    def resolve_player_event_candidates(self, player: str, as_of: datetime | None) -> list[EventInfo]:
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False) -> list[EventInfo]:
         events = self._candidate_events_for_player(player)
-        if as_of is None:
-            return events
-        future_buffer = timedelta(hours=8)
-        future_candidates = [e for e in events if as_of <= e.start_time <= as_of + future_buffer]
-        if future_candidates:
-            return future_candidates
-        recent_past = [e for e in events if e.start_time <= as_of <= e.start_time + timedelta(hours=8)]
-        if recent_past:
-            return recent_past
-        historical = [e for e in events if e.start_time <= as_of]
-        return historical or events
+        recent = self._recent_window(events, as_of)
+        if recent:
+            return recent
+        return events if include_historical else []
 
-    def resolve_team_event(self, team: str, as_of: datetime | None) -> EventInfo | None:
-        return self._resolve_unique_by_time(self.resolve_team_event_candidates(team, as_of), as_of)
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False) -> EventInfo | None:
+        return self._resolve_unique_by_time(self.resolve_team_event_candidates(team, as_of, include_historical=include_historical), as_of)
 
-    def resolve_player_event(self, player: str, as_of: datetime | None) -> EventInfo | None:
-        return self._resolve_unique_by_time(self.resolve_player_event_candidates(player, as_of), as_of)
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False) -> EventInfo | None:
+        return self._resolve_unique_by_time(self.resolve_player_event_candidates(player, as_of, include_historical=include_historical), as_of)
 
     def get_team_result(self, team: str, event_id: str | None = None) -> TeamResult | None:
         if event_id is None:

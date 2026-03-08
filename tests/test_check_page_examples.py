@@ -87,4 +87,4 @@ def test_check_slip_returns_friendly_shape() -> None:
     assert body['ok'] is True
     assert isinstance(body['legs'], list)
     assert body['parlay_result'] in {'cashed', 'lost', 'still_live', 'needs_review'}
-    assert set(body['legs'][0].keys()) == {'leg', 'result', 'matched_event'}
+    assert {'leg', 'result', 'matched_event', 'candidate_games'} <= set(body['legs'][0].keys())
