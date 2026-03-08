@@ -119,7 +119,6 @@ from .models import (
     SportsAPIProGamesResponse,
     SportsAPIProAthleteGameLogsResponse,
     ProviderCapabilitiesResponse,
-    SportsAPIProGamesResponse,
     SportsAPIProAthleteGamesResponse,
 )
 from .ocr import get_ocr_provider

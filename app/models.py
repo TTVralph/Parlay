@@ -5,35 +5,35 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-Sport = Literal['NBA', 'NFL', 'MLB']
+Sport = Literal["NBA", "NFL", "MLB"]
 MarketType = Literal[
-    'moneyline',
-    'spread',
-    'game_total',
-    'player_points',
-    'player_rebounds',
-    'player_assists',
-    'player_threes',
-    'player_pra',
-    'player_passing_yards',
-    'player_rushing_yards',
-    'player_receiving_yards',
-    'player_hits',
+    "moneyline",
+    "spread",
+    "game_total",
+    "player_points",
+    "player_rebounds",
+    "player_assists",
+    "player_threes",
+    "player_pra",
+    "player_passing_yards",
+    "player_rushing_yards",
+    "player_receiving_yards",
+    "player_hits",
 ]
-Direction = Literal['over', 'under']
-Settlement = Literal['win', 'loss', 'pending', 'push', 'unmatched']
-ReviewStatus = Literal['open', 'approved', 'rejected']
-ReviewPriority = Literal['low', 'normal', 'high']
+Direction = Literal["over", "under"]
+Settlement = Literal["win", "loss", "pending", "push", "unmatched"]
+ReviewStatus = Literal["open", "approved", "rejected"]
+ReviewPriority = Literal["low", "normal", "high"]
 
 
 class ParseRequest(BaseModel):
-    text: str = Field(..., description='Raw parlay text pasted by user')
+    text: str = Field(..., description="Raw parlay text pasted by user")
     sport_hint: Optional[Sport] = None
 
 
 class Leg(BaseModel):
     raw_text: str
-    sport: Sport = 'NBA'
+    sport: Sport = "NBA"
     market_type: MarketType
     team: Optional[str] = None
     player: Optional[str] = None
@@ -55,7 +55,10 @@ class ParseResponse(BaseModel):
 class GradeRequest(BaseModel):
     text: str
     sport_hint: Optional[Sport] = None
-    posted_at: Optional[datetime] = Field(default=None, description='Timestamp for the original post/slip, used for event/date resolution')
+    posted_at: Optional[datetime] = Field(
+        default=None,
+        description="Timestamp for the original post/slip, used for event/date resolution",
+    )
 
 
 class GradedLeg(BaseModel):
@@ -66,9 +69,8 @@ class GradedLeg(BaseModel):
 
 
 class GradeResponse(BaseModel):
-    overall: Literal['cashed', 'lost', 'pending', 'needs_review']
+    overall: Literal["cashed", "lost", "pending", "needs_review"]
     legs: list[GradedLeg]
-
 
 
 class AllSportsGame(BaseModel):
@@ -129,7 +131,6 @@ class SportsAPIProPlayerStats(BaseModel):
 
 
 class SportsAPIProAthleteGameLog(BaseModel):
-class SportsAPIProPlayerGameLog(BaseModel):
     athleteId: str
     gameId: str | None = None
     date: str | None = None
@@ -143,9 +144,11 @@ class SportsAPIProPlayerGameLog(BaseModel):
 class SportsAPIProAthleteGameLogsResponse(BaseModel):
     athleteId: str
     logs: list[SportsAPIProAthleteGameLog] = Field(default_factory=list)
+
+
 class SportsAPIProAthleteGamesResponse(BaseModel):
     athleteId: str
-    logs: list[SportsAPIProPlayerGameLog] = Field(default_factory=list)
+    logs: list[SportsAPIProAthleteGameLog] = Field(default_factory=list)
 
 
 class ProviderCapabilities(BaseModel):
@@ -162,14 +165,15 @@ class ProviderCapabilitiesResponse(BaseModel):
 class CheckJobCreateResponse(BaseModel):
     ok: bool = True
     job_id: str
-    status: Literal['pending'] = 'pending'
+    status: Literal["pending"] = "pending"
 
 
 class CheckJobStatusResponse(BaseModel):
     job_id: str
-    status: Literal['pending', 'complete', 'failed']
+    status: Literal["pending", "complete", "failed"]
     result: Optional[dict[str, Any]] = None
     error: Optional[str] = None
+
 
 class TweetIngestRequest(BaseModel):
     tweet_id: Optional[str] = None
@@ -196,7 +200,7 @@ class OCRExtractResponse(BaseModel):
 
 
 class IngestGradeResponse(BaseModel):
-    source_type: Literal['tweet', 'screenshot']
+    source_type: Literal["tweet", "screenshot"]
     source_ref: Optional[str] = None
     extracted_text: str
     cleaned_text: str
@@ -222,7 +226,7 @@ class ReviewQueueItemResponse(BaseModel):
 
 
 class ReviewResolveRequest(BaseModel):
-    status: Literal['approved', 'rejected']
+    status: Literal["approved", "rejected"]
     resolution_note: str
 
 
@@ -282,7 +286,7 @@ class CapperRoiDashboardResponse(BaseModel):
 class TicketDetailResponse(BaseModel):
     ticket_id: str
     raw_text: str
-    overall: Literal['cashed', 'lost', 'pending', 'needs_review']
+    overall: Literal["cashed", "lost", "pending", "needs_review"]
     created_at: datetime
     posted_at: Optional[datetime] = None
     source_type: Optional[str] = None
@@ -332,7 +336,7 @@ class PollRunResponse(BaseModel):
 
 
 class AliasUpsertRequest(BaseModel):
-    alias_type: Literal['player', 'team', 'market']
+    alias_type: Literal["player", "team", "market"]
     alias: str
     canonical_value: str
     created_by: Optional[str] = None
@@ -458,7 +462,7 @@ class UserRegisterRequest(BaseModel):
     username: str
     password: str
     email: Optional[str] = None
-    role: Literal['member', 'capper'] = 'member'
+    role: Literal["member", "capper"] = "member"
     linked_capper_username: Optional[str] = None
 
 
@@ -477,14 +481,14 @@ class UserProfileResponse(BaseModel):
     username: str
     email: Optional[str] = None
     is_admin: bool = False
-    role: str = 'member'
+    role: str = "member"
     linked_capper_username: Optional[str] = None
     created_at: datetime
 
 
 class SessionResponse(BaseModel):
     access_token: str
-    token_type: str = 'bearer'
+    token_type: str = "bearer"
     expires_at: Optional[datetime] = None
     user: UserProfileResponse
 
@@ -507,10 +511,8 @@ class AdminSessionsResponse(BaseModel):
 
 
 class UserRoleUpdateRequest(BaseModel):
-    role: Literal['member', 'capper', 'admin']
+    role: Literal["member", "capper", "admin"]
     linked_capper_username: Optional[str] = None
-
-
 
 
 class AdminCapperCreateRequest(BaseModel):
@@ -536,6 +538,8 @@ class AdminCapperProfileResponse(BaseModel):
     bio: Optional[str] = None
     verified: bool = False
     verification_badge: Optional[str] = None
+
+
 class CapperSelfProfileResponse(BaseModel):
     username: str
     is_public: bool
@@ -567,7 +571,7 @@ class SubscriptionPlansResponse(BaseModel):
 
 class SubscriptionCheckoutRequest(BaseModel):
     plan_code: str
-    provider: str = 'mock_stripe'
+    provider: str = "mock_stripe"
 
 
 class SubscriptionCheckoutResponse(BaseModel):
@@ -610,7 +614,7 @@ class AffiliateResolveRequest(BaseModel):
     bookmaker: str
     capper_username: Optional[str] = None
     ticket_id: Optional[str] = None
-    source: str = 'parlaybot'
+    source: str = "parlaybot"
 
 
 class AffiliateResolveResponse(BaseModel):
@@ -621,7 +625,7 @@ class AffiliateResolveResponse(BaseModel):
 
 
 class CapperVerificationRequest(BaseModel):
-    badge: str = 'verified'
+    badge: str = "verified"
     note: Optional[str] = None
 
 
@@ -633,7 +637,7 @@ class CapperVerificationResponse(BaseModel):
 
 
 class BillingEntitlementsResponse(BaseModel):
-    plan_code: str = 'free'
+    plan_code: str = "free"
     is_active: bool = False
     entitlements: list[str] = Field(default_factory=list)
 
@@ -703,7 +707,7 @@ class BillingInvoiceRow(BaseModel):
     subscription_id: Optional[int] = None
     status: str
     amount_paid: float = 0.0
-    currency: str = 'usd'
+    currency: str = "usd"
     hosted_invoice_url: Optional[str] = None
     pdf_download_token: Optional[str] = None
     pdf_filename: Optional[str] = None
@@ -746,7 +750,7 @@ class AffiliateConversionRecordRequest(BaseModel):
     click_token: str
     bookmaker: Optional[str] = None
     revenue_amount: Optional[float] = None
-    currency: str = 'usd'
+    currency: str = "usd"
     external_ref: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -756,7 +760,7 @@ class AffiliateConversionRow(BaseModel):
     click_token: str
     bookmaker: str
     revenue_amount: float = 0.0
-    currency: str = 'usd'
+    currency: str = "usd"
     external_ref: Optional[str] = None
     created_at: datetime
 
@@ -778,7 +782,7 @@ class AffiliatePostbackRequest(BaseModel):
     click_token: Optional[str] = None
     bookmaker: Optional[str] = None
     revenue_amount: Optional[float] = None
-    currency: str = 'usd'
+    currency: str = "usd"
     external_ref: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -787,7 +791,7 @@ class AffiliateWebhookIngestRequest(BaseModel):
     click_token: Optional[str] = None
     bookmaker: Optional[str] = None
     revenue_amount: Optional[float] = None
-    currency: str = 'usd'
+    currency: str = "usd"
     external_ref: Optional[str] = None
     payload: dict[str, Any] = Field(default_factory=dict)
 
