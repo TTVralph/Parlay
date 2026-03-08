@@ -3,25 +3,52 @@ from __future__ import annotations
 from datetime import datetime
 
 from .models import Leg
-from .providers.base import ResultsProvider
+from .providers.base import EventInfo, ResultsProvider
+
+AMBIGUOUS_EVENT_WARNING = 'This leg matches multiple possible games. Add opponent/date or upload the full slip.'
+
+
+def _team_candidates(provider: ResultsProvider, team: str, posted_at: datetime | None) -> list[EventInfo]:
+    resolver = getattr(provider, 'resolve_team_event_candidates', None)
+    if callable(resolver):
+        return resolver(team, posted_at)
+    event = provider.resolve_team_event(team, posted_at)
+    return [event] if event else []
+
+
+def _player_candidates(provider: ResultsProvider, player: str, posted_at: datetime | None) -> list[EventInfo]:
+    resolver = getattr(provider, 'resolve_player_event_candidates', None)
+    if callable(resolver):
+        return resolver(player, posted_at)
+    event = provider.resolve_player_event(player, posted_at)
+    return [event] if event else []
 
 
 def resolve_leg_events(legs: list[Leg], provider: ResultsProvider, posted_at: datetime | None) -> list[Leg]:
     resolved: list[Leg] = []
     for leg in legs:
         updates: dict[str, object | None] = {}
-        event = None
+        notes = list(leg.notes)
+        candidates: list[EventInfo] = []
         if leg.market_type in {'moneyline', 'spread'} and leg.team:
-            event = provider.resolve_team_event(leg.team, posted_at)
+            candidates = _team_candidates(provider, leg.team, posted_at)
             updates['matched_by'] = 'team_schedule_lookup'
         elif leg.player:
-            event = provider.resolve_player_event(leg.player, posted_at)
+            candidates = _player_candidates(provider, leg.player, posted_at)
             updates['matched_by'] = 'player_boxscore_lookup'
 
-        if event is not None:
+        if len(candidates) == 1:
+            event = candidates[0]
             updates['event_id'] = event.event_id
             updates['event_label'] = event.label
             updates['event_start_time'] = event.start_time
+            resolved.append(leg.model_copy(update=updates))
+            continue
+
+        if len(candidates) > 1 and AMBIGUOUS_EVENT_WARNING not in notes:
+            notes.append(AMBIGUOUS_EVENT_WARNING)
+            updates['notes'] = notes
+            updates['matched_by'] = None
             resolved.append(leg.model_copy(update=updates))
             continue
 
@@ -48,7 +75,8 @@ def resolve_leg_events(legs: list[Leg], provider: ResultsProvider, posted_at: da
             continue
         if leg.event_id is None:
             notes = list(leg.notes)
-            notes.append('Could not confidently resolve event/date for this leg')
+            if 'Could not confidently resolve event/date for this leg' not in notes:
+                notes.append('Could not confidently resolve event/date for this leg')
             final_resolved.append(leg.model_copy(update={'notes': notes}))
             continue
         final_resolved.append(leg)
