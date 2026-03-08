@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from app.grader import grade_text
 from app.models import Leg
@@ -129,3 +129,60 @@ def test_slip_date_never_matches_previous_day_event() -> None:
 
     assert all(item.leg.event_id == 'nba-2026-03-06-den-nyk' for item in result.legs)
     assert all(item.leg.event_id != 'nba-2026-03-05-den-lal' for item in result.legs)
+
+
+class LockedEventNoPlayerStatsProvider:
+    def __init__(self) -> None:
+        self._event = EventInfo(
+            event_id='nba-2026-02-11-mem-den',
+            sport='NBA',
+            home_team='Denver Nuggets',
+            away_team='Memphis Grizzlies',
+            start_time=datetime.fromisoformat('2026-02-12T02:00:00+00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return self._event if team in {self._event.home_team, self._event.away_team} else None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return self._event if player in {'Nikola Jokic', 'Jamal Murray'} else None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return [self._event] if team in {self._event.home_team, self._event.away_team} else []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return [self._event] if player in {'Nikola Jokic', 'Jamal Murray'} else []
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        if event_id != self._event.event_id:
+            return None
+        return TeamResult(
+            event=self._event,
+            moneyline_win=(team == 'Denver Nuggets'),
+            home_score=122,
+            away_score=116,
+        )
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return None
+
+    def get_event_status(self, event_id: str):
+        if event_id != self._event.event_id:
+            return None
+        return 'final'
+
+
+def test_slip_date_team_leg_locks_event_and_ml_settles_when_player_stats_missing() -> None:
+    provider = LockedEventNoPlayerStatsProvider()
+    result = grade_text(
+        'Jokic over 24.5 points\nMurray over 2.5 threes\nDenver ML',
+        provider=provider,
+        posted_at=date.fromisoformat('2026-02-11'),
+        include_historical=True,
+    )
+
+    assert all(item.leg.event_id == 'nba-2026-02-11-mem-den' for item in result.legs)
+    assert result.legs[2].settlement == 'win'
+    assert result.legs[0].settlement == 'unmatched'
+    assert result.legs[1].settlement == 'unmatched'
+    assert result.overall == 'needs_review'
