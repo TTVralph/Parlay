@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -319,6 +319,84 @@ def ops_emails_page() -> str:
 @app.get('/ops/affiliate-webhooks', response_class=HTMLResponse)
 def ops_affiliate_webhooks_page() -> str:
     return _ops_page_html('Affiliate Webhook Ops', '/affiliate/webhooks')
+
+
+@app.get('/check', response_class=HTMLResponse)
+def check_page() -> HTMLResponse:
+    html = """<!doctype html>
+<html>
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>Parlay Slip Check</title>
+  <style>
+    body { margin: 0; font-family: Inter, Arial, sans-serif; background: #0b1020; color: #edf2ff; }
+    .shell { max-width: 820px; margin: 0 auto; padding: 24px 16px 40px; }
+    .card { background: #131a31; border: 1px solid #26304f; border-radius: 16px; padding: 18px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    .muted { color: #aab4d6; margin-bottom: 16px; }
+    .samples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    button { border-radius: 12px; border: 1px solid #31406b; background: #1a2342; color: #edf2ff; padding: 10px 12px; font: inherit; cursor: pointer; }
+    button.primary { background: #4f7cff; font-weight: 700; }
+    textarea { width: 100%; min-height: 170px; border-radius: 12px; border: 1px solid #31406b; background: #0f1630; color: #fff; padding: 12px; box-sizing: border-box; }
+    pre { background: #0f1630; border: 1px solid #26304f; border-radius: 12px; padding: 12px; overflow-x: auto; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class=\"shell\">
+    <h1>Check a slip</h1>
+    <p class=\"muted\">Paste a ticket and run a quick parser check.</p>
+    <div class=\"card\">
+      <div class=\"samples\">
+        <button type=\"button\" data-sample=\"props\">NBA Player Props</button>
+        <button type=\"button\" data-sample=\"moneyline\">NBA Moneyline</button>
+        <button type=\"button\" data-sample=\"mixed\">Mixed Parlay</button>
+      </div>
+      <textarea id=\"slipText\" placeholder=\"Paste your slip text here...\"></textarea>
+      <div style=\"margin-top:10px;\"><button id=\"checkBtn\" class=\"primary\" type=\"button\">Check slip</button></div>
+      <pre id=\"output\">{\"hint\": \"Select an example or paste a slip, then click Check slip.\"}</pre>
+    </div>
+  </div>
+
+  <script>
+    const samples = {
+      props: `Jokic over 24.5 points\nMurray over 2.5 threes\nOdds +210\nStake 25`,
+      moneyline: `Denver ML\nBoston ML\nOdds +130\nStake 20`,
+      mixed: `Denver ML\nJokic over 24.5 points\nGame Total Over 228.5\nOdds +420\nStake 15`
+    };
+
+    const textEl = document.getElementById('slipText');
+    const outputEl = document.getElementById('output');
+
+    document.querySelectorAll('[data-sample]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        textEl.value = samples[btn.dataset.sample] || '';
+      });
+    });
+
+    document.getElementById('checkBtn').addEventListener('click', async () => {
+      const text = textEl.value.trim();
+      if (!text) {
+        outputEl.textContent = JSON.stringify({ error: 'Enter slip text first.' }, null, 2);
+        return;
+      }
+      try {
+        const resp = await fetch('/check-slip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        const data = await resp.json();
+        outputEl.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        outputEl.textContent = JSON.stringify({ error: String(err) }, null, 2);
+      }
+    });
+  </script>
+</body>
+</html>
+"""
+    return HTMLResponse(html)
 
 
 @app.get('/app')
@@ -1140,7 +1218,7 @@ def pro_capper_roi_dashboard(db: Session = Depends(get_db), _: _db_models.UserSe
 def pro_capper_roi_dashboard_single(username: str, db: Session = Depends(get_db), _: _db_models.UserSessionORM = Depends(require_entitlement('roi_dashboard'))) -> CapperRoiDashboardResponse:
     rows = [CapperRoiDashboardRow(**row) for row in compute_capper_roi_dashboard(db, username=username)]
     return CapperRoiDashboardResponse(rows=rows)
-    from fastapi import Body
+
 
 @app.post("/check-slip")
 def check_slip(payload: dict = Body(...)):
