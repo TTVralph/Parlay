@@ -18,8 +18,8 @@ def test_grade_unverified_slip_is_needs_review() -> None:
 
 def test_grade_live_or_unresolved_stats_is_pending() -> None:
     result = grade_text('Nikola Jokic over 250.5 passing yards')
-    assert result.overall == 'pending'
-    assert result.legs[0].settlement == 'pending'
+    assert result.overall == 'needs_review'
+    assert result.legs[0].settlement == 'unmatched'
 
 
 def test_grade_only_verified_wins_is_cashed() -> None:

@@ -8,12 +8,36 @@ from .providers.factory import get_results_provider
 from .resolver import resolve_leg_events
 from .parser import parse_text
 
+
+_SUPPORTED_NBA_MARKETS = {
+    'moneyline',
+    'player_points',
+    'player_assists',
+    'player_rebounds',
+    'player_threes',
+}
+
+
+def _event_status(provider: ResultsProvider, event_id: str | None) -> str | None:
+    if not event_id:
+        return None
+    status_fn = getattr(provider, 'get_event_status', None)
+    if callable(status_fn):
+        try:
+            return status_fn(event_id)
+        except Exception:
+            return None
+    return None
+
 def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     if leg.confidence < 0.75:
         return GradedLeg(leg=leg, settlement='unmatched', reason='Low-confidence parse; send to manual review')
 
     if not leg.event_id:
         return GradedLeg(leg=leg, settlement='unmatched', reason='No event resolved from post timestamp / schedule lookup')
+
+    if leg.sport == 'NBA' and leg.market_type not in _SUPPORTED_NBA_MARKETS:
+        return GradedLeg(leg=leg, settlement='unmatched', reason='Unsupported NBA bet type for ESPN-backed grading')
 
     if leg.market_type in {'moneyline', 'spread', 'game_total'}:
         team_key = leg.team
@@ -28,7 +52,10 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             return GradedLeg(leg=leg, settlement='unmatched', reason='No team/event context identified')
         team_result = provider.get_team_result(lookup_team, event_id=leg.event_id)
         if not team_result:
-            return GradedLeg(leg=leg, settlement='pending', reason='Event resolved but final team result is not available yet')
+            status = _event_status(provider, leg.event_id)
+            if status == 'live':
+                return GradedLeg(leg=leg, settlement='pending', reason='Game is in progress')
+            return GradedLeg(leg=leg, settlement='unmatched', reason='Could not verify team result from trusted data source')
 
         if leg.market_type == 'moneyline':
             won = team_result.moneyline_win if leg.team == lookup_team else provider.get_team_result(leg.team or '', event_id=leg.event_id).moneyline_win  # type: ignore[union-attr]
@@ -65,7 +92,10 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     if leg.line is None or leg.direction is None:
         return GradedLeg(leg=leg, settlement='unmatched', reason='Missing values required for settlement')
     if actual_value is None:
-        return GradedLeg(leg=leg, settlement='pending', reason='Event resolved but final player result is not available yet')
+        status = _event_status(provider, leg.event_id)
+        if status == 'live':
+            return GradedLeg(leg=leg, settlement='pending', reason='Game is in progress')
+        return GradedLeg(leg=leg, settlement='unmatched', reason='Could not verify player stat from trusted data source')
 
     if leg.direction == 'over':
         won = actual_value > leg.line
