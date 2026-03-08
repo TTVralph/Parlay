@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import imghdr
 import os
 
 import httpx
@@ -13,15 +14,17 @@ class MockOCRProvider:
     provider_name = 'mock'
 
     def extract_text(self, filename: str, content: bytes) -> OCRResult:
-        text = content.decode('utf-8', errors='ignore')
-        cleaned = strip_social_noise(text)
-        return OCRResult(
-            raw_text=text,
-            cleaned_text=cleaned,
-            provider=self.provider_name,
-            confidence=0.99 if cleaned else 0.0,
-            notes=['Mock OCR decoded uploaded bytes as UTF-8 text for local testing'],
+        raise RuntimeError(
+            'Screenshot OCR is unavailable in this environment. Configure OCR_PROVIDER=tesseract with dependencies, or OCR_PROVIDER=ocr_space with OCR_SPACE_API_KEY.'
         )
+
+
+def validate_image_upload(filename: str, content: bytes) -> None:
+    if not content:
+        raise RuntimeError('Uploaded file is empty.')
+    kind = imghdr.what(None, h=content)
+    if kind not in {'png', 'jpeg', 'gif', 'bmp', 'webp', 'tiff'}:
+        raise RuntimeError(f'Unsupported screenshot format for {filename or "upload"}. Please upload a valid image file.')
 
 
 class TesseractOCRProvider:
