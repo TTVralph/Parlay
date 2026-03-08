@@ -21,7 +21,7 @@ MarketType = Literal[
     "player_hits",
 ]
 Direction = Literal["over", "under"]
-Settlement = Literal["win", "loss", "pending", "push", "unmatched"]
+Settlement = Literal["win", "loss", "pending", "push", "void", "unmatched"]
 ReviewStatus = Literal["open", "approved", "rejected"]
 ReviewPriority = Literal["low", "normal", "high"]
 

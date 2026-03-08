@@ -147,6 +147,7 @@ def resolve_leg_events(
     *,
     include_historical: bool = False,
     selected_event_id: str | None = None,
+    selected_event_by_leg_id: dict[str, str] | None = None,
 ) -> list[Leg]:
     explicit_slip_date = posted_at if isinstance(posted_at, date) and not isinstance(posted_at, datetime) else None
     slip_filter_value: date | datetime | None = explicit_slip_date or posted_at
@@ -161,7 +162,7 @@ def resolve_leg_events(
     resolved: list[Leg] = []
     resolved_event_ids: set[str] = set()
     resolved_team_event_ids: dict[str, set[str]] = {}
-    for leg in legs:
+    for index, leg in enumerate(legs):
         updates: dict[str, object | None] = {}
         notes = list(leg.notes)
         candidates: list[EventInfo] = []
@@ -191,8 +192,14 @@ def resolve_leg_events(
         )
 
 
-        if selected_event_id:
-            selected_only = [event for event in candidates if event.event_id == selected_event_id]
+        selected_for_leg = None
+        if selected_event_by_leg_id:
+            selected_for_leg = selected_event_by_leg_id.get(str(index))
+        if not selected_for_leg:
+            selected_for_leg = selected_event_id
+
+        if selected_for_leg:
+            selected_only = [event for event in candidates if event.event_id == selected_for_leg]
             if selected_only:
                 candidates = selected_only
 

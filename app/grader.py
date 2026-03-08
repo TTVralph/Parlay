@@ -95,6 +95,16 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         status = _event_status(provider, leg.event_id)
         if status == 'live':
             return GradedLeg(leg=leg, settlement='pending', reason='Game is in progress')
+        did_appear_fn = getattr(provider, 'did_player_appear', None)
+        if callable(did_appear_fn):
+            try:
+                appeared = did_appear_fn(leg.player, event_id=leg.event_id)
+            except TypeError:
+                appeared = did_appear_fn(leg.player, leg.event_id)
+            except Exception:
+                appeared = None
+            if appeared is False:
+                return GradedLeg(leg=leg, settlement='void', reason=f'{leg.player} did not appear in box score (DNP)')
         return GradedLeg(leg=leg, settlement='unmatched', reason='Could not verify player stat from trusted data source')
 
     if leg.direction == 'over':
@@ -122,6 +132,7 @@ def grade_text(
     *,
     include_historical: bool = False,
     selected_event_id: str | None = None,
+    selected_event_by_leg_id: dict[str, str] | None = None,
 ) -> GradeResponse:
     provider = provider or get_results_provider()
     legs = parse_text(text)
@@ -131,6 +142,7 @@ def grade_text(
         posted_at,
         include_historical=include_historical,
         selected_event_id=selected_event_id,
+        selected_event_by_leg_id=selected_event_by_leg_id,
     )
     has_confident_match = any(leg.event_id for leg in resolved_legs)
     if not has_confident_match and not include_historical:
@@ -140,6 +152,7 @@ def grade_text(
             posted_at,
             include_historical=True,
             selected_event_id=selected_event_id,
+            selected_event_by_leg_id=selected_event_by_leg_id,
         )
     graded = [settle_leg(leg, provider) for leg in resolved_legs]
 

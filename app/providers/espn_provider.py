@@ -292,7 +292,6 @@ class ESPNNBAResultsProvider(ResultsProvider):
         tokens = [tok for tok in player.split() if tok]
         target_full = self._norm(player)
         target_last = self._norm(tokens[-1]) if tokens else ''
-        target_first = self._norm(tokens[0]) if tokens else ''
         matches: dict[str, str] = {}
         for team_block in (summary.get('boxscore') or {}).get('players') or []:
             for stat_block in team_block.get('statistics') or []:
@@ -310,12 +309,17 @@ class ESPNNBAResultsProvider(ResultsProvider):
                     if target_last and athlete_last and target_last == athlete_last:
                         matches[athlete_id or athlete_full] = display_name
                         continue
-                    athlete_first = self._norm(display_name.split()[0]) if display_name.split() else ''
-                    if target_first and athlete_first and target_first == athlete_first:
-                        matches[athlete_id or athlete_full] = display_name
         if len(matches) == 1:
             return next(iter(matches.values()))
         return None
+
+    def did_player_appear(self, player: str, event_id: str | None = None) -> bool | None:
+        if not event_id:
+            return None
+        summary = self._summary(event_id)
+        if not summary:
+            return None
+        return self._resolve_player_name(summary, player) is not None
 
     def _parse_stat_value(self, raw_value: Any, market_type: str) -> float | None:
         text = str(raw_value).strip()

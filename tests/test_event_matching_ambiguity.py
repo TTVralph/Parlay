@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.grader import grade_text
+from app.providers.base import EventInfo
 from app.providers.sample_provider import SampleResultsProvider
 
 
@@ -120,3 +121,67 @@ def test_explicit_slip_date_with_no_exact_team_event_needs_review(monkeypatch) -
     assert resp.status_code == 200
     body = resp.json()
     assert body['parlay_result'] == 'needs_review'
+
+
+
+class _PerLegSelectionProvider:
+    def __init__(self) -> None:
+        self._evt_a = EventInfo(
+            event_id='evt-a',
+            sport='NBA',
+            home_team='Memphis Grizzlies',
+            away_team='LA Clippers',
+            start_time=datetime.fromisoformat('2026-03-09T20:00:00+00:00'),
+        )
+        self._evt_b = EventInfo(
+            event_id='evt-b',
+            sport='NBA',
+            home_team='Utah Jazz',
+            away_team='Golden State Warriors',
+            start_time=datetime.fromisoformat('2026-03-09T22:00:00+00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'Cam Spencer':
+            return [self._evt_a, self._evt_b]
+        if player == 'Stephen Curry':
+            return [self._evt_b, self._evt_a]
+        return []
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return {
+            'Cam Spencer': 'Memphis Grizzlies',
+            'Stephen Curry': 'Golden State Warriors',
+        }.get(player)
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return 10.0
+
+
+def test_selected_candidate_event_applies_only_to_target_leg(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, '_public_check_provider', _PerLegSelectionProvider())
+    selected = client.post(
+        '/check-slip',
+        json={
+            'text': 'Cam Spencer over 9.5 points\nStephen Curry over 4.5 threes',
+            'date_of_slip': '2026-03-09',
+            'search_historical': True,
+            'selected_event_by_leg_id': {'0': 'evt-a', '1': 'evt-b'},
+        },
+    )
+    assert selected.status_code == 200
+    body = selected.json()
+    assert body['legs'][0]['matched_event'] == 'LA Clippers @ Memphis Grizzlies'
+    assert body['legs'][1]['matched_event'] == 'Golden State Warriors @ Utah Jazz'
