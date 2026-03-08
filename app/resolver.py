@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import re
 
 from .models import Leg
@@ -44,21 +44,24 @@ def _filter_by_opponent(candidates: list[EventInfo], opponent: str | None) -> li
     return matched or candidates
 
 
-def _event_matches_slip_date(event: EventInfo, slip_datetime: datetime | None) -> bool:
-    if slip_datetime is None:
+def _event_matches_slip_date(event: EventInfo, slip_value: date | datetime | None) -> bool:
+    if slip_value is None:
         return True
+    if isinstance(slip_value, date) and not isinstance(slip_value, datetime):
+        return event.start_time.date() == slip_value
+
     event_time = event.start_time
-    if slip_datetime.tzinfo is None:
-        return event_time.date() == slip_datetime.date()
+    if slip_value.tzinfo is None:
+        return event_time.date() == slip_value.date()
     if event_time.tzinfo is None:
         event_time = event_time.replace(tzinfo=timezone.utc)
-    return event_time.astimezone(slip_datetime.tzinfo).date() == slip_datetime.date()
+    return event_time.astimezone(slip_value.tzinfo).date() == slip_value.date()
 
 
-def _filter_by_slip_date(candidates: list[EventInfo], slip_datetime: datetime | None) -> list[EventInfo]:
-    if slip_datetime is None:
+def _filter_by_slip_date(candidates: list[EventInfo], slip_value: date | datetime | None) -> list[EventInfo]:
+    if slip_value is None:
         return candidates
-    return [event for event in candidates if _event_matches_slip_date(event, slip_datetime)]
+    return [event for event in candidates if _event_matches_slip_date(event, slip_value)]
 
 
 def _event_contains_team(event: EventInfo, team: str | None) -> bool:
@@ -105,21 +108,34 @@ def _resolve_anchor(posted_at: datetime | None) -> datetime:
 def resolve_leg_events(
     legs: list[Leg],
     provider: ResultsProvider,
-    posted_at: datetime | None,
+    posted_at: date | datetime | None,
     *,
     include_historical: bool = False,
     selected_event_id: str | None = None,
 ) -> list[Leg]:
-    anchor = _resolve_anchor(posted_at)
+    explicit_slip_date = posted_at if isinstance(posted_at, date) and not isinstance(posted_at, datetime) else None
+    slip_filter_value: date | datetime | None = explicit_slip_date or posted_at
+    anchor_input: datetime | None
+    if isinstance(posted_at, datetime):
+        anchor_input = posted_at
+    elif explicit_slip_date is not None:
+        anchor_input = datetime.combine(explicit_slip_date, datetime.min.time())
+    else:
+        anchor_input = None
+    anchor = _resolve_anchor(anchor_input)
     locked_event: EventInfo | None = None
+    lock_failed = False
     moneyline_legs = [leg for leg in legs if leg.market_type == 'moneyline' and leg.team]
     for ml_leg in moneyline_legs:
         ml_candidates = _team_candidates(provider, ml_leg.team or '', anchor, include_historical=include_historical)
-        ml_candidates = _filter_by_slip_date(ml_candidates, posted_at)
+        ml_candidates = _filter_by_slip_date(ml_candidates, slip_filter_value)
         if selected_event_id:
             ml_candidates = [event for event in ml_candidates if event.event_id == selected_event_id]
         if len(ml_candidates) == 1:
             locked_event = ml_candidates[0]
+            break
+        if explicit_slip_date is not None and not ml_candidates:
+            lock_failed = True
             break
 
     shared_event: EventInfo | None = None
@@ -143,7 +159,10 @@ def resolve_leg_events(
             candidates = _filter_by_opponent(candidates, opponent)
             updates['matched_by'] = 'player_boxscore_lookup'
 
-        candidates = _filter_by_slip_date(candidates, posted_at)
+        candidates = _filter_by_slip_date(candidates, slip_filter_value)
+
+        if lock_failed:
+            candidates = []
 
 
         if selected_event_id:

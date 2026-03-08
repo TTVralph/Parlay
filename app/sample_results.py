@@ -5,6 +5,15 @@ from __future__ import annotations
 from datetime import datetime
 
 EVENTS = {
+    'nba-2026-03-05-den-lal': {
+        'sport': 'NBA',
+        'home_team': 'Denver Nuggets',
+        'away_team': 'Los Angeles Lakers',
+        'start_time': datetime.fromisoformat('2026-03-05T20:00:00'),
+        'home_score': 114,
+        'away_score': 108,
+        'moneyline_winner': 'Denver Nuggets',
+    },
     'nba-2026-03-06-den-nyk': {
         'sport': 'NBA',
         'home_team': 'Denver Nuggets',
@@ -71,6 +80,11 @@ EVENTS = {
 }
 
 PLAYER_RESULTS_BY_EVENT = {
+    'nba-2026-03-05-den-lal': {
+        'Nikola Jokic': {'player_points': 29, 'player_rebounds': 12, 'player_assists': 10, 'player_threes': 2, 'player_pra': 51},
+        'Jamal Murray': {'player_points': 24, 'player_rebounds': 4, 'player_assists': 7, 'player_threes': 3, 'player_pra': 35},
+        'LeBron James': {'player_points': 26, 'player_rebounds': 8, 'player_assists': 7, 'player_threes': 2, 'player_pra': 41},
+    },
     'nba-2026-03-06-den-nyk': {
         'Nikola Jokic': {'player_points': 26, 'player_rebounds': 13, 'player_assists': 8, 'player_threes': 1, 'player_pra': 47},
         'Jamal Murray': {'player_points': 21, 'player_rebounds': 4, 'player_assists': 6, 'player_threes': 2, 'player_pra': 31},
