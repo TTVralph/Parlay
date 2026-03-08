@@ -89,7 +89,18 @@ class AllSportsStatsResponse(BaseModel):
     homeTeam: str | None = None
     awayTeam: str | None = None
     teamStats: list[dict[str, Any]] = Field(default_factory=list)
-    playerStats: list[dict[str, Any]] = Field(default_factory=list)
+    playerStats: list[dict[str, Any]] | None = None
+
+
+class ProviderCapabilities(BaseModel):
+    supports_game_results: bool
+    supports_team_stats: bool
+    supports_player_props: bool
+    supports_live_status: bool
+
+
+class ProviderCapabilitiesResponse(BaseModel):
+    providers: dict[str, ProviderCapabilities]
 
 
 class CheckJobCreateResponse(BaseModel):
