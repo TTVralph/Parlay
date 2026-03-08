@@ -8,10 +8,14 @@ def test_check_page_mentions_one_leg_per_line() -> None:
     resp = client.get('/check')
     assert resp.status_code == 200
     html = resp.text
+    assert 'One leg per line.' in html
+    assert 'Jokic over 24.5 points' in html
 
     assert 'One leg per line.' in html
     assert 'Jokic over 24.5 points' in html
 
+def test_check_page_includes_clickable_sample_slips() -> None:
+    client = TestClient(app)
 
     assert 'One leg per line.' in html
     assert 'Jokic over 24.5 points' in html
