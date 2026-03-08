@@ -21,6 +21,7 @@ SPREAD_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+(?P<line>[+\-]\d+(?:\.
 TOTAL_ONLY_PATTERN = re.compile(r'^(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)$', re.I)
 GAME_TOTAL_PATTERN = re.compile(r'^(?:game\s+total\s+)?(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?:total\s*points|points)?$', re.I)
 SPORT_PREFIX_PATTERN = re.compile(r'^(nba|nfl|mlb)\s*[:\-]?\s*', re.I)
+OPPONENT_SUFFIX_PATTERN = re.compile(r'\s+v(?:s|\.|ersus)\s+(?P<opponent>[a-z0-9 .\-]+)$', re.I)
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -56,6 +57,16 @@ def _market_lookup(token: str) -> str:
     return get_alias_map('market').get(normalized, 'player_points')
 
 
+def _extract_opponent_context(line: str) -> tuple[str, str | None]:
+    match = OPPONENT_SUFFIX_PATTERN.search(line)
+    if not match:
+        return line, None
+    opponent_raw = _normalize_whitespace(match.group('opponent'))
+    opponent_team = _team_lookup(opponent_raw)
+    clean_line = _normalize_whitespace(line[:match.start()])
+    return clean_line, opponent_team
+
+
 def _infer_sport(team: str | None = None, player: str | None = None, sport_hint: Sport | None = None) -> Sport:
     if team and team in TEAM_SPORTS:
         return TEAM_SPORTS[team]  # type: ignore[return-value]
@@ -86,7 +97,10 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
         if re.match(r'^(odds|american odds|stake|risk|to\s*win|payout|profit|draftkings|fanduel|bet365|caesars)\b', clean_lower):
             continue
 
-        normalized_lower = clean_lower.replace('three pointers made', 'threes').replace('3 pointers made', 'threes')
+        line_without_opponent, opponent_team = _extract_opponent_context(clean_line)
+        normalized_line = line_without_opponent.replace('three pointers made', 'threes').replace('Three pointers made', 'threes').replace('3 pointers made', 'threes')
+        normalized_lower = normalized_line.lower()
+        opponent_note = [f'Opponent context: {opponent_team}'] if opponent_team else []
 
         ml_match = ML_PATTERN.match(normalized_lower) or MONEYLINE_PATTERN.match(normalized_lower)
         if ml_match:
@@ -111,35 +125,49 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='game_total', direction=direction, line=line_value, display_line=str(line_value), confidence=0.82, notes=['Will infer event from other legs in same ticket when possible']))
             continue
 
-        ou_match = OVER_UNDER_PATTERN.match(normalized_lower)
+        ou_match = OVER_UNDER_PATTERN.match(normalized_line)
         if ou_match:
-            player = _player_lookup(ou_match.group('name'))
+            parsed_name = _normalize_whitespace(ou_match.group('name'))
+            player = _player_lookup(parsed_name) or parsed_name
             market_type = _market_lookup((ou_match.group('market') or 'points').lower())
             direction_token = ou_match.group('dir').lower()
             direction = 'over' if direction_token in {'o', 'over'} else 'under'
             line_value = float(ou_match.group('line'))
             sport = _infer_sport(player=player, sport_hint=line_sport_hint)
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction=direction, line=line_value, display_line=str(line_value), confidence=0.92 if player else 0.35, notes=[] if player else ['Unrecognized player alias']))
+            confidence = 0.92 if _player_lookup(parsed_name) else 0.82
+            notes = list(opponent_note)
+            if confidence < 0.9:
+                notes.append('Parsed player name from raw text; alias not found')
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction=direction, line=line_value, display_line=str(line_value), confidence=confidence, notes=notes))
             continue
 
-        named_market_match = NAMED_MARKET_PATTERN.match(normalized_lower)
+        named_market_match = NAMED_MARKET_PATTERN.match(normalized_line)
         if named_market_match:
-            player = _player_lookup(named_market_match.group('name'))
+            parsed_name = _normalize_whitespace(named_market_match.group('name'))
+            player = _player_lookup(parsed_name) or parsed_name
             market_type = _market_lookup(named_market_match.group('market').lower())
             line_value = float(named_market_match.group('line'))
             standardized = line_value - 0.5
             sport = _infer_sport(player=player, sport_hint=line_sport_hint)
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='over', line=standardized, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=0.9 if (player and market_type) else 0.35, notes=['Mapped plus-threshold to over line for MVP settlement'] if player and market_type else ['Unable to confidently identify player or market']))
+            alias_hit = _player_lookup(parsed_name) is not None
+            notes = ['Mapped plus-threshold to over line for MVP settlement', *opponent_note]
+            if not alias_hit:
+                notes.append('Parsed player name from raw text; alias not found')
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='over', line=standardized, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=0.9 if alias_hit else 0.82, notes=notes))
             continue
 
-        alt_match = ALT_PATTERN.match(clean_lower)
+        alt_match = ALT_PATTERN.match(normalized_line)
         if alt_match:
-            player = _player_lookup(alt_match.group('name'))
+            parsed_name = _normalize_whitespace(alt_match.group('name'))
+            player = _player_lookup(parsed_name) or parsed_name
             line_value = float(alt_match.group('line'))
             sport = _infer_sport(player=player, sport_hint=line_sport_hint)
             default_market = 'player_hits' if sport == 'MLB' else ('player_points' if sport == 'NBA' else 'player_receiving_yards')
             notes = ['Assumed hits market because no market label was given'] if sport == 'MLB' else ['Assumed points market because no market label was given'] if sport == 'NBA' else ['Assumed receiving yards market because no market label was given']
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=default_market, player=player, direction='over', line=line_value - 0.5, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=0.7 if player else 0.25, notes=notes))
+            notes.extend(opponent_note)
+            if _player_lookup(parsed_name) is None:
+                notes.append('Parsed player name from raw text; alias not found')
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=default_market, player=player, direction='over', line=line_value - 0.5, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=0.7 if _player_lookup(parsed_name) else 0.6, notes=notes))
             continue
 
         legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='player_points', confidence=0.0, notes=['Unmatched leg']))
