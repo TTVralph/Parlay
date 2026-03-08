@@ -70,6 +70,20 @@ class GradeResponse(BaseModel):
     legs: list[GradedLeg]
 
 
+
+
+class CheckJobCreateResponse(BaseModel):
+    ok: bool = True
+    job_id: str
+    status: Literal['pending'] = 'pending'
+
+
+class CheckJobStatusResponse(BaseModel):
+    job_id: str
+    status: Literal['pending', 'complete', 'failed']
+    result: Optional[dict[str, Any]] = None
+    error: Optional[str] = None
+
 class TweetIngestRequest(BaseModel):
     tweet_id: Optional[str] = None
     username: Optional[str] = None
@@ -410,6 +424,31 @@ class UserRoleUpdateRequest(BaseModel):
     linked_capper_username: Optional[str] = None
 
 
+
+
+class AdminCapperCreateRequest(BaseModel):
+    username: str
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+    is_public: bool = True
+    moderation_note: Optional[str] = None
+
+
+class AdminCapperUpdateRequest(BaseModel):
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+    is_public: Optional[bool] = None
+    moderation_note: Optional[str] = None
+
+
+class AdminCapperProfileResponse(BaseModel):
+    username: str
+    is_public: bool
+    moderation_note: Optional[str] = None
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+    verified: bool = False
+    verification_badge: Optional[str] = None
 class CapperSelfProfileResponse(BaseModel):
     username: str
     is_public: bool
