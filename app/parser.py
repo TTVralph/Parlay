@@ -8,11 +8,11 @@ from .models import Leg, Sport
 
 ALT_PATTERN = re.compile(r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+$', re.I)
 OVER_UNDER_PATTERN = re.compile(
-    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|pra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$',
+    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|three pointers made|pra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$',
     re.I,
 )
 NAMED_MARKET_PATTERN = re.compile(
-    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|pra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$',
+    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|three pointers made|pra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$',
     re.I,
 )
 ML_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+ml$', re.I)

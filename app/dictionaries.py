@@ -46,6 +46,15 @@ PLAYER_ALIASES = {
     'bron': 'LeBron James',
     'curry': 'Stephen Curry',
     'sga': 'Shai Gilgeous-Alexander',
+    'durant': 'Kevin Durant',
+    'kd': 'Kevin Durant',
+    'lamelo': 'LaMelo Ball',
+    'lamelo ball': 'LaMelo Ball',
+    'jaquez': 'Jaime Jaquez Jr.',
+    'jaime jaquez': 'Jaime Jaquez Jr.',
+    'jaime jaquez jr': 'Jaime Jaquez Jr.',
+    'jaime jaquez jr.': 'Jaime Jaquez Jr.',
+    'cooper flagg': 'Cooper Flagg',
 
     # NFL
     'mahomes': 'Patrick Mahomes',
@@ -72,6 +81,8 @@ MARKET_ALIASES = {
     '3s': 'player_threes',
     '3pm': 'player_threes',
     'threes': 'player_threes',
+    'threes made': 'player_threes',
+    'three pointers made': 'player_threes',
     'pra': 'player_pra',
     'pass yds': 'player_passing_yards',
     'passing yards': 'player_passing_yards',
@@ -113,4 +124,8 @@ PLAYER_SPORTS = {
     'Shohei Ohtani': 'MLB',
     'Mookie Betts': 'MLB',
     'Juan Soto': 'MLB',
+    'Kevin Durant': 'NBA',
+    'LaMelo Ball': 'NBA',
+    'Jaime Jaquez Jr.': 'NBA',
+    'Cooper Flagg': 'NBA',
 }
