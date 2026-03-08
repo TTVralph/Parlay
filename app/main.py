@@ -7,7 +7,7 @@ import time
 from uuid import uuid4
 
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from sqlalchemy import func, select
@@ -329,7 +329,7 @@ def health() -> dict[str, str]:
 
 @app.get('/', response_class=HTMLResponse)
 def public_home_page() -> HTMLResponse:
-    html = """<!doctype html><html><head><title>ParlayBot</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:760px;color:#0f172a;}h1{margin:0 0 10px;}p{margin:0 0 18px;color:#475569;}.actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;}.cta{background:#0f172a;color:#fff;}.secondary{border:1px solid #cbd5e1;color:#0f172a;}</style></head><body><h1>Did This Parlay Cash?</h1><p>Paste your bet slip and instantly see if it hit.</p><div class='actions'><a class='cta' href='/check'>Check a Slip</a><a class='secondary' href='/app'>Open App</a></div></body></html>"""
+    html = """<!doctype html><html><head><title>ParlayBot</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:760px;color:#0f172a;}h1{margin:0 0 10px;}p{margin:0 0 18px;color:#475569;}.actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;}.cta{background:#0f172a;color:#fff;}.secondary{border:1px solid #cbd5e1;color:#0f172a;}</style></head><body><h1>Did This Parlay Cash?</h1><p>Paste your bet slip and instantly see if it hit.</p><div class='actions'><a class='cta' href='/check'>Check a Slip</a></div></body></html>"""
     return HTMLResponse(html)
 
 
@@ -413,7 +413,7 @@ Murray over 2.5 threes'></textarea>
     const legsBody=document.getElementById('legsBody');
     const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
     const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
-    const overallLabel={cashed:'CASHED',lost:'LOST',pending:'PENDING',needs_review:'NEEDS REVIEW'};
+    const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
     const emptyTextMessage='Paste at least one leg first.';
 
     document.querySelectorAll('[data-sample]').forEach((node)=>{
@@ -456,7 +456,7 @@ Murray over 2.5 threes'></textarea>
           result:(item.settlement==='unmatched'?'review':item.settlement),
           matched_event:item.leg?.event_label||null,
         })),
-        parlay_result:body.result?.overall||'needs_review',
+        parlay_result:(body.result?.overall==='pending'?'still_live':(body.result?.overall||'needs_review')),
       };
     }
 
@@ -583,7 +583,8 @@ def _process_public_check_text(text: str, stake_amount: float | None = None) -> 
             result = 'review'
         legs.append({'leg': item.leg.raw_text, 'result': result, 'matched_event': item.leg.event_label})
 
-    out = {'ok': True, 'message': 'Slip checked.', 'legs': legs, 'parlay_result': graded.overall}
+    parlay_result = 'still_live' if graded.overall == 'pending' else graded.overall
+    out = {'ok': True, 'message': 'Slip checked.', 'legs': legs, 'parlay_result': parlay_result}
     if unmatched_count == len(legs):
         out['message'] = 'Could not confidently match this slip to settled results. Please review manually.'
     elif unmatched_count > 0:
@@ -759,13 +760,13 @@ def ops_affiliate_webhooks_page() -> str:
 
 
 @app.get('/app')
-def frontend_app_page() -> FileResponse:
-    return FileResponse(FRONTEND_DIST / 'index.html')
+def frontend_app_page() -> RedirectResponse:
+    return RedirectResponse(url='/check', status_code=307)
 
 
 @app.get('/account')
-def account_page() -> FileResponse:
-    return FileResponse(FRONTEND_DIST / 'index.html')
+def account_page() -> RedirectResponse:
+    return RedirectResponse(url='/check', status_code=307)
 
 
 @app.post('/admin/users/{user_id}/role', response_model=UserProfileResponse)
