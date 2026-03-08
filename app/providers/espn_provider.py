@@ -92,9 +92,12 @@ class ESPNNBAResultsProvider(ResultsProvider):
             candidates.add(f'{location} {display}')
         return {item for item in candidates if item}
 
-    def _candidate_days(self, as_of: datetime | None) -> list[str]:
+    def _candidate_days(self, as_of: datetime | None, *, include_historical: bool = False) -> list[str]:
         anchor = as_of or datetime.now(timezone.utc)
-        days = [anchor + timedelta(days=delta) for delta in (-3, -2, -1, 0, 1)]
+        if include_historical:
+            days = [anchor + timedelta(days=delta) for delta in range(-14, 2)]
+        else:
+            days = [anchor + timedelta(days=delta) for delta in (-1, 0, 1)]
         return [self._day_key(day) for day in days]
 
     def _event_info_from_scoreboard(self, event: dict[str, Any]) -> EventInfo | None:
@@ -139,9 +142,9 @@ class ESPNNBAResultsProvider(ResultsProvider):
                 return self._event_status_from_comp(header[0])
         return None
 
-    def resolve_team_event_candidates(self, team: str, as_of: datetime | None) -> list[EventInfo]:
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False) -> list[EventInfo]:
         matches: list[EventInfo] = []
-        for day_key in self._candidate_days(as_of):
+        for day_key in self._candidate_days(as_of, include_historical=include_historical):
             board = self._scoreboard_for_day(day_key)
             if not board:
                 continue
@@ -157,9 +160,9 @@ class ESPNNBAResultsProvider(ResultsProvider):
                     matches.append(info)
         return matches
 
-    def resolve_player_event_candidates(self, player: str, as_of: datetime | None) -> list[EventInfo]:
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False) -> list[EventInfo]:
         matches: list[EventInfo] = []
-        for day_key in self._candidate_days(as_of):
+        for day_key in self._candidate_days(as_of, include_historical=include_historical):
             board = self._scoreboard_for_day(day_key)
             if not board:
                 continue
@@ -174,12 +177,12 @@ class ESPNNBAResultsProvider(ResultsProvider):
                     matches.append(info)
         return matches
 
-    def resolve_team_event(self, team: str, as_of: datetime | None) -> EventInfo | None:
-        candidates = self.resolve_team_event_candidates(team, as_of)
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False) -> EventInfo | None:
+        candidates = self.resolve_team_event_candidates(team, as_of, include_historical=include_historical)
         return candidates[0] if len(candidates) == 1 else None
 
-    def resolve_player_event(self, player: str, as_of: datetime | None) -> EventInfo | None:
-        candidates = self.resolve_player_event_candidates(player, as_of)
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False) -> EventInfo | None:
+        candidates = self.resolve_player_event_candidates(player, as_of, include_historical=include_historical)
         return candidates[0] if len(candidates) == 1 else None
 
     def get_team_result(self, team: str, event_id: str | None = None) -> TeamResult | None:
