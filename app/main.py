@@ -394,9 +394,9 @@ Murray over 2.5 threes'></textarea>
   </div>
   <script>
     const sampleSlips={
-      sample_nba_props:'Jokic over 24.5 points\nMurray over 2.5 threes\nDenver ML',
-      sample_mlb:'Dodgers ML\nYankees +1.5\nGame Total Over 8.5',
-      sample_nfl:'Chiefs ML\nMahomes over 265.5 passing yards\nKelce over 68.5 receiving yards'
+      sample_nba_props:'Jokic over 24.5 points\\nMurray over 2.5 threes\\nDenver ML',
+      sample_mlb:'Dodgers ML\\nYankees +1.5\\nGame Total Over 8.5',
+      sample_nfl:'Chiefs ML\\nMahomes over 265.5 passing yards\\nKelce over 68.5 receiving yards'
     };
     const form=document.getElementById('checkForm');
     const slip=document.getElementById('slip');
@@ -413,6 +413,7 @@ Murray over 2.5 threes'></textarea>
     const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
     const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
     const overallLabel={cashed:'CASHED',lost:'LOST',pending:'PENDING',needs_review:'NEEDS REVIEW'};
+    const emptyTextMessage='Paste at least one leg first.';
 
     document.querySelectorAll('[data-sample]').forEach((node)=>{
       node.addEventListener('click',()=>{
@@ -443,7 +444,7 @@ Murray over 2.5 threes'></textarea>
       const lines=(payload.legs||[]).map((item)=>`${item.leg} ${resultEmoji[item.result]||'🧐'}`);
       lines.push('');
       lines.push(`Parlay: ${overallLabel[payload.parlay_result]||'NEEDS REVIEW'}`);
-      return lines.join('\n');
+      return lines.join('\\n');
     }
 
     function normalizeScreenshotPayload(body){
