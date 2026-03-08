@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 
 from .models import Leg
@@ -42,6 +42,30 @@ def _filter_by_opponent(candidates: list[EventInfo], opponent: str | None) -> li
         if norm_opp in {home, away} or norm_opp in home or norm_opp in away or home in norm_opp or away in norm_opp:
             matched.append(event)
     return matched or candidates
+
+
+def _event_matches_slip_date(event: EventInfo, slip_datetime: datetime | None) -> bool:
+    if slip_datetime is None:
+        return True
+    event_time = event.start_time
+    if slip_datetime.tzinfo is None:
+        return event_time.date() == slip_datetime.date()
+    if event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=timezone.utc)
+    return event_time.astimezone(slip_datetime.tzinfo).date() == slip_datetime.date()
+
+
+def _filter_by_slip_date(candidates: list[EventInfo], slip_datetime: datetime | None) -> list[EventInfo]:
+    if slip_datetime is None:
+        return candidates
+    return [event for event in candidates if _event_matches_slip_date(event, slip_datetime)]
+
+
+def _event_contains_team(event: EventInfo, team: str | None) -> bool:
+    if not team:
+        return False
+    norm_team = _norm(team)
+    return norm_team in {_norm(event.home_team), _norm(event.away_team)}
 
 
 def _team_candidates(provider: ResultsProvider, team: str, posted_at: datetime | None, include_historical: bool) -> list[EventInfo]:
@@ -87,6 +111,17 @@ def resolve_leg_events(
     selected_event_id: str | None = None,
 ) -> list[Leg]:
     anchor = _resolve_anchor(posted_at)
+    locked_event: EventInfo | None = None
+    moneyline_legs = [leg for leg in legs if leg.market_type == 'moneyline' and leg.team]
+    for ml_leg in moneyline_legs:
+        ml_candidates = _team_candidates(provider, ml_leg.team or '', anchor, include_historical=include_historical)
+        ml_candidates = _filter_by_slip_date(ml_candidates, posted_at)
+        if selected_event_id:
+            ml_candidates = [event for event in ml_candidates if event.event_id == selected_event_id]
+        if len(ml_candidates) == 1:
+            locked_event = ml_candidates[0]
+            break
+
     shared_event: EventInfo | None = None
     resolved: list[Leg] = []
     for leg in legs:
@@ -95,13 +130,20 @@ def resolve_leg_events(
         candidates: list[EventInfo] = []
         opponent = _opponent_from_leg(leg)
 
-        if leg.market_type in {'moneyline', 'spread'} and leg.team:
+        if locked_event is not None:
+            if leg.market_type in {'moneyline', 'spread'} and _event_contains_team(locked_event, leg.team):
+                candidates = [locked_event]
+            elif leg.market_type in {'player_points', 'player_assists', 'player_rebounds', 'player_threes', 'game_total'}:
+                candidates = [locked_event]
+        elif leg.market_type in {'moneyline', 'spread'} and leg.team:
             candidates = _team_candidates(provider, leg.team, anchor, include_historical=include_historical)
             updates['matched_by'] = 'team_schedule_lookup'
         elif leg.player:
             candidates = _player_candidates(provider, leg.player, anchor, include_historical=include_historical)
             candidates = _filter_by_opponent(candidates, opponent)
             updates['matched_by'] = 'player_boxscore_lookup'
+
+        candidates = _filter_by_slip_date(candidates, posted_at)
 
 
         if selected_event_id:
