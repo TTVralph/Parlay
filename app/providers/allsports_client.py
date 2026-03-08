@@ -44,12 +44,9 @@ class AllSportsClient:
         logger.info('AllSports games payload missing events list for %s', game_date.isoformat())
         return []
 
-    def get_match_statistics(self, match_id: str) -> dict[str, Any]:
+    def get_match_statistics(self, match_id: str) -> Any:
         path = f'/api/basketball/match/{match_id}/statistics'
-        payload = self._request_json(path)
-        if not isinstance(payload, dict):
-            raise AllSportsError(f'Unexpected statistics response type for match {match_id}')
-        return payload
+        return self._request_json(path)
 
     def _request_json(self, path: str) -> Any:
         url = f'{self._base_url}{path}'
@@ -72,4 +69,3 @@ class AllSportsClient:
         except ValueError as exc:
             logger.exception('AllSports returned invalid JSON path=%s', path)
             raise AllSportsError('AllSports API returned invalid JSON') from exc
-
