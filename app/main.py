@@ -250,14 +250,76 @@ def health() -> dict[str, str]:
 
 @app.get('/', response_class=HTMLResponse)
 def public_home_page() -> HTMLResponse:
-    html = """<!doctype html><html><head><title>ParlayBot</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:820px;}a{color:#0a58ca;text-decoration:none;}ul{line-height:1.8;}</style></head><body><h1>ParlayBot</h1><p>Public tools:</p><ul><li><a href='/check'>Slip checker</a></li><li><a href='/leaderboard'>Leaderboard</a></li><li><a href='/app'>Web app</a></li></ul></body></html>"""
+    html = """<!doctype html><html><head><title>ParlayBot</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:760px;color:#0f172a;}h1{margin:0 0 10px;}p{margin:0 0 18px;color:#475569;}.actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;}.cta{background:#0f172a;color:#fff;}.secondary{border:1px solid #cbd5e1;color:#0f172a;}</style></head><body><h1>Did This Parlay Cash?</h1><p>Paste your bet slip and instantly see if it hit.</p><div class='actions'><a class='cta' href='/check'>Check a Slip</a><a class='secondary' href='/app'>Open App</a></div></body></html>"""
     return HTMLResponse(html)
 
 
 @app.get('/check', response_class=HTMLResponse)
 def public_check_page() -> HTMLResponse:
-    html = """<!doctype html><html><head><title>Slip Checker</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:900px;}textarea{width:100%;min-height:220px;padding:12px;border:1px solid #ddd;border-radius:8px;font-family:inherit;}button{margin-top:12px;padding:10px 14px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer;}pre{margin-top:16px;background:#111;color:#eee;padding:16px;border-radius:10px;overflow:auto;white-space:pre-wrap;}</style></head><body><h1>Slip checker</h1><p>Paste a ticket and run the existing <code>/grade</code> endpoint.</p><textarea id='slip' placeholder='Paste your bet slip text here'></textarea><br><button id='checkBtn'>Check slip</button><pre id='result'>Result will appear here.</pre><script>const slip=document.getElementById('slip');const result=document.getElementById('result');document.getElementById('checkBtn').addEventListener('click',async()=>{const text=slip.value.trim();if(!text){result.textContent='Please paste a slip first.';return;}result.textContent='Checking...';try{const res=await fetch('/grade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});const body=await res.text();try{result.textContent=JSON.stringify(JSON.parse(body),null,2);}catch(e){result.textContent=body||'No response body';}}catch(err){result.textContent='Request failed: '+(err?.message||String(err));}});</script></body></html>"""
+    html = """<!doctype html><html><head><title>Did This Parlay Cash?</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:900px;color:#0f172a;}h1{margin-bottom:8px;}p{color:#475569;}textarea{width:100%;min-height:190px;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-family:inherit;box-sizing:border-box;}button{margin-top:12px;padding:10px 14px;border:1px solid #334155;border-radius:10px;background:#0f172a;color:#fff;cursor:pointer;}button[disabled]{opacity:.6;cursor:not-allowed;}button.sample{margin-top:0;background:#fff;color:#0f172a;border:1px solid #cbd5e1;padding:8px 10px;}button.secondary{background:#fff;color:#0f172a;border-color:#cbd5e1;}#samples{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px;}#message{margin-top:12px;color:#334155;font-weight:600;}#resultWrap{margin-top:14px;border:1px solid #e2e8f0;border-radius:12px;padding:14px;}#overall{font-size:18px;font-weight:700;margin-bottom:12px;}#summaryWrap{margin-top:12px;}#summaryOut{min-height:98px;background:#f8fafc;}table{width:100%;border-collapse:collapse;}th,td{text-align:left;padding:8px;border-bottom:1px solid #e2e8f0;vertical-align:top;}th{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:#64748b;}code{background:#f8fafc;padding:2px 6px;border-radius:6px;}</style></head><body><h1>Did This Parlay Cash?</h1><p>One leg per line. Pick a sample or paste your own, then hit <code>Check Slip</code>.</p><div id='samples'><button type='button' class='sample' data-sample='sample_nba_props'>NBA Props</button><button type='button' class='sample' data-sample='sample_mlb'>MLB Mix</button><button type='button' class='sample' data-sample='sample_nfl'>NFL Mix</button></div><textarea id='slip' placeholder='Jokic over 24.5 points
+Denver ML
+Murray over 2.5 threes'></textarea><br><button id='checkBtn'>Check Slip</button><div id='message'></div><div id='resultWrap' hidden><div id='overall'></div><table><thead><tr><th>Leg</th><th>Result</th><th>Matched event</th></tr></thead><tbody id='legsBody'></tbody></table><div id='summaryWrap'><button id='copyBtn' class='secondary' type='button' disabled>Copy Summary</button><textarea id='summaryOut' readonly placeholder='Summary will appear here after checking a slip.'></textarea></div></div><script>const sampleSlips={sample_nba_props:'Jokic over 24.5 points
+Murray over 2.5 threes
+Denver ML',sample_mlb:'Dodgers ML
+Yankees +1.5
+Game Total Over 8.5',sample_nfl:'Chiefs ML
+Mahomes over 265.5 passing yards
+Kelce over 68.5 receiving yards'};const slip=document.getElementById('slip');const btn=document.getElementById('checkBtn');const copyBtn=document.getElementById('copyBtn');const summaryOut=document.getElementById('summaryOut');const msg=document.getElementById('message');const wrap=document.getElementById('resultWrap');const overall=document.getElementById('overall');const legsBody=document.getElementById('legsBody');const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};const overallLabel={cashed:'CASHED',lost:'LOST',pending:'PENDING',needs_review:'NEEDS REVIEW'};document.querySelectorAll('[data-sample]').forEach((node)=>{node.addEventListener('click',()=>{const key=node.getAttribute('data-sample');slip.value=sampleSlips[key]||'';slip.focus();});});function renderRows(legs){legsBody.innerHTML='';for(const item of legs||[]){const tr=document.createElement('tr');const legCell=document.createElement('td');const resultCell=document.createElement('td');const eventCell=document.createElement('td');legCell.textContent=item.leg||'—';resultCell.textContent=resultLabel[item.result]||String(item.result||'review');eventCell.textContent=item.matched_event||'—';tr.appendChild(legCell);tr.appendChild(resultCell);tr.appendChild(eventCell);legsBody.appendChild(tr);}}function buildSummary(payload){const lines=(payload.legs||[]).map((item)=>`${item.leg} ${resultEmoji[item.result]||'🧐'}`);lines.push('');lines.push(`Parlay: ${overallLabel[payload.parlay_result]||'NEEDS REVIEW'}`);return lines.join('
+');}btn.addEventListener('click',async()=>{const text=slip.value.trim();wrap.hidden=true;legsBody.innerHTML='';copyBtn.disabled=true;summaryOut.value='';if(!text){msg.textContent='Paste at least one leg first.';return;}btn.disabled=true;msg.textContent='Checking your slip...';try{const res=await fetch('/check-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});const data=await res.json();if(!res.ok||data.ok===false){msg.textContent=data.message||'Could not check this slip right now.';return;}msg.textContent='Done.';overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');renderRows(data.legs||[]);summaryOut.value=buildSummary(data);copyBtn.disabled=false;wrap.hidden=false;}catch(err){msg.textContent='Could not check this slip right now.';}finally{btn.disabled=false;}});copyBtn.addEventListener('click',async()=>{const text=summaryOut.value.trim();if(!text){return;}try{await navigator.clipboard.writeText(text);msg.textContent='Summary copied.';}catch(err){summaryOut.focus();summaryOut.select();msg.textContent='Copy blocked. Summary selected for manual copy.';}});</script></body></html>"""
     return HTMLResponse(html)
+
+
+@app.post('/check')
+@app.post('/check-slip')
+def public_check_slip(payload: dict = Body(...)):
+    text = str(payload.get('text', '')).strip()
+    if not text:
+        return {
+            'ok': False,
+            'message': 'Paste at least one leg first.',
+            'legs': [],
+            'parlay_result': 'needs_review',
+        }
+
+    parsed_legs = parse_text(text)
+    if not parsed_legs:
+        return {
+            'ok': False,
+            'message': 'No bet legs found. Try one leg per line.',
+            'legs': [],
+            'parlay_result': 'needs_review',
+        }
+
+    try:
+        graded = grade_text(text)
+    except Exception:
+        return {
+            'ok': False,
+            'message': 'Could not grade this slip right now.',
+            'legs': [],
+            'parlay_result': 'needs_review',
+        }
+
+    legs = []
+    for item in graded.legs:
+        if item.settlement in {'unmatched'}:
+            result = 'review'
+        else:
+            result = item.settlement
+        legs.append(
+            {
+                'leg': item.leg.raw_text,
+                'result': result,
+                'matched_event': item.leg.event_label,
+            }
+        )
+
+    return {
+        'ok': True,
+        'message': 'Slip checked.',
+        'legs': legs,
+        'parlay_result': graded.overall,
+    }
 
 
 @app.post('/auth/register', response_model=SessionResponse)
