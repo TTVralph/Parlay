@@ -92,6 +92,58 @@ class AllSportsStatsResponse(BaseModel):
     playerStats: list[dict[str, Any]] | None = None
 
 
+class SportsAPIProGame(BaseModel):
+    id: str
+    competitionId: str | None = None
+    competitionName: str | None = None
+    homeTeam: str | None = None
+    awayTeam: str | None = None
+    homeTeamId: str | None = None
+    awayTeamId: str | None = None
+    status: str | None = None
+    startTime: str | None = None
+
+
+class SportsAPIProGamesResponse(BaseModel):
+    games: list[SportsAPIProGame] = Field(default_factory=list)
+
+
+class SportsAPIProPlayerStats(BaseModel):
+    minutes: int = 0
+    points: int = 0
+    rebounds: int = 0
+    assists: int = 0
+    steals: int = 0
+    blocks: int = 0
+    fieldGoalsMade: int = 0
+    fieldGoalsAttempted: int = 0
+    threePointersMade: int = 0
+    threePointersAttempted: int = 0
+    freeThrowsMade: int = 0
+    freeThrowsAttempted: int = 0
+    offensiveRebounds: int = 0
+    defensiveRebounds: int = 0
+    turnovers: int = 0
+    personalFouls: int = 0
+    plusMinus: int = 0
+
+
+class SportsAPIProAthleteGameLog(BaseModel):
+    athleteId: str
+    gameId: str | None = None
+    date: str | None = None
+    opponentId: str | None = None
+    opponentName: str | None = None
+    competitionId: str | None = None
+    competitionName: str | None = None
+    stats: SportsAPIProPlayerStats = Field(default_factory=SportsAPIProPlayerStats)
+
+
+class SportsAPIProAthleteGameLogsResponse(BaseModel):
+    athleteId: str
+    logs: list[SportsAPIProAthleteGameLog] = Field(default_factory=list)
+
+
 class ProviderCapabilities(BaseModel):
     supports_game_results: bool
     supports_team_stats: bool
