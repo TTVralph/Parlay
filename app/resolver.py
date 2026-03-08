@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import re
 
 from .models import Leg
@@ -48,7 +48,12 @@ def _event_matches_slip_date(event: EventInfo, slip_value: date | datetime | Non
     if slip_value is None:
         return True
     if isinstance(slip_value, date) and not isinstance(slip_value, datetime):
-        return event.start_time.date() == slip_value
+        if event.start_time.date() == slip_value:
+            return True
+        # ESPN start times are UTC and can roll to the next day for late US tipoffs.
+        if event.start_time.tzinfo is not None:
+            return (event.start_time - timedelta(hours=8)).date() == slip_value
+        return False
 
     event_time = event.start_time
     if slip_value.tzinfo is None:
