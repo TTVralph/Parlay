@@ -663,24 +663,6 @@ def get_public_check_job(job_id: str) -> CheckJobStatusResponse:
     if status_value == 'failed':
         return CheckJobStatusResponse(job_id=job_id, status='failed', error=(row.get('error') or 'Slip processing failed'))
     return CheckJobStatusResponse(job_id=job_id, status='pending')
-        if item.settlement in {'unmatched'}:
-            result = 'review'
-        else:
-            result = item.settlement
-        legs.append(
-            {
-                'leg': item.leg.raw_text,
-                'result': result,
-                'matched_event': item.leg.event_label,
-            }
-        )
-
-    return {
-        'ok': True,
-        'message': 'Slip checked.',
-        'legs': legs,
-        'parlay_result': graded.overall,
-    }
 
 
 @app.post('/auth/register', response_model=SessionResponse)
@@ -1613,5 +1595,4 @@ def pro_capper_roi_dashboard(db: Session = Depends(get_db), _: _db_models.UserSe
 def pro_capper_roi_dashboard_single(username: str, db: Session = Depends(get_db), _: _db_models.UserSessionORM = Depends(require_entitlement('roi_dashboard'))) -> CapperRoiDashboardResponse:
     rows = [CapperRoiDashboardRow(**row) for row in compute_capper_roi_dashboard(db, username=username)]
     return CapperRoiDashboardResponse(rows=rows)
-
 
