@@ -257,6 +257,72 @@ def test_scotty_pippen_jr_resolves_to_clippers_at_grizzlies_on_slip_date() -> No
     assert result.legs[0].leg.event_label == 'LA Clippers @ Memphis Grizzlies'
 
 
+class PlayerTeamCandidateVisibilityProvider:
+    def __init__(self) -> None:
+        self._mem_event_a = EventInfo(
+            event_id='nba-2026-03-07-lac-mem',
+            sport='NBA',
+            home_team='Memphis Grizzlies',
+            away_team='LA Clippers',
+            start_time=datetime.fromisoformat('2026-03-08T01:00:00+00:00'),
+        )
+        self._mem_event_b = EventInfo(
+            event_id='nba-2026-03-07-mem-por',
+            sport='NBA',
+            home_team='Portland Trail Blazers',
+            away_team='Memphis Grizzlies',
+            start_time=datetime.fromisoformat('2026-03-08T03:00:00+00:00'),
+        )
+        self._wrong_event = EventInfo(
+            event_id='nba-2026-03-07-uta-mil',
+            sport='NBA',
+            home_team='Milwaukee Bucks',
+            away_team='Utah Jazz',
+            start_time=datetime.fromisoformat('2026-03-08T01:00:00+00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'Scotty Pippen Jr.':
+            return [self._mem_event_a, self._mem_event_b, self._wrong_event]
+        return []
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'Scotty Pippen Jr.':
+            return 'Memphis Grizzlies'
+        return None
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return None
+
+
+def test_player_candidate_games_hide_non_team_events() -> None:
+    provider = PlayerTeamCandidateVisibilityProvider()
+    result = grade_text(
+        'Scotty Pippen over 5.5 assists',
+        provider=provider,
+        posted_at=date.fromisoformat('2026-03-07'),
+        include_historical=True,
+    )
+
+    leg = result.legs[0].leg
+    assert leg.event_id is None
+    candidate_ids = {item['event_id'] for item in leg.event_candidates}
+    assert candidate_ids == {'nba-2026-03-07-lac-mem', 'nba-2026-03-07-mem-por'}
+    assert 'nba-2026-03-07-uta-mil' not in candidate_ids
+
+
 class IndependentLegResolutionProvider:
     def __init__(self) -> None:
         self._events = {

@@ -32,3 +32,9 @@ def test_parse_plus_shorthand_points_for_non_alias_player_name() -> None:
     assert leg.line == 19.5
     assert leg.confidence >= 0.8
     assert 'Opponent context: Oklahoma City Thunder' in leg.notes
+
+
+def test_parse_scotty_pippen_alias_to_scotty_pippen_jr() -> None:
+    legs = parse_text('Scotty Pippen over 5.5 assists')
+    assert len(legs) == 1
+    assert legs[0].player == 'Scotty Pippen Jr.'

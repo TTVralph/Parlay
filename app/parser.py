@@ -5,6 +5,7 @@ import re
 from .alias_runtime import get_alias_map
 from .dictionaries import PLAYER_SPORTS, TEAM_SPORTS
 from .models import Leg, Sport
+from .player_identity import resolve_player_identity
 
 ALT_PATTERN = re.compile(r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+$', re.I)
 OVER_UNDER_PATTERN = re.compile(
@@ -40,6 +41,10 @@ def _team_lookup(token: str) -> str | None:
 
 
 def _player_lookup(token: str) -> str | None:
+    identity = resolve_player_identity(token)
+    if identity:
+        return identity.canonical_name
+
     token = token.lower().strip()
     players = get_alias_map('player')
     if token in players:
