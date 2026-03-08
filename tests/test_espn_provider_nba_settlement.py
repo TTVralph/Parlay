@@ -85,6 +85,9 @@ class StubProvider(ESPNNBAResultsProvider):
                                 'athletes': [
                                     {'athlete': {'id': '15', 'displayName': 'Nikola Jokic'}, 'stats': ['30', '13', '8', '1-3']},
                                     {'athlete': {'id': '27', 'displayName': 'Jamal Murray'}, 'stats': ['20', '4', '6', '4-9']},
+                                    {'athlete': {'id': '30', 'displayName': 'Draymond Green'}, 'stats': ['9', '7', '5', '1-4']},
+                                    {'athlete': {'id': '31', 'displayName': 'Al Horford'}, 'stats': ['12', '5', '3', '2-5']},
+                                    {'athlete': {'id': '32', 'displayName': 'Gui Santos'}, 'stats': ['20', '6', '2', '3-7']},
                                 ],
                             }
                         ]
@@ -107,3 +110,13 @@ def test_player_stats_settle_for_shorthand_name_and_threes_string_stats() -> Non
     assert event is not None
     assert provider.get_player_result('Jokic', 'player_points', event_id='evt-1') == 30.0
     assert provider.get_player_result('Murray', 'player_threes', event_id='evt-1') == 4.0
+
+
+
+def test_player_stats_settle_for_first_name_and_partial_full_name_matches() -> None:
+    provider = StubProvider()
+    assert provider.resolve_player_event('Draymond', as_of=datetime.now(timezone.utc)) is not None
+    assert provider.resolve_player_event('Horford', as_of=datetime.now(timezone.utc)) is not None
+    assert provider.get_player_result('Draymond', 'player_assists', event_id='evt-1') == 5.0
+    assert provider.get_player_result('Horford', 'player_rebounds', event_id='evt-1') == 5.0
+    assert provider.get_player_result('Gui Santos', 'player_points', event_id='evt-1') == 20.0

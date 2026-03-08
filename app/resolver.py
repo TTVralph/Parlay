@@ -1,11 +1,39 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 
 from .models import Leg
 from .providers.base import EventInfo, ResultsProvider
 
 AMBIGUOUS_EVENT_WARNING = 'This leg matches multiple possible games. Add opponent/date or upload the full slip.'
+
+
+def _norm(text: str) -> str:
+    return re.sub(r'[^a-z0-9]', '', text.lower())
+
+
+def _opponent_from_leg(leg: Leg) -> str | None:
+    for note in leg.notes:
+        if note.startswith('Opponent context: '):
+            return note.split(':', 1)[1].strip() or None
+    match = re.search(r'\sv(?:s|\.|ersus)\s+([a-z0-9 .\-]+)$', leg.raw_text, re.I)
+    return match.group(1).strip() if match else None
+
+
+def _filter_by_opponent(candidates: list[EventInfo], opponent: str | None) -> list[EventInfo]:
+    if not opponent:
+        return candidates
+    norm_opp = _norm(opponent)
+    if not norm_opp:
+        return candidates
+    matched = []
+    for event in candidates:
+        home = _norm(event.home_team)
+        away = _norm(event.away_team)
+        if norm_opp in {home, away} or norm_opp in home or norm_opp in away or home in norm_opp or away in norm_opp:
+            matched.append(event)
+    return matched or candidates
 
 
 def _team_candidates(provider: ResultsProvider, team: str, posted_at: datetime | None) -> list[EventInfo]:
@@ -30,11 +58,13 @@ def resolve_leg_events(legs: list[Leg], provider: ResultsProvider, posted_at: da
         updates: dict[str, object | None] = {}
         notes = list(leg.notes)
         candidates: list[EventInfo] = []
+        opponent = _opponent_from_leg(leg)
         if leg.market_type in {'moneyline', 'spread'} and leg.team:
             candidates = _team_candidates(provider, leg.team, posted_at)
             updates['matched_by'] = 'team_schedule_lookup'
         elif leg.player:
             candidates = _player_candidates(provider, leg.player, posted_at)
+            candidates = _filter_by_opponent(candidates, opponent)
             updates['matched_by'] = 'player_boxscore_lookup'
 
         if len(candidates) == 1:

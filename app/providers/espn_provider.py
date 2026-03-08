@@ -234,8 +234,10 @@ class ESPNNBAResultsProvider(ResultsProvider):
         )
 
     def _resolve_player_name(self, summary: dict[str, Any], player: str) -> str | None:
+        tokens = [tok for tok in player.split() if tok]
         target_full = self._norm(player)
-        target_last = self._norm(player.split()[-1]) if player.split() else ''
+        target_last = self._norm(tokens[-1]) if tokens else ''
+        target_first = self._norm(tokens[0]) if tokens else ''
         matches: dict[str, str] = {}
         for team_block in (summary.get('boxscore') or {}).get('players') or []:
             for stat_block in team_block.get('statistics') or []:
@@ -251,6 +253,10 @@ class ESPNNBAResultsProvider(ResultsProvider):
                         matches[athlete_id or athlete_full] = display_name
                         continue
                     if target_last and athlete_last and target_last == athlete_last:
+                        matches[athlete_id or athlete_full] = display_name
+                        continue
+                    athlete_first = self._norm(display_name.split()[0]) if display_name.split() else ''
+                    if target_first and athlete_first and target_first == athlete_first:
                         matches[athlete_id or athlete_full] = display_name
         if len(matches) == 1:
             return next(iter(matches.values()))
