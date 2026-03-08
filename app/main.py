@@ -901,9 +901,9 @@ Murray over 2.5 threes'></textarea>
     const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
     const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
     const emptyTextMessage='Paste at least one leg first.';
-    let selectedEventId='';
+    let selectedGameByLegId={};
 
-    slip.addEventListener('input',()=>{selectedEventId='';});
+    slip.addEventListener('input',()=>{selectedGameByLegId={};});
     document.querySelectorAll('[data-sample]').forEach((node)=>{
       node.addEventListener('click',()=>{
         const key=node.getAttribute('data-sample');
@@ -915,6 +915,7 @@ Murray over 2.5 threes'></textarea>
     function renderRows(legs){
       legsBody.innerHTML='';
       for(const item of legs||[]){
+        const legId=String(item.leg_id||'');
         const tr=document.createElement('tr');
         const legCell=document.createElement('td');
         const resultCell=document.createElement('td');
@@ -933,12 +934,12 @@ Murray over 2.5 threes'></textarea>
             const opt=document.createElement('option');
             opt.value=game.event_id;
             opt.textContent=game.event_label;
-            if(game.event_id===selectedEventId){ opt.selected=true; }
+            if(game.event_id===selectedGameByLegId[legId]){ opt.selected=true; }
             select.appendChild(opt);
           }
           select.addEventListener('change',()=>{
-            selectedEventId=select.value||'';
-            if(selectedEventId){ submitCheck(); }
+            selectedGameByLegId={...selectedGameByLegId,[legId]:select.value||''};
+            if(selectedGameByLegId[legId]){ submitCheck(); }
           });
           eventCell.appendChild(select);
         }else{
@@ -1012,7 +1013,7 @@ Murray over 2.5 threes'></textarea>
           if(stakeRaw){payload.stake_amount=stakeRaw;}
           if(slipDate.value){payload.date_of_slip=slipDate.value;}
           if(searchHistorical.checked){payload.search_historical=true;}
-          if(selectedEventId){payload.selected_event_id=selectedEventId;}
+          if(Object.keys(selectedGameByLegId).length){payload.selected_event_by_leg_id=selectedGameByLegId;}
           res=await fetch('/check-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
           data=await res.json();
         }
@@ -1085,6 +1086,7 @@ def _process_public_check_text(
     date_of_slip: date | datetime | None = None,
     search_historical: bool = False,
     selected_event_id: str | None = None,
+    selected_event_by_leg_id: dict[str, str] | None = None,
 ) -> dict:
     normalized = text.strip()
     if stake_amount is not None and stake_amount <= 0:
@@ -1127,6 +1129,7 @@ def _process_public_check_text(
             posted_at=date_of_slip,
             include_historical=search_historical,
             selected_event_id=selected_event_id,
+            selected_event_by_leg_id=selected_event_by_leg_id,
         )
     except Exception:
         return {
@@ -1142,7 +1145,7 @@ def _process_public_check_text(
     legs = []
     unmatched_count = 0
     ambiguous_count = 0
-    for item in graded.legs:
+    for index, item in enumerate(graded.legs):
         result = item.settlement
         if item.settlement == 'unmatched':
             unmatched_count += 1
@@ -1150,6 +1153,7 @@ def _process_public_check_text(
             if any('multiple possible games' in note.lower() for note in item.leg.notes):
                 ambiguous_count += 1
         legs.append({
+            'leg_id': str(index),
             'leg': item.leg.raw_text,
             'result': result,
             'matched_event': item.leg.event_label,
@@ -1239,12 +1243,19 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
         except ValueError:
             return {'ok': False, 'message': 'Enter a valid date of slip.', 'legs': [], 'parsed_legs': [], 'parse_warning': None, 'grading_warning': None, 'parlay_result': 'needs_review'}
 
+    selected_by_leg_payload = payload.get('selected_event_by_leg_id')
+    if isinstance(selected_by_leg_payload, dict):
+        selected_event_by_leg_id = {str(key): str(value) for key, value in selected_by_leg_payload.items() if str(value).strip()}
+    else:
+        selected_event_by_leg_id = {}
+
     return _process_public_check_text(
         str(payload.get('text', '')),
         stake_amount=parsed_stake,
         date_of_slip=parsed_date,
         search_historical=bool(payload.get('search_historical', False)),
         selected_event_id=(str(payload.get('selected_event_id') or '').strip() or None),
+        selected_event_by_leg_id=selected_event_by_leg_id,
     )
 
 

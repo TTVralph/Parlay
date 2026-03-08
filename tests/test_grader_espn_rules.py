@@ -7,7 +7,7 @@ from app.providers.base import EventInfo, TeamResult
 
 
 class FakeEspnLikeProvider:
-    def __init__(self, *, points: float | None, status: str = 'final') -> None:
+    def __init__(self, *, points: float | None, status: str = 'final', appeared: bool | None = None) -> None:
         self._event = EventInfo(
             event_id='evt-1',
             sport='NBA',
@@ -17,6 +17,7 @@ class FakeEspnLikeProvider:
         )
         self._points = points
         self._status = status
+        self._appeared = appeared
 
     def resolve_team_event(self, team: str, as_of: datetime | None):
         return self._event if team in {self._event.home_team, self._event.away_team} else None
@@ -40,6 +41,11 @@ class FakeEspnLikeProvider:
         if event_id != self._event.event_id:
             return None
         return self._status
+
+    def did_player_appear(self, player: str, event_id: str | None = None):
+        if event_id != self._event.event_id or player != 'Nikola Jokic':
+            return None
+        return self._appeared
 
 
 def test_final_game_winning_leg_is_win_and_cashed() -> None:
@@ -67,4 +73,11 @@ def test_unsupported_nba_bet_type_is_needs_review() -> None:
     provider = FakeEspnLikeProvider(points=300.0, status='final')
     result = grade_text('Jokic over 250.5 passing yards', provider=provider)
     assert result.legs[0].settlement == 'unmatched'
+    assert result.overall == 'needs_review'
+
+
+def test_final_game_dnp_leg_is_void_not_review() -> None:
+    provider = FakeEspnLikeProvider(points=None, status='final', appeared=False)
+    result = grade_text('Jokic over 28.5 points', provider=provider)
+    assert result.legs[0].settlement == 'void'
     assert result.overall == 'needs_review'
