@@ -60,6 +60,8 @@ def test_refresh_builds_broad_directory_and_includes_roster_only_players(monkeyp
         payloads[mod._ESPN_TEAM_ROSTER_URL.format(team_id=str(i))] = {'athletes': [{'items': roster_items}]}
 
     monkeypatch.setattr(mod, '_NBA_DIRECTORY_PATH', tmp_path / 'nba_directory.json')
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
     monkeypatch.setattr(mod, '_maybe_refresh_nba_directory', lambda: None)
     monkeypatch.setattr(mod, '_MIN_EXPECTED_NBA_PLAYERS', 1)
     _player_directory.cache_clear()
@@ -84,6 +86,8 @@ def test_refresh_updates_traded_player_team(monkeypatch, tmp_path) -> None:
         }
 
     monkeypatch.setattr(mod, '_NBA_DIRECTORY_PATH', tmp_path / 'nba_directory.json')
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
     monkeypatch.setattr(mod, '_maybe_refresh_nba_directory', lambda: None)
     monkeypatch.setattr(mod, '_MIN_EXPECTED_NBA_PLAYERS', 1)
 
@@ -106,6 +110,8 @@ def test_validation_flags_incomplete_directory(monkeypatch, tmp_path) -> None:
     }
 
     monkeypatch.setattr(mod, '_NBA_DIRECTORY_PATH', tmp_path / 'nba_directory.json')
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
     assert refresh_nba_player_directory(urlopen=_fake_urlopen_factory(payloads))
     data = json.loads((tmp_path / 'nba_directory.json').read_text())
     assert data['validation_report']['severe_failure'] is True

@@ -211,6 +211,9 @@ def resolve_leg_events(
         player_team: str | None = None
         player_identity_id: str | None = None
         resolved_player_name: str | None = None
+        identity_source: str | None = None
+        identity_last_refreshed_at: str | None = None
+        resolved_team_hint: str | None = None
         directory_loaded = bool(resolve_player_identity('Nikola Jokic', sport=leg.sport).resolved_player_id) if leg.sport == 'NBA' else True
         normalized_lookup_key = normalize_entity_name(leg.player) if leg.player else None
         if leg.player:
@@ -220,6 +223,9 @@ def resolve_leg_events(
             if resolution.resolved_player_id:
                 player_identity_id = resolution.resolved_player_id
                 updates['resolution_confidence'] = resolution.confidence
+            identity_source = resolution.identity_source
+            identity_last_refreshed_at = resolution.identity_last_refreshed_at
+            resolved_team_hint = resolution.resolved_team
             if resolution.ambiguity_reason:
                 notes.append(resolution.ambiguity_reason)
                 updates['resolution_ambiguity_reason'] = resolution.ambiguity_reason
@@ -243,6 +249,9 @@ def resolve_leg_events(
             notes.append(f'diagnostic: resolved_player_name={resolved_player_name}')
             notes.append(f'diagnostic: resolved_player_id={player_identity_id}')
             notes.append(f'diagnostic: resolved_team={player_team}')
+            notes.append(f'diagnostic: identity_source={identity_source}')
+            notes.append(f'diagnostic: identity_last_refreshed_at={identity_last_refreshed_at}')
+            notes.append(f'diagnostic: resolved_team_hint={resolved_team_hint}')
 
         if leg.market_type in {'moneyline', 'spread'} and leg.team:
             candidates = _team_candidates(provider, leg.team, anchor, include_historical=include_historical)
@@ -317,6 +326,9 @@ def resolve_leg_events(
         updates['resolved_player_name'] = resolved_player_name
         updates['resolved_player_id'] = player_identity_id
         updates['resolved_team'] = player_team
+        updates['identity_source'] = identity_source
+        updates['identity_last_refreshed_at'] = identity_last_refreshed_at
+        updates['resolved_team_hint'] = resolved_team_hint
         updates['selected_bet_date'] = explicit_slip_date.isoformat() if explicit_slip_date else None
         updates['resolution_ambiguity_reason'] = updates.get('resolution_ambiguity_reason')
         updates['candidate_players'] = list(updates.get('candidate_players', []))
