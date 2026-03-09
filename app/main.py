@@ -269,6 +269,7 @@ def _parse_screenshot_with_vision(content: bytes, filename: str | None):
                 primary_confidence=parsed_obj.primary_confidence,
                 primary_warnings=parsed_obj.primary_warnings,
                 primary_detected_sportsbook=parsed_obj.primary_detected_sportsbook,
+                primary_parser_strategy_used=parsed_obj.primary_parser_strategy_used,
                 primary_screenshot_state=parsed_obj.primary_screenshot_state,
                 primary_parsed_leg_count=parsed_obj.primary_parsed_leg_count,
             ),
