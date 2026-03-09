@@ -225,6 +225,10 @@ def resolve_leg_events(
             if resolution.resolved_player_id:
                 player_identity_id = resolution.resolved_player_id
                 updates['resolution_confidence'] = resolution.confidence
+            updates['identity_match_method'] = resolution.match_method
+            updates['identity_match_confidence'] = resolution.confidence_level
+            if resolution.confidence_level == 'LOW' and 'low confidence identity match requires review' not in notes:
+                notes.append('low confidence identity match requires review')
             identity_source = resolution.identity_source
             identity_last_refreshed_at = resolution.identity_last_refreshed_at
             resolved_team_hint = resolution.resolved_team
@@ -349,6 +353,8 @@ def resolve_leg_events(
         updates['resolved_team'] = player_team
         updates['identity_source'] = identity_source
         updates['identity_last_refreshed_at'] = identity_last_refreshed_at
+        updates['identity_match_method'] = updates.get('identity_match_method')
+        updates['identity_match_confidence'] = updates.get('identity_match_confidence')
         updates['resolved_team_hint'] = resolved_team_hint
         updates['selected_bet_date'] = explicit_slip_date.isoformat() if explicit_slip_date else None
         updates['resolution_ambiguity_reason'] = updates.get('resolution_ambiguity_reason')

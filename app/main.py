@@ -244,12 +244,15 @@ def _parse_screenshot_with_vision(content: bytes, filename: str | None):
             normalized_label = f'{leg.player_name} {leg.selection.title()} {leg.line:g} {leg.market.title()}'
         parsed_legs.append(ParsedScreenshotLeg(
             raw_leg_text=leg.raw_text,
+            raw_player_text=leg.raw_player_text or leg.player_name,
             player_name=leg.player_name,
             stat_type=leg.market,
             line=leg.line,
             direction=leg.selection,
             normalized_label=normalized_label,
             confidence=None,
+            match_method=leg.match_method,
+            match_confidence=leg.match_confidence,
         ))
     return ParsedScreenshotResponse(
         raw_text=parsed.raw_text,

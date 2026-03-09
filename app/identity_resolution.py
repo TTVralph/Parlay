@@ -13,6 +13,7 @@ from typing import Any, Protocol
 from urllib import error, request
 
 from .sports_reference_identity import NBA_PLAYERS_CACHE_PATH, NBA_TEAMS_CACHE_PATH
+from .services.identity_normalizer import generate_player_aliases, normalize_person_name, normalize_team_name
 
 SportCode = str
 logger = logging.getLogger(__name__)
@@ -40,6 +41,8 @@ class CanonicalPlayerIdentity:
     team_id: str | None = None
     team_name: str | None = None
     active_status: str = 'active'
+    aliases: tuple[str, ...] = ()
+    normalized_aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,6 +67,8 @@ class PlayerResolutionResult:
     candidate_players: tuple[str, ...] = ()
     identity_source: str | None = None
     identity_last_refreshed_at: str | None = None
+    match_method: str | None = None
+    confidence_level: str = 'LOW'
 
 
 class SportIdentityAdapter(Protocol):
@@ -75,12 +80,7 @@ class SportIdentityAdapter(Protocol):
 
 
 def normalize_entity_name(name: str) -> str:
-    lowered = name.lower().strip()
-    lowered = lowered.replace('&', ' and ')
-    lowered = re.sub(r"[.'’`´]", '', lowered)
-    lowered = re.sub(r'[^a-z0-9\s]', ' ', lowered)
-    lowered = re.sub(r'\b(jr|sr|ii|iii|iv|v)\b', ' ', lowered)
-    return re.sub(r'\s+', ' ', lowered).strip()
+    return normalize_person_name(name)
 
 
 def _lookup_keys(name: str) -> set[str]:
@@ -97,12 +97,23 @@ def _lookup_keys(name: str) -> set[str]:
     return {item for item in keys if item}
 
 
+
+
+def _is_initials_or_surname_form(raw_name: str, canonical_name: str) -> bool:
+    raw_parts = [p for p in normalize_person_name(raw_name).split() if p]
+    canon_parts = [p for p in normalize_person_name(canonical_name).split() if p]
+    if len(raw_parts) == 1 and len(canon_parts) >= 2 and raw_parts[0] == canon_parts[-1]:
+        return True
+    if len(raw_parts) == 2 and len(canon_parts) >= 2:
+        return len(raw_parts[0]) <= 2 and raw_parts[-1] == canon_parts[-1]
+    return False
+
 def _slugify_player_id(name: str) -> str:
     return re.sub(r'[^a-z0-9]+', '-', normalize_entity_name(name)).strip('-')
 
 
 def _slugify_team_id(team: str) -> str:
-    return f"nba-{re.sub(r'[^a-z0-9]+', '-', normalize_entity_name(team)).strip('-')}"
+    return f"nba-{re.sub(r'[^a-z0-9]+', '-', normalize_team_name(team)).strip('-')}"
 
 
 def _fetch_json(url: str, *, timeout: int = _NBA_REFRESH_TIMEOUT_SECONDS, urlopen: Any = request.urlopen) -> dict[str, Any]:
@@ -370,7 +381,7 @@ class NBAIdentityAdapter:
                         canonical_team_id=canonical_team_id,
                         source_team_ids={},
                         full_team_name=full_name,
-                        normalized_team_name=normalize_entity_name(full_name),
+                        normalized_team_name=normalize_team_name(full_name),
                         abbreviations=tuple(str(item) for item in row.get('abbreviations', []) if str(item).strip()),
                         aliases=tuple(str(item) for item in row.get('aliases', []) if str(item).strip()),
                     )
@@ -389,7 +400,7 @@ class NBAIdentityAdapter:
                 canonical_team_id=p.team_id,
                 source_team_ids={},
                 full_team_name=p.team_name,
-                normalized_team_name=normalize_entity_name(p.team_name),
+                normalized_team_name=normalize_team_name(p.team_name),
                 abbreviations=(),
                 aliases=(),
             )
@@ -421,6 +432,8 @@ class NBAIdentityAdapter:
                         team_id=(f'nba-team-{current_team_abbr.lower()}' if current_team_abbr else None),
                         team_name=(current_team_name or None),
                         active_status=str(row.get('active_status') or 'unknown'),
+                        aliases=tuple(sorted(generate_player_aliases(row))),
+                        normalized_aliases=tuple(sorted({normalize_person_name(alias) for alias in generate_player_aliases(row)})),
                     )
                 )
             return tuple(parsed)
@@ -472,6 +485,8 @@ class NBAIdentityAdapter:
                     team_id=(str(team_id) if team_id and not unreliable else None),
                     team_name=(str(team_name) if team_name and not unreliable else None),
                     active_status=str(row.get('active_status') or 'active'),
+                    aliases=tuple(sorted(generate_player_aliases({'full_name': full_name, 'aliases': aliases}))),
+                    normalized_aliases=tuple(sorted({normalize_person_name(alias) for alias in generate_player_aliases({'full_name': full_name, 'aliases': aliases})})),
                 )
             )
         return tuple(parsed)
@@ -527,7 +542,7 @@ def _player_directory(sport: SportCode) -> tuple[dict[str, CanonicalPlayerIdenti
     by_id = {p.canonical_player_id: p for p in players}
     by_name: dict[str, list[CanonicalPlayerIdentity]] = {}
     for p in players:
-        for alias in (p.full_name, *p.alternate_names):
+        for alias in (p.full_name, *p.alternate_names, *p.aliases, *p.normalized_aliases):
             for normalized in _lookup_keys(alias):
                 bucket = by_name.setdefault(normalized, [])
                 if all(existing.canonical_player_id != p.canonical_player_id for existing in bucket):
@@ -547,6 +562,7 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
             ambiguity_reason='player not found in sport directory',
             identity_source=metadata['identity_source'],
             identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
+            confidence_level='LOW',
         )
 
     normalized = normalize_entity_name(player_name)
@@ -554,10 +570,16 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
     direct = by_name.get(normalized, [])
     if len(direct) == 1:
         p = direct[0]
-        return PlayerResolutionResult(sport, p.full_name, p.canonical_player_id, p.team_name, 1.0, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
+        if normalized == p.normalized_name:
+            return PlayerResolutionResult(sport, p.full_name, p.canonical_player_id, p.team_name, 1.0, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='canonical', confidence_level='HIGH')
+        if player_name in p.aliases:
+            return PlayerResolutionResult(sport, p.full_name, p.canonical_player_id, p.team_name, 0.98, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='alias', confidence_level='HIGH')
+        if _is_initials_or_surname_form(player_name, p.full_name):
+            return PlayerResolutionResult(sport, None, None, None, 0.65, ambiguity_reason='player identity ambiguous', candidate_players=(p.full_name,), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
+        return PlayerResolutionResult(sport, p.full_name, p.canonical_player_id, p.team_name, 0.9, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='normalized', confidence_level='MEDIUM')
     if len(direct) > 1:
         names = tuple(sorted(item.full_name for item in direct))
-        return PlayerResolutionResult(sport, None, None, None, 0.5, ambiguity_reason='player identity ambiguous', candidate_players=names, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
+        return PlayerResolutionResult(sport, None, None, None, 0.5, ambiguity_reason='player identity ambiguous', candidate_players=names, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
 
     ranked: list[tuple[float, CanonicalPlayerIdentity]] = []
     for p in by_id.values():
@@ -569,15 +591,15 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
             ranked.append((score, p))
     ranked.sort(key=lambda item: item[0], reverse=True)
     if not ranked:
-        return PlayerResolutionResult(sport, None, None, None, 0.0, ambiguity_reason='player not found in sport directory', identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
+        return PlayerResolutionResult(sport, None, None, None, 0.0, ambiguity_reason='player not found in sport directory', identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], confidence_level='LOW')
     if ranked[0][0] < 0.86:
         suggestions = tuple(item[1].full_name for item in ranked[:3])
-        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player not found in sport directory', candidate_players=suggestions, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
+        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player not found in sport directory', candidate_players=suggestions, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], confidence_level='LOW')
     if len(ranked) > 1 and (ranked[0][0] - ranked[1][0]) < 0.05:
         names = tuple(item[1].full_name for item in ranked[:3])
-        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player identity ambiguous', candidate_players=names, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
+        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player identity ambiguous', candidate_players=names, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
     pick = ranked[0][1]
-    return PlayerResolutionResult(sport, pick.full_name, pick.canonical_player_id, pick.team_name, round(ranked[0][0], 2), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
+    return PlayerResolutionResult(sport, pick.full_name, pick.canonical_player_id, pick.team_name, round(ranked[0][0], 2), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='normalized', confidence_level='MEDIUM')
 
 
 def resolve_team_name(team_id: str | None, sport: SportCode = 'NBA') -> str | None:
