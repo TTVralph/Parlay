@@ -209,14 +209,15 @@ def _parse_teams(payload: dict[str, object]) -> list[TeamIdentity]:
 def _parse_team_roster(payload: dict[str, object], team: TeamIdentity) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     athletes = payload.get('athletes', []) if isinstance(payload, dict) else []
-    for group in athletes:
-        if not isinstance(group, dict):
+    for athlete in athletes:
+        if not isinstance(athlete, dict):
             continue
-        for player in group.get('items', []):
+        player_rows = athlete.get('items') if isinstance(athlete.get('items'), list) else [athlete]
+        for player in player_rows:
             if not isinstance(player, dict):
                 continue
             player_id = str(player.get('id') or '').strip()
-            full_name = str(player.get('fullName') or player.get('displayName') or '').strip()
+            full_name = str(player.get('displayName') or player.get('fullName') or '').strip()
             if not player_id or not full_name:
                 continue
             rows.append(
@@ -257,6 +258,7 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
             continue
 
         roster_counts_by_team[team.abbreviation or team.full_team_name] = len(parsed_roster)
+        logger.info('Roster %s: %s players parsed', team.abbreviation or team.full_team_name, len(parsed_roster))
         for row in parsed_roster:
             canonical_id = _canonical_player_id(row['player_id'])
             players_by_id[canonical_id] = {

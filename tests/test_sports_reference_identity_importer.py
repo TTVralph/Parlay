@@ -57,6 +57,15 @@ def _roster_payload(team_id: str, count: int) -> dict[str, object]:
     }
 
 
+def _flat_roster_payload(team_id: str, count: int) -> dict[str, object]:
+    return {
+        'athletes': [
+            {'id': f'{team_id}{i}', 'displayName': f'Team {team_id} Flat Player {i}'}
+            for i in range(1, count + 1)
+        ]
+    }
+
+
 def test_alias_key_generation_handles_suffixes_accents_and_apostrophes() -> None:
     keys = build_alias_keys("Nikola Topić")
     assert 'nikola topic' in keys
@@ -80,6 +89,7 @@ def test_refresh_processes_all_teams_and_writes_espn_sourced_rows(monkeypatch, t
     monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
     monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
     monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_TEAM_ROSTER_SIZE', 1)
     monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
     monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
 
@@ -115,6 +125,29 @@ def test_refresh_marks_incomplete_and_refuses_overwrite(monkeypatch, tmp_path) -
     result = refresh_nba_identity_from_basketball_reference()
     assert result['healthy'] is False
     assert __import__('json').loads((tmp_path / 'nba_players.json').read_text()) == original_players
+
+
+def test_refresh_supports_flat_athletes_roster_shape(monkeypatch, tmp_path) -> None:
+    from app import sports_reference_identity as mod
+
+    def _fake_fetch(url: str) -> dict[str, object]:
+        if url == mod.ESPN_TEAMS_URL:
+            return _teams_payload(['1'])
+        if url == mod.ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id='1'):
+            return _flat_roster_payload('1', 3)
+        raise RuntimeError(url)
+
+    monkeypatch.setattr(mod.SportsReferenceFetcher, 'fetch_json', lambda self, url, *, context, use_cache=True: _fake_fetch(url))
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+    monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_TEAM_ROSTER_SIZE', 1)
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
+    monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
+
+    result = refresh_nba_identity_from_basketball_reference()
+    assert result['healthy'] is True
+    assert result['validation_report']['players_from_roster_pages'] == 3
 
 
 def test_resolution_exposes_identity_metadata() -> None:
