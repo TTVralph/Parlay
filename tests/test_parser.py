@@ -52,3 +52,12 @@ def test_pts_plus_ast_normalizes_to_player_pa_without_low_confidence() -> None:
     assert legs[0].market_type == 'player_pa'
     assert legs[0].confidence >= 0.9
     assert 'Could not parse stat type' not in legs[0].notes
+
+
+def test_parse_handles_unicode_and_apostrophes_without_market_errors() -> None:
+    legs = parse_text("Nikola Topić Over 10.5 Points\nKel'el Ware Over 10.5 Points\nOG Anunoby Under 2.5 Assists")
+    assert len(legs) == 3
+    assert all('Could not parse stat type' not in leg.notes for leg in legs)
+    assert legs[0].market_type == 'player_points'
+    assert legs[1].market_type == 'player_points'
+    assert legs[2].market_type == 'player_assists'
