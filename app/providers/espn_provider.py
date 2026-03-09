@@ -345,6 +345,43 @@ class ESPNNBAResultsProvider(ResultsProvider):
         entry = self._resolve_player_entry(summary, player)
         return entry['display_name'] if entry else None
 
+    def get_event_info(self, event_id: str) -> EventInfo | None:
+        summary = self._summary(event_id)
+        if not summary:
+            return None
+        header = (summary.get('header') or {}).get('competitions') or []
+        if not header:
+            return None
+        comp = header[0]
+        competitors = comp.get('competitors') or []
+        home = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+        away = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+        if not home or not away:
+            return None
+        home_name = str((home.get('team') or {}).get('displayName') or '')
+        away_name = str((away.get('team') or {}).get('displayName') or '')
+        start_time_raw = str(comp.get('date') or '')
+        if not home_name or not away_name or not start_time_raw:
+            return None
+        return EventInfo(
+            event_id=event_id,
+            sport='NBA',
+            home_team=home_name,
+            away_team=away_name,
+            start_time=datetime.fromisoformat(start_time_raw.replace('Z', '+00:00')),
+        )
+
+    def is_player_on_event_roster(self, player: str, event_id: str | None = None) -> bool | None:
+        if not event_id:
+            return None
+        summary = self._summary(event_id)
+        if not summary:
+            return None
+        return self._resolve_player_entry(summary, player) is not None
+
+    def get_sportsbook_rules(self) -> dict[str, str]:
+        return {'dnp_player_prop_settlement': 'VOID'}
+
     def did_player_appear(self, player: str, event_id: str | None = None) -> bool | None:
         if not event_id:
             return None

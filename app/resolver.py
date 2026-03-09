@@ -15,6 +15,7 @@ MISSING_BET_DATE_WARNING = 'Missing bet date'
 MULTIPLE_POSSIBLE_GAMES_WARNING = 'Multiple possible games. Add bet date to narrow results.'
 NO_TEAM_GAME_ON_SELECTED_DATE_WARNING = 'no game found for resolved team on date'
 MULTIPLE_TEAM_GAMES_WARNING = 'multiple games found for resolved team on date'
+TEAM_EVENT_MISMATCH_WARNING = 'Matched event does not include player team'
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +287,12 @@ def resolve_leg_events(
                 candidates = _merge_player_and_team_candidates(candidates, team_candidates)
                 if explicit_slip_date is not None:
                     candidates = _filter_by_slip_date(candidates, explicit_slip_date)
+                pre_team_filter_count = len(candidates)
                 candidates = [event for event in candidates if _event_contains_team(event, player_team)]
+                if pre_team_filter_count > 0 and not candidates:
+                    if TEAM_EVENT_MISMATCH_WARNING not in notes:
+                        notes.append(TEAM_EVENT_MISMATCH_WARNING)
+                    updates['resolution_confidence'] = min(float(updates.get('resolution_confidence') or leg.resolution_confidence or 1.0), 0.3)
                 logger.debug(
                     'NBA prop candidate games after team filtering: player=%s team=%s candidates=%s',
                     player_lookup_name,
