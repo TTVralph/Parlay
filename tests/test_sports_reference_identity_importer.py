@@ -152,6 +152,18 @@ def test_refresh_supports_flat_athletes_roster_shape(monkeypatch, tmp_path) -> N
 
 
 
+
+def test_is_json_api_url_filters_website_pages() -> None:
+    from app import sports_reference_identity as mod
+
+    assert mod.is_json_api_url('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/1/roster') is True
+    assert mod.is_json_api_url('https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/1') is True
+    assert mod.is_json_api_url('/apis/site/v2/sports/basketball/nba/teams/1/athletes') is True
+    assert mod.is_json_api_url('https://www.espn.com/nba/team/roster/_/name/atl/atlanta-hawks') is False
+    assert mod.is_json_api_url('https://espn.com/nba/team/roster/_/name/atl/atlanta-hawks') is False
+    assert mod.is_json_api_url('/nba/team/roster/_/name/atl/atlanta-hawks') is False
+
+
 def test_refresh_follows_team_and_athlete_reference_links(monkeypatch, tmp_path) -> None:
     from app import sports_reference_identity as mod
 
@@ -186,6 +198,42 @@ def test_refresh_follows_team_and_athlete_reference_links(monkeypatch, tmp_path)
     players = __import__('json').loads((tmp_path / 'nba_players.json').read_text())
     assert players[0]['full_name'] == 'Linked Athlete'
 
+
+
+
+def test_refresh_skips_non_api_roster_links(monkeypatch, tmp_path, caplog) -> None:
+    from app import sports_reference_identity as mod
+
+    team_url = mod.ESPN_TEAM_URL_TEMPLATE.format(team_id='1')
+    website_roster = 'https://www.espn.com/nba/team/roster/_/name/atl/atlanta-hawks'
+    api_roster_ref = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/1/athletes'
+
+    def _fake_fetch(url: str) -> dict[str, object]:
+        if url == mod.ESPN_TEAMS_URL:
+            return _teams_payload(['1'])
+        if url == mod.ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id='1'):
+            raise RuntimeError('missing roster endpoint')
+        if url == team_url:
+            return {'links': [{'rel': ['roster'], 'href': website_roster}, {'rel': ['athletes'], 'href': api_roster_ref}]}
+        if url == api_roster_ref:
+            return {'athletes': [{'items': [{'id': '11', 'fullName': 'API Player'}]}]}
+        raise RuntimeError(url)
+
+    monkeypatch.setattr(mod.SportsReferenceFetcher, 'fetch_json', lambda self, url, *, context, use_cache=True: _fake_fetch(url))
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+    monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_TEAM_ROSTER_SIZE', 1)
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
+    monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
+
+    caplog.set_level('INFO')
+    result = refresh_nba_identity_from_basketball_reference()
+
+    assert result['healthy'] is True
+    assert 'Skipping non-API roster link: https://www.espn.com/nba/team/roster/_/name/atl/atlanta-hawks' in caplog.text
+    players = __import__('json').loads((tmp_path / 'nba_players.json').read_text())
+    assert players[0]['full_name'] == 'API Player'
 
 def test_resolution_exposes_identity_metadata() -> None:
     result = resolve_player_identity('Nikola Jokic', sport='NBA')
