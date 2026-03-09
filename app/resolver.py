@@ -149,6 +149,24 @@ def _resolve_anchor(posted_at: datetime | None) -> datetime:
     return datetime.utcnow()
 
 
+def _event_day_key(event: EventInfo, slip_value: date | datetime | None) -> date:
+    if isinstance(slip_value, datetime) and slip_value.tzinfo is not None:
+        event_time = event.start_time
+        if event_time.tzinfo is None:
+            event_time = event_time.replace(tzinfo=timezone.utc)
+        return event_time.astimezone(slip_value.tzinfo).date()
+    if isinstance(slip_value, date):
+        if event.start_time.tzinfo is not None:
+            return (event.start_time - timedelta(hours=8)).date()
+    return event.start_time.date()
+
+
+def _team_date_hint_key(team: str | None, slip_value: date | datetime | None, event: EventInfo) -> str | None:
+    if not team:
+        return None
+    return f"{_norm(team)}|{_event_day_key(event, slip_value).isoformat()}"
+
+
 def resolve_leg_events(
     legs: list[Leg],
     provider: ResultsProvider,
@@ -171,6 +189,7 @@ def resolve_leg_events(
     resolved: list[Leg] = []
     resolved_event_ids: set[str] = set()
     resolved_team_event_ids: dict[str, set[str]] = {}
+    resolved_team_date_event_ids: dict[str, set[str]] = {}
     for index, leg in enumerate(legs):
         updates: dict[str, object | None] = {}
         notes = list(leg.notes)
@@ -192,9 +211,28 @@ def resolve_leg_events(
             candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
             if player_team:
                 candidates = [event for event in candidates if _event_contains_team(event, player_team)]
+
+                if slip_filter_value is not None:
+                    team_events = _team_candidates(provider, player_team, anchor, include_historical=include_historical)
+                    team_events = _filter_by_slip_date(team_events, slip_filter_value)
+                    if team_events:
+                        team_event_ids = {event.event_id for event in team_events}
+                        candidates = [event for event in candidates if event.event_id in team_event_ids]
+
                 team_links = resolved_team_event_ids.get(_norm(player_team), set())
                 if len(team_links) == 1:
                     candidates = [event for event in candidates if event.event_id in team_links] or candidates
+
+                hinted_event_ids: set[str] = set()
+                for event in candidates:
+                    hint_key = _team_date_hint_key(player_team, slip_filter_value, event)
+                    if not hint_key:
+                        continue
+                    hint_ids = resolved_team_date_event_ids.get(hint_key)
+                    if hint_ids:
+                        hinted_event_ids.update(hint_ids)
+                if len(hinted_event_ids) == 1:
+                    candidates = [event for event in candidates if event.event_id in hinted_event_ids] or candidates
             candidates = _filter_by_opponent(candidates, opponent)
             updates['matched_by'] = 'player_boxscore_lookup'
 
@@ -229,8 +267,14 @@ def resolve_leg_events(
             resolved_event_ids.add(event.event_id)
             if leg.team:
                 resolved_team_event_ids.setdefault(_norm(leg.team), set()).add(event.event_id)
+                hint_key = _team_date_hint_key(leg.team, slip_filter_value, event)
+                if hint_key:
+                    resolved_team_date_event_ids.setdefault(hint_key, set()).add(event.event_id)
             if player_team:
                 resolved_team_event_ids.setdefault(_norm(player_team), set()).add(event.event_id)
+                hint_key = _team_date_hint_key(player_team, slip_filter_value, event)
+                if hint_key:
+                    resolved_team_date_event_ids.setdefault(hint_key, set()).add(event.event_id)
             updates['event_id'] = event.event_id
             updates['event_label'] = event.label
             updates['event_start_time'] = event.start_time

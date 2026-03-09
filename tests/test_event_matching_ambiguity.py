@@ -88,6 +88,31 @@ def test_slip_date_with_moneyline_locks_player_props_to_same_event() -> None:
     assert all(item.leg.event_label == 'New York Knicks @ Denver Nuggets' for item in result.legs)
 
 
+
+
+def test_player_team_and_slip_date_narrows_candidates_to_single_game() -> None:
+    posted_at = datetime.fromisoformat('2026-03-09T12:00:00')
+    result = grade_text(
+        'Jamal Murray over 2.5 threes',
+        provider=SampleResultsProvider(),
+        posted_at=posted_at,
+        include_historical=True,
+    )
+
+    assert result.overall != 'needs_review'
+    assert result.legs[0].leg.event_id == 'nba-2026-03-09-okc-den'
+
+
+def test_resolved_team_date_context_guides_following_player_leg() -> None:
+    posted_at = datetime.fromisoformat('2026-03-09T12:00:00')
+    result = grade_text(
+        'Denver ML\nJamal Murray over 2.5 threes',
+        provider=SampleResultsProvider(),
+        posted_at=posted_at,
+        include_historical=True,
+    )
+
+    assert all(item.leg.event_id == 'nba-2026-03-09-okc-den' for item in result.legs)
 def test_public_check_slip_date_strict_guard_blocks_non_date_event_match(monkeypatch) -> None:
     monkeypatch.setattr(main_module, '_public_check_provider', SampleResultsProvider())
 
