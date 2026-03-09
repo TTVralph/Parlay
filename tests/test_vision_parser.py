@@ -289,3 +289,49 @@ def test_unrecoverable_schema_output_raises_vision_schema_error(monkeypatch: pyt
     parsed = service.parse(b'img')
     assert parsed.fallback_reason == 'vision_schema_error'
     assert parsed.primary_failure_category == 'vision_schema_error'
+
+
+def test_schema_repair_accepts_players_top_level_and_prop_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
+    monkeypatch.setattr('app.services.vision_parser.httpx.Client', lambda timeout: _Client({'output_text': json.dumps({
+        'sportsbook': 'draftkings',
+        'screenshot_state': 'final',
+        'confidence': 'medium',
+        'warnings': [],
+        'players': [
+            {'name': 'Julius Randle', 'prop': 'Under 1.5 Made Threes'},
+            {'name': 'Jaden McDaniels', 'prop': 'Over 2.5 3PM'},
+        ],
+    })}))
+
+    parsed = OpenAIVisionSlipParser().parse(b'img')
+    assert len(parsed.parsed_legs) == 2
+    assert parsed.parsed_legs[0].player_name == 'Julius Randle'
+    assert parsed.parsed_legs[0].selection == 'under'
+    assert parsed.parsed_legs[0].line == 1.5
+    assert parsed.parsed_legs[0].market == 'threes'
+    assert parsed.parsed_legs[1].player_name == 'Jaden McDaniels'
+    assert parsed.parsed_legs[1].selection == 'over'
+    assert parsed.parsed_legs[1].line == 2.5
+    assert parsed.parsed_legs[1].market == 'threes'
+
+
+@pytest.mark.parametrize('alternate_key', ['bets', 'legs'])
+def test_schema_repair_accepts_alternate_leg_keys(monkeypatch: pytest.MonkeyPatch, alternate_key: str) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
+    monkeypatch.setattr('app.services.vision_parser.httpx.Client', lambda timeout: _Client({'output_text': json.dumps({
+        'sportsbook': 'draftkings',
+        'screenshot_state': 'final',
+        'confidence': 'medium',
+        'warnings': [],
+        alternate_key: [{'name': 'Stephen Curry', 'prop': 'Under 1.5 3pt made'}],
+    })}))
+
+    parsed = OpenAIVisionSlipParser().parse(b'img')
+    assert len(parsed.parsed_legs) == 1
+    assert parsed.parsed_legs[0].player_name == 'Stephen Curry'
+    assert parsed.parsed_legs[0].selection == 'under'
+    assert parsed.parsed_legs[0].line == 1.5
+    assert parsed.parsed_legs[0].market == 'threes'
