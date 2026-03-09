@@ -43,6 +43,7 @@ from .models import (
     CheckJobStatusResponse,
     IngestGradeResponse,
     OCRExtractResponse,
+    ScreenshotParseResponse,
     ParseRequest,
     ParseResponse,
     PollAccountRequest,
@@ -124,7 +125,7 @@ from .models import (
 from .ocr import get_ocr_provider
 from .ocr.providers import validate_image_upload
 from .parser import parse_text
-from .screenshot_parser import parse_screenshot_text
+from .services.slip_parser import SlipParserService
 from .odds_matcher import match_ticket_odds
 from .providers.allsports_client import AllSportsClient, AllSportsError
 from .providers.allsports_normalizer import (
@@ -225,6 +226,38 @@ from .x_client import get_x_client
 
 app = FastAPI(title='Parlay Cash Checker MVP', version='1.9.0')
 logger = logging.getLogger(__name__)
+slip_parser_service = SlipParserService()
+
+
+def _screenshot_parsed_to_grading_text(parsed_screenshot) -> str:
+    return '\n'.join(leg.normalized_label for leg in parsed_screenshot.parsed_legs)
+
+
+def _parse_screenshot_with_vision(content: bytes, filename: str | None):
+    parsed = slip_parser_service.parse(content, filename=filename)
+    from .models import ParsedScreenshotLeg, ParsedScreenshotResponse
+
+    parsed_legs = []
+    for leg in parsed.parsed_legs:
+        normalized_label = leg.raw_text
+        if leg.player_name and leg.selection and leg.line is not None and leg.market:
+            normalized_label = f'{leg.player_name} {leg.selection.title()} {leg.line:g} {leg.market.title()}'
+        parsed_legs.append(ParsedScreenshotLeg(
+            raw_leg_text=leg.raw_text,
+            player_name=leg.player_name,
+            stat_type=leg.market,
+            line=leg.line,
+            direction=leg.selection,
+            normalized_label=normalized_label,
+            confidence=None,
+        ))
+    return ParsedScreenshotResponse(
+        raw_text=parsed.raw_text,
+        parsed_legs=parsed_legs,
+        detected_bet_date=parsed.detected_bet_date,
+        parse_warnings=parsed.warnings,
+        confidence=parsed.confidence,
+    )
 run_lightweight_migrations()
 
 
@@ -902,6 +935,7 @@ Murray over 2.5 threes'></textarea>
     const legsBody=document.getElementById('legsBody');
     const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
     const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
+    const screenshotGradeEndpoint='/ingest/screenshot/grade';
     const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
     const emptyTextMessage='Paste at least one leg first.';
     let selectedGameByLegId={};
@@ -1113,6 +1147,7 @@ Murray over 2.5 threes'></textarea>
       const allReview=parsedLegs.length>0&&(body.result?.legs||[]).every((item)=>item.settlement==='unmatched');
       const extracted=(body.extracted_text||'').trim();
       const parseWarnings=parsedFromScreenshot.parse_warnings||[];
+      const parseConfidence=parsedFromScreenshot.confidence||'low';
       const parseWarning=parseWarnings.length
         ?parseWarnings.join(' | ')
         :(parsedLegs.length===0
@@ -1127,6 +1162,7 @@ Murray over 2.5 threes'></textarea>
         parsed_leg_objects:parsedLegObjects,
         detected_bet_date:parsedFromScreenshot.detected_bet_date||null,
         parse_warning:parseWarning,
+        parse_confidence:parseConfidence,
         grading_warning:allReview?'Parsed legs were detected, but ESPN matching could not settle any leg.':null,
         legs:(body.result?.legs||[]).map((item)=>({
           leg:item.leg?.raw_text||'—',
@@ -1175,7 +1211,7 @@ Murray over 2.5 threes'></textarea>
           const form=new FormData();
           form.append('file',file);
           if(slipDate.value){form.append('bet_date', slipDate.value);}
-          res=await fetch('/ingest/screenshot/grade',{method:'POST',body:form});
+          res=await fetch('/ingest/screenshot/parse',{method:'POST',body:form});
           const body=await res.json();
           if(!res.ok){msg.textContent=body.detail||body.message||'Could not check this screenshot right now.';return;}
           data=normalizeScreenshotPayload(body);
@@ -1212,6 +1248,7 @@ Murray over 2.5 threes'></textarea>
         debugOut.innerHTML=`
           ${extracted?`<div><strong>OCR extracted text:</strong><pre style="white-space:pre-wrap;background:#f8fafc;padding:8px;border-radius:8px;">${extracted.replace(/</g,'&lt;')}</pre></div>`:''}
           <div><strong>Parsed legs before grading:</strong> ${parsedLegs.length?parsedLegs.join(' | '):'No valid bet legs were detected from this input.'}</div>
+          <div><strong>Parser confidence:</strong> ${(data.parse_confidence||'low')}</div>
           ${parseWarning}
           ${gradingWarning}
         `;
@@ -2263,6 +2300,23 @@ async def ingest_screenshot_ocr(file: UploadFile = File(...)) -> OCRExtractRespo
     )
 
 
+@app.post('/ingest/screenshot/parse', response_model=ScreenshotParseResponse)
+async def ingest_screenshot_parse(file: UploadFile = File(...)) -> ScreenshotParseResponse:
+    content = await file.read()
+    try:
+        validate_image_upload(file.filename or 'upload', content)
+        parsed_screenshot = _parse_screenshot_with_vision(content, file.filename or 'upload')
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cleaned_text = _screenshot_parsed_to_grading_text(parsed_screenshot)
+    return ScreenshotParseResponse(
+        source_ref=file.filename or 'upload',
+        extracted_text=parsed_screenshot.raw_text,
+        cleaned_text=cleaned_text,
+        parsed_screenshot=parsed_screenshot,
+    )
+
+
 @app.post('/ingest/screenshot/grade', response_model=IngestGradeResponse)
 async def ingest_screenshot_grade(
     request: Request,
@@ -2276,21 +2330,20 @@ async def ingest_screenshot_grade(
     content = await file.read()
     try:
         validate_image_upload(file.filename or 'upload', content)
-        ocr = get_ocr_provider()
-        ocr_result = ocr.extract_text(file.filename or 'upload', content)
+        parsed_screenshot = _parse_screenshot_with_vision(content, file.filename or 'upload')
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     parsed_posted_at = datetime.fromisoformat(posted_at) if posted_at else None
-    parsed_slip = parse_slip_text(ocr_result.cleaned_text, bookmaker_hint=bookmaker_hint)
-    parsed_screenshot = parse_screenshot_text(ocr_result.raw_text, parsed_slip.cleaned_text)
-    financials = extract_financials(ocr_result.raw_text, bookmaker_hint=parsed_slip.bookmaker)
+    grading_text = _screenshot_parsed_to_grading_text(parsed_screenshot)
+    parsed_slip = parse_slip_text(grading_text, bookmaker_hint=bookmaker_hint)
+    financials = extract_financials(parsed_screenshot.raw_text, bookmaker_hint=parsed_slip.bookmaker)
     parsed_bet_date = date.fromisoformat(bet_date) if bet_date else (date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None)
-    grading_text = '\n'.join(leg.normalized_label for leg in parsed_screenshot.parsed_legs) or parsed_slip.cleaned_text
+    grading_text = grading_text or parsed_slip.cleaned_text
     result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date)
     return IngestGradeResponse(
         source_type='screenshot',
         source_ref=file.filename or 'upload',
-        extracted_text=ocr_result.raw_text,
+        extracted_text=parsed_screenshot.raw_text,
         cleaned_text=grading_text,
         posted_at=parsed_posted_at,
         bookmaker=financials.bookmaker,
@@ -2314,16 +2367,15 @@ async def ingest_screenshot_grade_and_save(
     content = await file.read()
     try:
         validate_image_upload(file.filename or 'upload', content)
-        ocr = get_ocr_provider()
-        ocr_result = ocr.extract_text(file.filename or 'upload', content)
+        parsed_screenshot = _parse_screenshot_with_vision(content, file.filename or 'upload')
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     parsed_posted_at = datetime.fromisoformat(posted_at) if posted_at else None
-    parsed_slip = parse_slip_text(ocr_result.cleaned_text, bookmaker_hint=bookmaker_hint)
-    parsed_screenshot = parse_screenshot_text(ocr_result.raw_text, parsed_slip.cleaned_text)
-    financials = extract_financials(ocr_result.raw_text, bookmaker_hint=parsed_slip.bookmaker)
+    grading_text = _screenshot_parsed_to_grading_text(parsed_screenshot)
+    parsed_slip = parse_slip_text(grading_text, bookmaker_hint=bookmaker_hint)
+    financials = extract_financials(parsed_screenshot.raw_text, bookmaker_hint=parsed_slip.bookmaker)
     parsed_bet_date = date.fromisoformat(bet_date) if bet_date else (date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None)
-    grading_text = '\n'.join(leg.normalized_label for leg in parsed_screenshot.parsed_legs) or parsed_slip.cleaned_text
+    grading_text = grading_text or parsed_slip.cleaned_text
     result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date)
     ticket = save_graded_ticket(
         db,
@@ -2333,10 +2385,8 @@ async def ingest_screenshot_grade_and_save(
         source_type='screenshot',
         source_ref=file.filename or 'upload',
         source_payload_json=dump_source_payload({
-            'ocr_provider': ocr_result.provider,
-            'ocr_confidence': ocr_result.confidence,
-            'ocr_notes': ocr_result.notes,
-            'raw_text': ocr_result.raw_text,
+            'screenshot_parser': 'vision_primary_ocr_fallback',
+            'raw_text': parsed_screenshot.raw_text,
             'bookmaker': parsed_slip.bookmaker,
             'bookmaker_notes': parsed_slip.notes,
             'financial_notes': financials.notes,
@@ -2348,7 +2398,7 @@ async def ingest_screenshot_grade_and_save(
         american_odds=financials.american_odds,
         decimal_odds=financials.decimal_odds,
     )
-    enqueue_review_if_needed(db, ticket, result, ocr_confidence=ocr_result.confidence)
+    enqueue_review_if_needed(db, ticket, result, ocr_confidence=0.5 if parsed_screenshot.confidence == 'low' else 0.9)
     ticket = get_ticket(db, ticket.id)
     assert ticket is not None
     return ticket_to_response(ticket)
