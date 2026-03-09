@@ -106,3 +106,16 @@ def test_unknown_player_surfaces_directory_reason() -> None:
     provider = DirectoryPipelineProvider()
     resolved = resolve_leg_events([leg], provider, posted_at=date.fromisoformat('2026-03-07'), include_historical=True)
     assert 'player not found in sport directory' in resolved[0].notes
+
+def test_suffix_and_spacing_variants_resolve() -> None:
+    porter = resolve_player_identity('Michael Porter Jr', sport='NBA')
+    assert porter.resolved_player_name == 'Michael Porter Jr.'
+
+    porter_dotted = resolve_player_identity('Michael Porter Jr.', sport='NBA')
+    assert porter_dotted.resolved_player_id == porter.resolved_player_id
+
+
+def test_common_misspelling_alias_resolves() -> None:
+    pelle = resolve_player_identity('Pelle Larson', sport='NBA')
+    assert pelle.resolved_player_name == 'Pelle Larsson'
+    assert pelle.resolved_team == 'Miami Heat'

@@ -1,0 +1,1067 @@
+{
+  "version": 1,
+  "generated_at": "2026-03-09T00:00:00Z",
+  "players": [
+    {
+      "canonical_player_id": "nba-nikola-jokic",
+      "source_player_ids": {
+        "seed": "1"
+      },
+      "full_name": "Nikola Jokic",
+      "normalized_name": "nikola jokic",
+      "aliases": [
+        "Jokic"
+      ],
+      "team_id": "nba-den",
+      "team_name": "Denver Nuggets",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-jamal-murray",
+      "source_player_ids": {
+        "seed": "2"
+      },
+      "full_name": "Jamal Murray",
+      "normalized_name": "jamal murray",
+      "aliases": [
+        "Murray"
+      ],
+      "team_id": "nba-den",
+      "team_name": "Denver Nuggets",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-michael-porter",
+      "source_player_ids": {
+        "seed": "3"
+      },
+      "full_name": "Michael Porter Jr.",
+      "normalized_name": "michael porter",
+      "aliases": [
+        "Jr",
+        "Michael Porter Jr",
+        "Porter Jr"
+      ],
+      "team_id": "nba-den",
+      "team_name": "Denver Nuggets",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-aaron-gordon",
+      "source_player_ids": {
+        "seed": "4"
+      },
+      "full_name": "Aaron Gordon",
+      "normalized_name": "aaron gordon",
+      "aliases": [
+        "Gordon"
+      ],
+      "team_id": "nba-den",
+      "team_name": "Denver Nuggets",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-christian-braun",
+      "source_player_ids": {
+        "seed": "5"
+      },
+      "full_name": "Christian Braun",
+      "normalized_name": "christian braun",
+      "aliases": [
+        "Braun"
+      ],
+      "team_id": "nba-den",
+      "team_name": "Denver Nuggets",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-shai-gilgeous-alexander",
+      "source_player_ids": {
+        "seed": "6"
+      },
+      "full_name": "Shai Gilgeous-Alexander",
+      "normalized_name": "shai gilgeous alexander",
+      "aliases": [
+        "Gilgeous-Alexander"
+      ],
+      "team_id": "nba-okc",
+      "team_name": "Oklahoma City Thunder",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-josh-giddey",
+      "source_player_ids": {
+        "seed": "7"
+      },
+      "full_name": "Josh Giddey",
+      "normalized_name": "josh giddey",
+      "aliases": [
+        "Giddey"
+      ],
+      "team_id": "nba-chi",
+      "team_name": "Chicago Bulls",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-jalen-williams",
+      "source_player_ids": {
+        "seed": "8"
+      },
+      "full_name": "Jalen Williams",
+      "normalized_name": "jalen williams",
+      "aliases": [
+        "Williams"
+      ],
+      "team_id": "nba-okc",
+      "team_name": "Oklahoma City Thunder",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-chet-holmgren",
+      "source_player_ids": {
+        "seed": "9"
+      },
+      "full_name": "Chet Holmgren",
+      "normalized_name": "chet holmgren",
+      "aliases": [
+        "Holmgren"
+      ],
+      "team_id": "nba-okc",
+      "team_name": "Oklahoma City Thunder",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-evan-mobley",
+      "source_player_ids": {
+        "seed": "10"
+      },
+      "full_name": "Evan Mobley",
+      "normalized_name": "evan mobley",
+      "aliases": [
+        "Mobley"
+      ],
+      "team_id": "nba-cle",
+      "team_name": "Cleveland Cavaliers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-donovan-mitchell",
+      "source_player_ids": {
+        "seed": "11"
+      },
+      "full_name": "Donovan Mitchell",
+      "normalized_name": "donovan mitchell",
+      "aliases": [
+        "Mitchell"
+      ],
+      "team_id": "nba-cle",
+      "team_name": "Cleveland Cavaliers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-darius-garland",
+      "source_player_ids": {
+        "seed": "12"
+      },
+      "full_name": "Darius Garland",
+      "normalized_name": "darius garland",
+      "aliases": [
+        "Garland"
+      ],
+      "team_id": "nba-cle",
+      "team_name": "Cleveland Cavaliers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-khris-middleton",
+      "source_player_ids": {
+        "seed": "13"
+      },
+      "full_name": "Khris Middleton",
+      "normalized_name": "khris middleton",
+      "aliases": [
+        "Middleton"
+      ],
+      "team_id": "nba-was",
+      "team_name": "Washington Wizards",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-giannis-antetokounmpo",
+      "source_player_ids": {
+        "seed": "14"
+      },
+      "full_name": "Giannis Antetokounmpo",
+      "normalized_name": "giannis antetokounmpo",
+      "aliases": [
+        "Antetokounmpo"
+      ],
+      "team_id": "nba-mil",
+      "team_name": "Milwaukee Bucks",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-damian-lillard",
+      "source_player_ids": {
+        "seed": "15"
+      },
+      "full_name": "Damian Lillard",
+      "normalized_name": "damian lillard",
+      "aliases": [
+        "Lillard"
+      ],
+      "team_id": "nba-mil",
+      "team_name": "Milwaukee Bucks",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-aj-green",
+      "source_player_ids": {
+        "seed": "16"
+      },
+      "full_name": "AJ Green",
+      "normalized_name": "aj green",
+      "aliases": [
+        "A J Green",
+        "A.J. Green",
+        "Green"
+      ],
+      "team_id": "nba-mil",
+      "team_name": "Milwaukee Bucks",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-moussa-diabate",
+      "source_player_ids": {
+        "seed": "17"
+      },
+      "full_name": "Moussa Diabate",
+      "normalized_name": "moussa diabate",
+      "aliases": [
+        "Diabate"
+      ],
+      "team_id": "nba-cha",
+      "team_name": "Charlotte Hornets",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-pelle-larsson",
+      "source_player_ids": {
+        "seed": "18"
+      },
+      "full_name": "Pelle Larsson",
+      "normalized_name": "pelle larsson",
+      "aliases": [
+        "Larsson",
+        "Pelle Larson"
+      ],
+      "team_id": "nba-mia",
+      "team_name": "Miami Heat",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-bam-adebayo",
+      "source_player_ids": {
+        "seed": "19"
+      },
+      "full_name": "Bam Adebayo",
+      "normalized_name": "bam adebayo",
+      "aliases": [
+        "Adebayo"
+      ],
+      "team_id": "nba-mia",
+      "team_name": "Miami Heat",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-tyler-herro",
+      "source_player_ids": {
+        "seed": "20"
+      },
+      "full_name": "Tyler Herro",
+      "normalized_name": "tyler herro",
+      "aliases": [
+        "Herro"
+      ],
+      "team_id": "nba-mia",
+      "team_name": "Miami Heat",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-draymond-green",
+      "source_player_ids": {
+        "seed": "21"
+      },
+      "full_name": "Draymond Green",
+      "normalized_name": "draymond green",
+      "aliases": [
+        "Green"
+      ],
+      "team_id": "nba-gsw",
+      "team_name": "Golden State Warriors",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-stephen-curry",
+      "source_player_ids": {
+        "seed": "22"
+      },
+      "full_name": "Stephen Curry",
+      "normalized_name": "stephen curry",
+      "aliases": [
+        "Curry"
+      ],
+      "team_id": "nba-gsw",
+      "team_name": "Golden State Warriors",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-jonathan-kuminga",
+      "source_player_ids": {
+        "seed": "23"
+      },
+      "full_name": "Jonathan Kuminga",
+      "normalized_name": "jonathan kuminga",
+      "aliases": [
+        "Kuminga"
+      ],
+      "team_id": "nba-gsw",
+      "team_name": "Golden State Warriors",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-desmond-bane",
+      "source_player_ids": {
+        "seed": "24"
+      },
+      "full_name": "Desmond Bane",
+      "normalized_name": "desmond bane",
+      "aliases": [
+        "Bane"
+      ],
+      "team_id": "nba-mem",
+      "team_name": "Memphis Grizzlies",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-jaren-jackson",
+      "source_player_ids": {
+        "seed": "25"
+      },
+      "full_name": "Jaren Jackson Jr.",
+      "normalized_name": "jaren jackson",
+      "aliases": [
+        "Jackson Jr",
+        "Jaren Jackson Jr",
+        "Jr"
+      ],
+      "team_id": "nba-mem",
+      "team_name": "Memphis Grizzlies",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-ja-morant",
+      "source_player_ids": {
+        "seed": "26"
+      },
+      "full_name": "Ja Morant",
+      "normalized_name": "ja morant",
+      "aliases": [
+        "Morant"
+      ],
+      "team_id": "nba-mem",
+      "team_name": "Memphis Grizzlies",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-scotty-pippen",
+      "source_player_ids": {
+        "seed": "27"
+      },
+      "full_name": "Scotty Pippen Jr.",
+      "normalized_name": "scotty pippen",
+      "aliases": [
+        "Jr",
+        "Pippen Jr",
+        "Scotty Pippen Jr"
+      ],
+      "team_id": "nba-mem",
+      "team_name": "Memphis Grizzlies",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-cam-spencer",
+      "source_player_ids": {
+        "seed": "28"
+      },
+      "full_name": "Cam Spencer",
+      "normalized_name": "cam spencer",
+      "aliases": [
+        "Spencer"
+      ],
+      "team_id": "nba-mem",
+      "team_name": "Memphis Grizzlies",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-cade-cunningham",
+      "source_player_ids": {
+        "seed": "29"
+      },
+      "full_name": "Cade Cunningham",
+      "normalized_name": "cade cunningham",
+      "aliases": [
+        "Cunningham"
+      ],
+      "team_id": "nba-det",
+      "team_name": "Detroit Pistons",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-amen-thompson",
+      "source_player_ids": {
+        "seed": "30"
+      },
+      "full_name": "Amen Thompson",
+      "normalized_name": "amen thompson",
+      "aliases": [
+        "Thompson"
+      ],
+      "team_id": "nba-hou",
+      "team_name": "Houston Rockets",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-alperen-sengun",
+      "source_player_ids": {
+        "seed": "31"
+      },
+      "full_name": "Alperen Sengun",
+      "normalized_name": "alperen sengun",
+      "aliases": [
+        "Sengun"
+      ],
+      "team_id": "nba-hou",
+      "team_name": "Houston Rockets",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-og-anunoby",
+      "source_player_ids": {
+        "seed": "32"
+      },
+      "full_name": "OG Anunoby",
+      "normalized_name": "og anunoby",
+      "aliases": [
+        "Anunoby",
+        "O G Anunoby",
+        "O.G. Anunoby"
+      ],
+      "team_id": "nba-nyk",
+      "team_name": "New York Knicks",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-jalen-brunson",
+      "source_player_ids": {
+        "seed": "33"
+      },
+      "full_name": "Jalen Brunson",
+      "normalized_name": "jalen brunson",
+      "aliases": [
+        "Brunson"
+      ],
+      "team_id": "nba-nyk",
+      "team_name": "New York Knicks",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-karl-anthony-towns",
+      "source_player_ids": {
+        "seed": "34"
+      },
+      "full_name": "Karl-Anthony Towns",
+      "normalized_name": "karl anthony towns",
+      "aliases": [
+        "Towns"
+      ],
+      "team_id": "nba-nyk",
+      "team_name": "New York Knicks",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-jayson-tatum",
+      "source_player_ids": {
+        "seed": "35"
+      },
+      "full_name": "Jayson Tatum",
+      "normalized_name": "jayson tatum",
+      "aliases": [
+        "Tatum"
+      ],
+      "team_id": "nba-bos",
+      "team_name": "Boston Celtics",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-jaylen-brown",
+      "source_player_ids": {
+        "seed": "36"
+      },
+      "full_name": "Jaylen Brown",
+      "normalized_name": "jaylen brown",
+      "aliases": [
+        "Brown"
+      ],
+      "team_id": "nba-bos",
+      "team_name": "Boston Celtics",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-derrick-white",
+      "source_player_ids": {
+        "seed": "37"
+      },
+      "full_name": "Derrick White",
+      "normalized_name": "derrick white",
+      "aliases": [
+        "White"
+      ],
+      "team_id": "nba-bos",
+      "team_name": "Boston Celtics",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-luka-doncic",
+      "source_player_ids": {
+        "seed": "38"
+      },
+      "full_name": "Luka Doncic",
+      "normalized_name": "luka doncic",
+      "aliases": [
+        "Doncic"
+      ],
+      "team_id": "nba-lal",
+      "team_name": "Los Angeles Lakers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-lebron-james",
+      "source_player_ids": {
+        "seed": "39"
+      },
+      "full_name": "LeBron James",
+      "normalized_name": "lebron james",
+      "aliases": [
+        "James"
+      ],
+      "team_id": "nba-lal",
+      "team_name": "Los Angeles Lakers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-anthony-davis",
+      "source_player_ids": {
+        "seed": "40"
+      },
+      "full_name": "Anthony Davis",
+      "normalized_name": "anthony davis",
+      "aliases": [
+        "Davis"
+      ],
+      "team_id": "nba-lal",
+      "team_name": "Los Angeles Lakers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-victor-wembanyama",
+      "source_player_ids": {
+        "seed": "41"
+      },
+      "full_name": "Victor Wembanyama",
+      "normalized_name": "victor wembanyama",
+      "aliases": [
+        "Wembanyama"
+      ],
+      "team_id": "nba-sas",
+      "team_name": "San Antonio Spurs",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-devin-vassell",
+      "source_player_ids": {
+        "seed": "42"
+      },
+      "full_name": "Devin Vassell",
+      "normalized_name": "devin vassell",
+      "aliases": [
+        "Vassell"
+      ],
+      "team_id": "nba-sas",
+      "team_name": "San Antonio Spurs",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-tyrese-haliburton",
+      "source_player_ids": {
+        "seed": "43"
+      },
+      "full_name": "Tyrese Haliburton",
+      "normalized_name": "tyrese haliburton",
+      "aliases": [
+        "Haliburton"
+      ],
+      "team_id": "nba-ind",
+      "team_name": "Indiana Pacers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-pascal-siakam",
+      "source_player_ids": {
+        "seed": "44"
+      },
+      "full_name": "Pascal Siakam",
+      "normalized_name": "pascal siakam",
+      "aliases": [
+        "Siakam"
+      ],
+      "team_id": "nba-ind",
+      "team_name": "Indiana Pacers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-anthony-edwards",
+      "source_player_ids": {
+        "seed": "45"
+      },
+      "full_name": "Anthony Edwards",
+      "normalized_name": "anthony edwards",
+      "aliases": [
+        "Edwards"
+      ],
+      "team_id": "nba-min",
+      "team_name": "Minnesota Timberwolves",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-rudy-gobert",
+      "source_player_ids": {
+        "seed": "46"
+      },
+      "full_name": "Rudy Gobert",
+      "normalized_name": "rudy gobert",
+      "aliases": [
+        "Gobert"
+      ],
+      "team_id": "nba-min",
+      "team_name": "Minnesota Timberwolves",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-kevin-durant",
+      "source_player_ids": {
+        "seed": "47"
+      },
+      "full_name": "Kevin Durant",
+      "normalized_name": "kevin durant",
+      "aliases": [
+        "Durant"
+      ],
+      "team_id": "nba-phx",
+      "team_name": "Phoenix Suns",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-devin-booker",
+      "source_player_ids": {
+        "seed": "48"
+      },
+      "full_name": "Devin Booker",
+      "normalized_name": "devin booker",
+      "aliases": [
+        "Booker"
+      ],
+      "team_id": "nba-phx",
+      "team_name": "Phoenix Suns",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-bradley-beal",
+      "source_player_ids": {
+        "seed": "49"
+      },
+      "full_name": "Bradley Beal",
+      "normalized_name": "bradley beal",
+      "aliases": [
+        "Beal"
+      ],
+      "team_id": "nba-phx",
+      "team_name": "Phoenix Suns",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-domantas-sabonis",
+      "source_player_ids": {
+        "seed": "50"
+      },
+      "full_name": "Domantas Sabonis",
+      "normalized_name": "domantas sabonis",
+      "aliases": [
+        "Sabonis"
+      ],
+      "team_id": "nba-sac",
+      "team_name": "Sacramento Kings",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-deaaron-fox",
+      "source_player_ids": {
+        "seed": "51"
+      },
+      "full_name": "DeAaron Fox",
+      "normalized_name": "deaaron fox",
+      "aliases": [
+        "Fox"
+      ],
+      "team_id": "nba-sac",
+      "team_name": "Sacramento Kings",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-trae-young",
+      "source_player_ids": {
+        "seed": "52"
+      },
+      "full_name": "Trae Young",
+      "normalized_name": "trae young",
+      "aliases": [
+        "Young"
+      ],
+      "team_id": "nba-atl",
+      "team_name": "Atlanta Hawks",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-dejounte-murray",
+      "source_player_ids": {
+        "seed": "53"
+      },
+      "full_name": "Dejounte Murray",
+      "normalized_name": "dejounte murray",
+      "aliases": [
+        "Murray"
+      ],
+      "team_id": "nba-nop",
+      "team_name": "New Orleans Pelicans",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-zion-williamson",
+      "source_player_ids": {
+        "seed": "54"
+      },
+      "full_name": "Zion Williamson",
+      "normalized_name": "zion williamson",
+      "aliases": [
+        "Williamson"
+      ],
+      "team_id": "nba-nop",
+      "team_name": "New Orleans Pelicans",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-paolo-banchero",
+      "source_player_ids": {
+        "seed": "55"
+      },
+      "full_name": "Paolo Banchero",
+      "normalized_name": "paolo banchero",
+      "aliases": [
+        "Banchero"
+      ],
+      "team_id": "nba-orl",
+      "team_name": "Orlando Magic",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-franz-wagner",
+      "source_player_ids": {
+        "seed": "56"
+      },
+      "full_name": "Franz Wagner",
+      "normalized_name": "franz wagner",
+      "aliases": [
+        "Wagner"
+      ],
+      "team_id": "nba-orl",
+      "team_name": "Orlando Magic",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-tyrese-maxey",
+      "source_player_ids": {
+        "seed": "57"
+      },
+      "full_name": "Tyrese Maxey",
+      "normalized_name": "tyrese maxey",
+      "aliases": [
+        "Maxey"
+      ],
+      "team_id": "nba-phi",
+      "team_name": "Philadelphia 76ers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-joel-embiid",
+      "source_player_ids": {
+        "seed": "58"
+      },
+      "full_name": "Joel Embiid",
+      "normalized_name": "joel embiid",
+      "aliases": [
+        "Embiid"
+      ],
+      "team_id": "nba-phi",
+      "team_name": "Philadelphia 76ers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-anfernee-simons",
+      "source_player_ids": {
+        "seed": "59"
+      },
+      "full_name": "Anfernee Simons",
+      "normalized_name": "anfernee simons",
+      "aliases": [
+        "Simons"
+      ],
+      "team_id": "nba-por",
+      "team_name": "Portland Trail Blazers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-scoot-henderson",
+      "source_player_ids": {
+        "seed": "60"
+      },
+      "full_name": "Scoot Henderson",
+      "normalized_name": "scoot henderson",
+      "aliases": [
+        "Henderson"
+      ],
+      "team_id": "nba-por",
+      "team_name": "Portland Trail Blazers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-scottie-barnes",
+      "source_player_ids": {
+        "seed": "61"
+      },
+      "full_name": "Scottie Barnes",
+      "normalized_name": "scottie barnes",
+      "aliases": [
+        "Barnes"
+      ],
+      "team_id": "nba-tor",
+      "team_name": "Toronto Raptors",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-rj-barrett",
+      "source_player_ids": {
+        "seed": "62"
+      },
+      "full_name": "RJ Barrett",
+      "normalized_name": "rj barrett",
+      "aliases": [
+        "Barrett"
+      ],
+      "team_id": "nba-tor",
+      "team_name": "Toronto Raptors",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-jordan-poole",
+      "source_player_ids": {
+        "seed": "63"
+      },
+      "full_name": "Jordan Poole",
+      "normalized_name": "jordan poole",
+      "aliases": [
+        "Poole"
+      ],
+      "team_id": "nba-was",
+      "team_name": "Washington Wizards",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-kyle-kuzma",
+      "source_player_ids": {
+        "seed": "64"
+      },
+      "full_name": "Kyle Kuzma",
+      "normalized_name": "kyle kuzma",
+      "aliases": [
+        "Kuzma"
+      ],
+      "team_id": "nba-was",
+      "team_name": "Washington Wizards",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-kawhi-leonard",
+      "source_player_ids": {
+        "seed": "65"
+      },
+      "full_name": "Kawhi Leonard",
+      "normalized_name": "kawhi leonard",
+      "aliases": [
+        "Leonard"
+      ],
+      "team_id": "nba-lac",
+      "team_name": "LA Clippers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-james-harden",
+      "source_player_ids": {
+        "seed": "66"
+      },
+      "full_name": "James Harden",
+      "normalized_name": "james harden",
+      "aliases": [
+        "Harden"
+      ],
+      "team_id": "nba-lac",
+      "team_name": "LA Clippers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-paul-george",
+      "source_player_ids": {
+        "seed": "67"
+      },
+      "full_name": "Paul George",
+      "normalized_name": "paul george",
+      "aliases": [
+        "George"
+      ],
+      "team_id": "nba-phi",
+      "team_name": "Philadelphia 76ers",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-mikal-bridges",
+      "source_player_ids": {
+        "seed": "68"
+      },
+      "full_name": "Mikal Bridges",
+      "normalized_name": "mikal bridges",
+      "aliases": [
+        "Bridges"
+      ],
+      "team_id": "nba-nyk",
+      "team_name": "New York Knicks",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-cameron-johnson",
+      "source_player_ids": {
+        "seed": "69"
+      },
+      "full_name": "Cameron Johnson",
+      "normalized_name": "cameron johnson",
+      "aliases": [
+        "Johnson"
+      ],
+      "team_id": "nba-bkn",
+      "team_name": "Brooklyn Nets",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-ben-simmons",
+      "source_player_ids": {
+        "seed": "70"
+      },
+      "full_name": "Ben Simmons",
+      "normalized_name": "ben simmons",
+      "aliases": [
+        "Simmons"
+      ],
+      "team_id": "nba-bkn",
+      "team_name": "Brooklyn Nets",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-keyonte-george",
+      "source_player_ids": {
+        "seed": "71"
+      },
+      "full_name": "Keyonte George",
+      "normalized_name": "keyonte george",
+      "aliases": [
+        "George"
+      ],
+      "team_id": "nba-uta",
+      "team_name": "Utah Jazz",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-lauri-markkanen",
+      "source_player_ids": {
+        "seed": "72"
+      },
+      "full_name": "Lauri Markkanen",
+      "normalized_name": "lauri markkanen",
+      "aliases": [
+        "Markkanen"
+      ],
+      "team_id": "nba-uta",
+      "team_name": "Utah Jazz",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-cooper-flagg",
+      "source_player_ids": {
+        "seed": "73"
+      },
+      "full_name": "Cooper Flagg",
+      "normalized_name": "cooper flagg",
+      "aliases": [
+        "Flagg"
+      ],
+      "team_id": "nba-dal",
+      "team_name": "Dallas Mavericks",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-kyrie-irving",
+      "source_player_ids": {
+        "seed": "74"
+      },
+      "full_name": "Kyrie Irving",
+      "normalized_name": "kyrie irving",
+      "aliases": [
+        "Irving"
+      ],
+      "team_id": "nba-dal",
+      "team_name": "Dallas Mavericks",
+      "sport": "NBA"
+    },
+    {
+      "canonical_player_id": "nba-klay-thompson",
+      "source_player_ids": {
+        "seed": "75"
+      },
+      "full_name": "Klay Thompson",
+      "normalized_name": "klay thompson",
+      "aliases": [
+        "Thompson"
+      ],
+      "team_id": "nba-dal",
+      "team_name": "Dallas Mavericks",
+      "sport": "NBA"
+    }
+  ]
+}
