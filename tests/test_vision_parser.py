@@ -116,11 +116,93 @@ def test_successful_structured_extraction(monkeypatch: pytest.MonkeyPatch) -> No
     assert parsed.primary_parsed_leg_count == 1
 
 
+def test_response_with_output_blocks_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
+
+    payload = {
+        'output': [
+            {
+                'content': [
+                    {
+                        'type': 'output_text',
+                        'text': json.dumps({
+                            'sportsbook': 'draftkings',
+                            'screenshot_state': 'final',
+                            'confidence': 'high',
+                            'warnings': [],
+                            'parsed_legs': [],
+                        }),
+                    }
+                ]
+            }
+        ]
+    }
+    monkeypatch.setattr('app.services.vision_parser.httpx.Client', lambda timeout: _Client(payload))
+
+    parsed = OpenAIVisionSlipParser().parse(b'img')
+    assert parsed.sportsbook == 'draftkings'
+    assert parsed.primary_parser_status == 'success'
+
+
+def test_empty_structured_output_with_raw_text_json_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
+    monkeypatch.setattr(
+        'app.services.vision_parser.httpx.Client',
+        lambda timeout: _Client({
+            'output_text': 'Here is the parsed result:\n' + json.dumps({
+                'sportsbook': 'draftkings',
+                'screenshot_state': 'final',
+                'confidence': 'high',
+                'warnings': [],
+                'parsed_legs': [],
+            }),
+        }),
+    )
+
+    parsed = OpenAIVisionSlipParser().parse(b'img')
+    assert parsed.primary_parser_status == 'success'
+    assert parsed.debug_artifacts is not None
+    assert parsed.debug_artifacts.get('schema_repair_applied') == 'True'
+
+
 def test_fallback_path_on_provider_failure() -> None:
     service = SlipParserService(vision_parser=_FailingVision(), ocr_fallback=_FakeFallback())
     parsed = service.parse(b'img')
     assert parsed.fallback_reason == 'vision_provider_error'
     assert parsed.primary_failure_category == 'vision_provider_error'
+
+
+def test_provider_refusal_and_empty_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
+    monkeypatch.setattr(
+        'app.services.vision_parser.httpx.Client',
+        lambda timeout: _Client({'status': 'incomplete', 'refusal': 'policy refusal', 'output': []}),
+    )
+
+    service = SlipParserService(vision_parser=OpenAIVisionSlipParser(), ocr_fallback=_FakeFallback())
+    parsed = service.parse(b'img')
+    assert parsed.fallback_reason == 'vision_schema_error'
+    assert parsed.primary_failure_category == 'vision_schema_error'
+    assert parsed.debug_artifacts is not None
+    assert parsed.debug_artifacts.get('provider_response_kind') == 'provider_refusal'
+
+
+def test_missing_input_image_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import vision_parser as vp
+
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr(vp, 'preprocess_screenshot', lambda _b: _processed())
+    monkeypatch.setattr(vp, '_has_input_image', lambda _content_items: False)
+
+    service = SlipParserService(vision_parser=OpenAIVisionSlipParser(), ocr_fallback=_FakeFallback())
+    parsed = service.parse(b'img')
+    assert parsed.fallback_reason == 'vision_schema_error'
+    assert parsed.primary_parser_strategy_used == 'draftkings'
+    assert parsed.debug_artifacts is not None
+    assert parsed.debug_artifacts.get('request_has_input_image') is False
 
 
 def test_vision_empty_parse_with_warnings_is_preserved_before_fallback() -> None:

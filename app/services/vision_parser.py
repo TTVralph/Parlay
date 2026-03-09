@@ -94,6 +94,12 @@ class VisionSchemaValidationError(RuntimeError):
         self.diagnostics = diagnostics or {}
 
 
+class VisionProviderResponseError(RuntimeError):
+    def __init__(self, message: str, diagnostics: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
+
+
 class VisionSlipParser:
     def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip: ...
 
@@ -149,10 +155,13 @@ class OpenAIVisionSlipParser:
         logger.info('vision_parser.start model=%s parse_mode=responses_structured preprocessing=%s detected_sportsbook=%s parser_strategy=%s', self._model, processed.metadata(), detected_sportsbook, prompt_strategy.parser_strategy_used)
 
         try:
-            result = self._call_provider(processed.image_bytes, detected_sportsbook, prompt_strategy)
+            result = self._call_provider(processed.image_bytes, detected_sportsbook, prompt_strategy, processed.metadata())
             data = result.payload
             if self._debug_mode:
                 debug_artifacts.update(self._save_json_artifact(data, filename))
+                raw_response = result.diagnostics.get('raw_response') if result.diagnostics else None
+                if isinstance(raw_response, dict):
+                    debug_artifacts.update(self._save_raw_response_artifact(raw_response, filename))
             if result.diagnostics:
                 if self._debug_mode:
                     debug_artifacts.update(self._save_schema_diagnostic_artifact(result.diagnostics, filename))
@@ -160,12 +169,17 @@ class OpenAIVisionSlipParser:
             debug_artifacts['parser_strategy_used'] = prompt_strategy.parser_strategy_used
         except Exception as exc:
             failure = classify_failure(exc)
+            diagnostics = dict(getattr(exc, 'diagnostics', {}) or {})
+            diagnostics.setdefault('parser_strategy_used', prompt_strategy.parser_strategy_used)
+            diagnostics.setdefault('detected_sportsbook', detected_sportsbook)
             if isinstance(exc, VisionSchemaValidationError):
                 d = exc.diagnostics
                 logger.warning('vision_parser.failure class=%s category=vision_schema_error path=%s message=%s excerpt=%s', failure, d.get('schema_error_path'), d.get('schema_error_message'), d.get('raw_primary_output_excerpt'))
             else:
                 logger.warning('vision_parser.failure class=%s error=%s', failure, str(exc))
-            raise RuntimeError(f'{failure}: {exc}') from exc
+            wrapped = RuntimeError(f'{failure}: {exc}')
+            wrapped.diagnostics = diagnostics
+            raise wrapped from exc
 
         parsed = ParsedSlip(
             raw_text='',
@@ -211,35 +225,126 @@ class OpenAIVisionSlipParser:
         path.write_text(json.dumps(diagnostics, indent=2))
         return {'debug_schema_diagnostics_path': str(path)}
 
-    def _call_provider(self, image_bytes: bytes, detected_sportsbook: str, prompt_strategy) -> VisionCallResult:
+    def _save_raw_response_artifact(self, payload: dict[str, Any], filename: str | None) -> dict[str, str]:
+        self._debug_dir.mkdir(parents=True, exist_ok=True)
+        base = (Path(filename or 'upload').stem or 'upload') + '_' + uuid4().hex[:8]
+        path = self._debug_dir / f'{base}_raw_response.json'
+        path.write_text(json.dumps(payload, indent=2))
+        return {'debug_raw_response_path': str(path)}
+
+    def _call_provider(self, image_bytes: bytes, detected_sportsbook: str, prompt_strategy, preprocessing_metadata: dict[str, Any]) -> VisionCallResult:
         image_b64 = base64.b64encode(image_bytes).decode('ascii')
-        payload = {'model': self._model, 'temperature': 0, 'max_output_tokens': 500, 'input': [{'role': 'system', 'content': [{'type': 'input_text', 'text': prompt_strategy.system_prompt}]}, {'role': 'user', 'content': [{'type': 'input_text', 'text': prompt_strategy.user_prompt}, {'type': 'input_image', 'image_url': f'data:image/png;base64,{image_b64}'}]}], 'text': {'format': {'type': 'json_schema', 'name': 'sportsbook_slip_parse', 'schema': _JSON_SCHEMA, 'strict': True}}}
+        user_content = [
+            {'type': 'input_text', 'text': prompt_strategy.user_prompt},
+            {'type': 'input_image', 'image_url': f'data:image/png;base64,{image_b64}'},
+        ]
+        payload = {
+            'model': self._model,
+            'temperature': 0,
+            'max_output_tokens': 500,
+            'input': [
+                {'role': 'system', 'content': [{'type': 'input_text', 'text': prompt_strategy.system_prompt}]},
+                {'role': 'user', 'content': user_content},
+            ],
+            'text': {'format': {'type': 'json_schema', 'name': 'sportsbook_slip_parse', 'schema': _JSON_SCHEMA, 'strict': True}},
+        }
+
+        has_input_image = _has_input_image(user_content)
+        image_mime_type = 'image/png'
+        request_diagnostics = {
+            'request_model': self._model,
+            'request_text_format': payload.get('text', {}).get('format'),
+            'request_has_input_image': has_input_image,
+            'request_image_mime_type': image_mime_type,
+            'request_image_base64_size': len(image_b64),
+            'request_processed_width': preprocessing_metadata.get('processed_width'),
+            'request_processed_height': preprocessing_metadata.get('processed_height'),
+        }
+        logger.info(
+            'vision_parser.request model=%s parser_strategy=%s text_format=%s input_image_present=%s image_mime=%s base64_size=%s',
+            self._model,
+            prompt_strategy.parser_strategy_used,
+            request_diagnostics['request_text_format'],
+            has_input_image,
+            image_mime_type,
+            len(image_b64),
+        )
+
+        if not has_input_image:
+            raise VisionProviderResponseError(
+                'vision_schema_error: Missing input_image in Responses API payload.',
+                diagnostics={
+                    'primary_failure_category': 'vision_schema_error',
+                    **request_diagnostics,
+                },
+            )
 
         with httpx.Client(timeout=60.0) as client:
             resp = client.post(self._url, headers={'Authorization': f'Bearer {self._api_key}', 'Content-Type': 'application/json'}, json=payload)
             resp.raise_for_status()
             body = resp.json()
 
-        output_text = body.get('output_text')
+        response_diagnostics = _extract_response_diagnostics(body)
+        diagnostics: dict[str, Any] = {
+            **request_diagnostics,
+            **response_diagnostics,
+            'raw_response': _sanitize_response_object(body),
+        }
+
+        output_text = response_diagnostics.get('combined_output_text', '')
         if not output_text:
-            raise VisionSchemaValidationError('vision_schema_error: Provider returned empty structured output.', diagnostics={'primary_failure_category': 'vision_schema_error', 'raw_primary_output_excerpt': None})
+            if response_diagnostics.get('has_refusal'):
+                raise VisionSchemaValidationError(
+                    'vision_schema_error: Provider refusal returned without structured content.',
+                    diagnostics={'primary_failure_category': 'vision_schema_error', 'provider_response_kind': 'provider_refusal', **diagnostics},
+                )
+            raise VisionSchemaValidationError(
+                'vision_schema_error: Provider returned no content.',
+                diagnostics={'primary_failure_category': 'vision_schema_error', 'provider_response_kind': 'provider_no_content', **diagnostics},
+            )
+
+        diagnostics['raw_primary_output'] = output_text
+        diagnostics['raw_primary_output_excerpt'] = _excerpt(output_text)
 
         try:
             parsed_json = json.loads(output_text)
         except json.JSONDecodeError as exc:
-            raise VisionSchemaValidationError('vision_schema_error: Failed to decode provider JSON output.', diagnostics={'primary_failure_category': 'vision_schema_error', 'raw_primary_output': output_text, 'raw_primary_output_excerpt': _excerpt(output_text), 'schema_error_message': f'json_decode_error: {exc.msg}', 'schema_error_path': '$'}) from exc
+            repaired_payload = _attempt_tolerant_json_parse(output_text)
+            if repaired_payload is None:
+                provider_kind = 'provider_plain_text' if response_diagnostics.get('has_any_text') else 'provider_malformed_structured_content'
+                raise VisionSchemaValidationError(
+                    'vision_schema_error: Failed to decode provider JSON output.',
+                    diagnostics={
+                        'primary_failure_category': 'vision_schema_error',
+                        'provider_response_kind': provider_kind,
+                        'schema_error_message': f'json_decode_error: {exc.msg}',
+                        'schema_error_path': '$',
+                        **diagnostics,
+                    },
+                ) from exc
+            parsed_json = repaired_payload
+            diagnostics['schema_repair_applied'] = True
+            diagnostics['schema_repair_reason'] = 'manual_json_text_repair'
 
         strict_errors = _validate_payload(parsed_json)
         if not strict_errors:
-            return VisionCallResult(payload=parsed_json, detected_sportsbook=detected_sportsbook)
+            return VisionCallResult(payload=parsed_json, detected_sportsbook=detected_sportsbook, diagnostics=diagnostics)
 
         normalized = _normalize_payload(parsed_json)
         repaired_errors = _validate_payload(normalized)
         if not repaired_errors:
             logger.info('vision_parser.schema_repair_applied detected_sportsbook=%s', detected_sportsbook)
-            return VisionCallResult(payload=normalized, detected_sportsbook=detected_sportsbook, diagnostics={'primary_failure_category': 'vision_schema_error', 'schema_error_path': strict_errors[0]['path'], 'schema_error_message': strict_errors[0]['message'], 'raw_primary_output_excerpt': _excerpt(output_text), 'parsed_json': parsed_json, 'schema_validation_errors': strict_errors, 'schema_repair_applied': True})
+            return VisionCallResult(payload=normalized, detected_sportsbook=detected_sportsbook, diagnostics={
+                'primary_failure_category': 'vision_schema_error',
+                'schema_error_path': strict_errors[0]['path'],
+                'schema_error_message': strict_errors[0]['message'],
+                'parsed_json': parsed_json,
+                'schema_validation_errors': strict_errors,
+                'schema_repair_applied': True,
+                **diagnostics,
+            })
 
-        diagnostics = {'primary_failure_category': 'vision_schema_error', 'schema_error_path': repaired_errors[0]['path'], 'schema_error_message': repaired_errors[0]['message'], 'raw_primary_output': output_text, 'raw_primary_output_excerpt': _excerpt(output_text), 'parsed_json': parsed_json, 'normalized_json': normalized, 'schema_validation_errors': repaired_errors, 'failed_fields': [err['path'] for err in repaired_errors]}
+        diagnostics.update({'primary_failure_category': 'vision_schema_error', 'provider_response_kind': 'provider_malformed_structured_content', 'schema_error_path': repaired_errors[0]['path'], 'schema_error_message': repaired_errors[0]['message'], 'parsed_json': parsed_json, 'normalized_json': normalized, 'schema_validation_errors': repaired_errors, 'failed_fields': [err['path'] for err in repaired_errors]})
         raise VisionSchemaValidationError(f"vision_schema_error: {repaired_errors[0]['path']}: {repaired_errors[0]['message']}", diagnostics=diagnostics)
 
     def _call_provider_sanity(self, image_bytes: bytes, model: str) -> tuple[dict[str, Any], bool]:
@@ -274,6 +379,10 @@ class OpenAIVisionSlipParser:
         return body, any(item.get('type') == 'input_image' for item in user_content)
 
 
+def _has_input_image(content_items: list[dict[str, Any]]) -> bool:
+    return any(item.get('type') == 'input_image' for item in content_items if isinstance(item, dict))
+
+
 def _validate_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
     try:
         _VisionSlipPayloadModel.model_validate(payload)
@@ -296,26 +405,85 @@ def _validate_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _extract_output_text(body: dict[str, Any]) -> str:
-    output_text = body.get('output_text')
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text
+    diagnostics = _extract_response_diagnostics(body)
+    return str(diagnostics.get('combined_output_text', '')).strip()
 
+
+def _extract_response_diagnostics(body: dict[str, Any]) -> dict[str, Any]:
+    direct_output_text = body.get('output_text')
+    text_chunks: list[str] = []
+    if isinstance(direct_output_text, str) and direct_output_text.strip():
+        text_chunks.append(direct_output_text.strip())
+
+    refusals: list[str] = []
     output = body.get('output', [])
-    chunks: list[str] = []
     if isinstance(output, list):
         for item in output:
             if not isinstance(item, dict):
                 continue
             content = item.get('content', [])
-            if not isinstance(content, list):
+            if isinstance(content, list):
+                for content_item in content:
+                    if not isinstance(content_item, dict):
+                        continue
+                    text_value = content_item.get('text')
+                    if isinstance(text_value, str) and text_value.strip():
+                        text_chunks.append(text_value.strip())
+                    refusal = content_item.get('refusal')
+                    if isinstance(refusal, str) and refusal.strip():
+                        refusals.append(refusal.strip())
+
+    combined_output_text = '\n'.join(text_chunks).strip()
+    return {
+        'response_status': body.get('status'),
+        'response_finish_reason': body.get('finish_reason') or body.get('stop_reason'),
+        'response_incomplete_details': body.get('incomplete_details'),
+        'response_refusal': body.get('refusal'),
+        'response_output': body.get('output'),
+        'response_output_text': body.get('output_text'),
+        'response_refusal_messages': refusals,
+        'has_refusal': bool(body.get('refusal')) or bool(refusals),
+        'has_any_text': bool(combined_output_text),
+        'combined_output_text': combined_output_text,
+    }
+
+
+def _sanitize_response_object(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == 'image_url' and isinstance(item, str) and item.startswith('data:image'):
+                sanitized[key] = f'<redacted_data_url length={len(item)}>'
                 continue
-            for content_item in content:
-                if not isinstance(content_item, dict):
-                    continue
-                text_value = content_item.get('text')
-                if isinstance(text_value, str) and text_value.strip():
-                    chunks.append(text_value)
-    return '\n'.join(chunks).strip()
+            sanitized[key] = _sanitize_response_object(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_response_object(item) for item in value]
+    if isinstance(value, str) and len(value) > 6000:
+        return value[:6000] + '...<truncated>'
+    return value
+
+
+def _attempt_tolerant_json_parse(raw_text: str) -> dict[str, Any] | None:
+    text = raw_text.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    start = text.find('{')
+    end = text.rfind('}')
+    if start >= 0 and end > start:
+        candidate = text[start : end + 1]
+        try:
+            parsed = json.loads(candidate)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
 
 
 def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -412,12 +580,20 @@ def _normalize_warnings(value: Any) -> list[str]:
 
 def _merge_schema_diagnostics_into_artifacts(debug_artifacts: dict[str, str], diagnostics: dict[str, Any]) -> None:
     debug_artifacts['primary_failure_category'] = str(diagnostics.get('primary_failure_category', 'vision_schema_error'))
+    if diagnostics.get('provider_response_kind'):
+        debug_artifacts['provider_response_kind'] = str(diagnostics['provider_response_kind'])
+    if diagnostics.get('response_status') is not None:
+        debug_artifacts['response_status'] = str(diagnostics['response_status'])
+    if diagnostics.get('response_finish_reason') is not None:
+        debug_artifacts['response_finish_reason'] = str(diagnostics['response_finish_reason'])
     if diagnostics.get('schema_error_path'):
         debug_artifacts['schema_error_path'] = str(diagnostics['schema_error_path'])
     if diagnostics.get('schema_error_message'):
         debug_artifacts['schema_error_message'] = str(diagnostics['schema_error_message'])
     if diagnostics.get('raw_primary_output_excerpt'):
         debug_artifacts['raw_primary_output_excerpt'] = str(diagnostics['raw_primary_output_excerpt'])
+    if diagnostics.get('schema_repair_applied') is not None:
+        debug_artifacts['schema_repair_applied'] = str(diagnostics['schema_repair_applied'])
 
 
 def _excerpt(text: str, max_len: int = 300) -> str:
