@@ -115,7 +115,7 @@ def _dnp_settlement_mode(provider: ResultsProvider) -> str:
     return 'VOID'
 
 
-def _base_leg_kwargs(leg: Leg) -> dict:
+def _base_leg_kwargs(leg: Leg, *, input_source_path: str = 'manual_text') -> dict:
     return {
         'matched_event': leg.event_label,
         'line': leg.line,
@@ -142,6 +142,7 @@ def _base_leg_kwargs(leg: Leg) -> dict:
         'event_resolution_warnings': leg.event_resolution_warnings,
         'slip_default_date': leg.slip_default_date,
         'mixed_event_dates_detected': leg.mixed_event_dates_detected,
+        'input_source_path': input_source_path,
     }
 
 
@@ -214,10 +215,46 @@ def _review_reason_from_notes(leg: Leg) -> str:
     return 'event unresolved'
 
 
-def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_text_slip_grading') -> GradedLeg:
-    base_kwargs = _base_leg_kwargs(leg)
+def _input_source_from_code_path(code_path: str) -> str:
+    return 'screenshot' if 'screenshot' in code_path else 'manual_text'
+
+
+def _review_reason_text(review_reason: str | None, reason_code: str) -> str | None:
+    value = (review_reason or '').lower()
+    if reason_code in {reason_codes.EVENT_UNRESOLVED, reason_codes.NO_CANDIDATE_EVENTS} and ('multiple' in value or 'ambiguous' in value):
+        return 'Review: multiple plausible event/stat matches'
+    if reason_code in {reason_codes.MATCHED_EVENT_TEAM_MISMATCH, reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER, reason_codes.IDENTITY_MATCH_AMBIGUOUS}:
+        return 'Review: player/event validation failed'
+    if reason_code in {reason_codes.MISSING_STAT_SOURCE, reason_codes.STAT_NOT_FOUND, reason_codes.MARKET_MAPPING_MISSING} and any(k in value for k in ('combo', 'component', 'stat')):
+        return 'Review: combo component stats incomplete'
+    if review_reason:
+        return f'Review: {review_reason}'
+    return None
+
+
+def _build_debug_comparison(leg: Leg, *, graded: GradedLeg, reason_code: str, review_reason: str | None, input_source_path: str) -> dict[str, object]:
+    return {
+        'input_source_path': input_source_path,
+        'raw_player_text': leg.player,
+        'normalized_player_name': leg.resolved_player_name or leg.player,
+        'normalized_market': graded.normalized_market or leg.normalized_stat_type or leg.market_type,
+        'line': leg.line,
+        'selection': f"{leg.direction} {leg.line}" if leg.direction is not None and leg.line is not None else leg.direction,
+        'matched_event': leg.event_label,
+        'matched_event_date': leg.matched_event_date,
+        'candidate_event_count': len(leg.event_candidates),
+        'unmatched_reason_code': (graded.settlement_diagnostics or {}).get('unmatched_reason_code'),
+        'settlement_reason_code': reason_code,
+        'grading_confidence': graded.resolution_confidence,
+        'review_downgrade_reason': review_reason,
+    }
+
+
+def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_text_slip_grading', input_source_path: str = 'manual_text') -> GradedLeg:
+    base_kwargs = _base_leg_kwargs(leg, input_source_path=input_source_path)
     base_kwargs['validation_warnings'] = []
     settlement_diagnostics = _default_settlement_diagnostics(leg)
+    settlement_diagnostics['source_equivalence_policy'] = 'source-neutral; confidence-driven only'
     base_kwargs['settlement_diagnostics'] = settlement_diagnostics
 
     def explained(
@@ -254,7 +291,16 @@ def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_
             component_values=kwargs.get('component_values'),
             computed_total=kwargs.get('computed_total'),
         )
-        return with_explanation(graded, explanation)
+        graded = with_explanation(graded, explanation)
+        graded.review_reason_text = _review_reason_text(review_reason, reason_code)
+        graded.debug_comparison = _build_debug_comparison(
+            leg,
+            graded=graded,
+            reason_code=reason_code,
+            review_reason=review_reason,
+            input_source_path=input_source_path,
+        )
+        return graded
 
     if leg.confidence < 0.75:
         return explained(
@@ -448,7 +494,8 @@ def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_
                 return explained(settlement='void', reason=f'{leg.player} did not appear in box score (DNP)', reason_code=reason_codes.PLAYER_DID_NOT_PLAY, reason_message='Player did not appear in box score', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
         settlement_diagnostics['settlement_failure_reason'] = 'stat not found'
         settlement_diagnostics['unmatched_reason_code'] = reason_codes.STAT_NOT_FOUND
-        return explained(settlement='unmatched', reason='Matched event but no stat result', reason_code=reason_codes.MISSING_STAT_SOURCE, reason_message='Matched event but no stat result', explanation_reason='Matched event but no stat result', player_found_in_boxscore=appeared, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
+        review_reason = 'combo component stats incomplete' if market_entry and market_entry.get('market_type') == 'combo_stat' else 'Matched event but no stat result'
+        return explained(settlement='unmatched', reason='Matched event but no stat result', reason_code=reason_codes.MISSING_STAT_SOURCE, reason_message='Matched event but no stat result', review_reason=review_reason, explanation_reason='Matched event but no stat result', player_found_in_boxscore=appeared, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
 
     if leg.direction == 'over':
         won = actual_value > leg.line
@@ -519,7 +566,8 @@ def grade_text(
             bet_date=bet_date,
             screenshot_default_date=screenshot_default_date,
         )
-    graded = [settle_leg(leg, provider, code_path=code_path) for leg in resolved_legs]
+    input_source_path = _input_source_from_code_path(code_path)
+    graded = [settle_leg(leg, provider, code_path=code_path, input_source_path=input_source_path) for leg in resolved_legs]
 
     settlements = [item.settlement for item in graded]
     if any(settlement == 'loss' for settlement in settlements):

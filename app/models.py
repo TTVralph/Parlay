@@ -131,6 +131,9 @@ class GradedLeg(BaseModel):
     event_resolution_warnings: list[str] = Field(default_factory=list)
     slip_default_date: Optional[str] = None
     mixed_event_dates_detected: Optional[bool] = None
+    input_source_path: Optional[Literal['manual_text', 'screenshot']] = None
+    debug_comparison: dict[str, Any] = Field(default_factory=dict)
+    review_reason_text: Optional[str] = None
 
 
 class SettlementExplanation(BaseModel):
