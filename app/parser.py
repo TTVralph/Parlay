@@ -9,11 +9,11 @@ from .player_identity import resolve_player_identity
 
 ALT_PATTERN = re.compile(r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+$', re.I)
 OVER_UNDER_PATTERN = re.compile(
-    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|three-point field goals made|three point field goals made|pra|pr|pa|ra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$',
+    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$',
     re.I,
 )
 NAMED_MARKET_PATTERN = re.compile(
-    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|three-point field goals made|three point field goals made|pra|pr|pa|ra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$',
+    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$',
     re.I,
 )
 ML_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+ml$', re.I)
@@ -57,7 +57,11 @@ def _player_lookup(token: str) -> str | None:
 
 def _market_lookup(token: str) -> str:
     normalized = token.lower().strip().replace('-', ' ')
+    normalized = re.sub(r'\s*\+\s*', ' + ', normalized)
+    normalized = re.sub(r'\s+', ' ', normalized)
     if normalized in {'three pointers made', '3 pointers made', 'threes made', '3pt made', 'three point field goals made'}:
+        normalized = 'threes'
+    if normalized in {'3 pointers made', '3 pointers', '3pm', '3s', '3 pointers made', '3 pointers'}:
         normalized = 'threes'
     return get_alias_map('market').get(normalized, 'player_points')
 
