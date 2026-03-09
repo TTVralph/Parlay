@@ -280,6 +280,35 @@ def _parse_team_roster(
     *,
     source_url: str,
 ) -> tuple[list[dict[str, str]], list[str]]:
+    def _status_name(value: object) -> str:
+        if isinstance(value, str):
+            return value.strip().lower()
+        if isinstance(value, dict):
+            type_value = value.get('type')
+            if isinstance(type_value, dict):
+                type_name = type_value.get('name')
+                if isinstance(type_name, str):
+                    return type_name.strip().lower()
+            for key in ('name', 'state', 'description', 'displayName', 'status'):
+                candidate = value.get(key)
+                if isinstance(candidate, str):
+                    return candidate.strip().lower()
+        return ''
+
+    def _is_clearly_inactive(player: dict[str, object]) -> bool:
+        status_name = _status_name(player.get('status'))
+        if status_name in {'inactive', 'out', 'retired', 'suspended'}:
+            return True
+        injuries = player.get('injuries')
+        if isinstance(injuries, list):
+            for injury in injuries:
+                if not isinstance(injury, dict):
+                    continue
+                injury_status = _status_name(injury.get('status'))
+                if injury_status in {'out', 'inactive'}:
+                    return True
+        return False
+
     rows: list[dict[str, str]] = []
     reference_urls: list[str] = []
     athletes = payload.get('athletes', []) if isinstance(payload, dict) else []
@@ -291,13 +320,13 @@ def _parse_team_roster(
             if not isinstance(player, dict):
                 continue
             player_id = str(player.get('id') or '').strip()
-            full_name = str(player.get('displayName') or player.get('fullName') or '').strip()
+            full_name = str(player.get('fullName') or player.get('displayName') or '').strip()
             if player_id and full_name:
                 rows.append(
                     {
                         'player_id': player_id,
                         'full_name': full_name,
-                        'active_status': 'inactive' if str(player.get('status', {}).get('type', {}).get('name') or '').lower() == 'inactive' else 'active',
+                        'active_status': 'inactive' if _is_clearly_inactive(player) else 'active',
                         'source_url': source_url,
                         'current_team_name': team.full_team_name,
                         'current_team_abbr': team.abbreviation,
@@ -315,13 +344,13 @@ def _parse_team_roster(
                     if not isinstance(player, dict):
                         continue
                     player_id = str(player.get('id') or '').strip()
-                    full_name = str(player.get('displayName') or player.get('fullName') or '').strip()
+                    full_name = str(player.get('fullName') or player.get('displayName') or '').strip()
                     if player_id and full_name:
                         rows.append(
                             {
                                 'player_id': player_id,
                                 'full_name': full_name,
-                                'active_status': 'inactive' if str(player.get('status', {}).get('type', {}).get('name') or '').lower() == 'inactive' else 'active',
+                                'active_status': 'inactive' if _is_clearly_inactive(player) else 'active',
                                 'source_url': source_url,
                                 'current_team_name': team.full_team_name,
                                 'current_team_abbr': team.abbreviation,
@@ -331,13 +360,13 @@ def _parse_team_roster(
 
     if not rows and isinstance(payload, dict):
         player_id = str(payload.get('id') or '').strip()
-        full_name = str(payload.get('displayName') or payload.get('fullName') or '').strip()
+        full_name = str(payload.get('fullName') or payload.get('displayName') or '').strip()
         if player_id and full_name:
             rows.append(
                 {
                     'player_id': player_id,
                     'full_name': full_name,
-                    'active_status': 'inactive' if str(payload.get('status', {}).get('type', {}).get('name') or '').lower() == 'inactive' else 'active',
+                    'active_status': 'inactive' if _is_clearly_inactive(payload) else 'active',
                     'source_url': source_url,
                     'current_team_name': team.full_team_name,
                     'current_team_abbr': team.abbreviation,
@@ -366,8 +395,9 @@ def _resolve_team_roster(
         top_level_keys: list[str] | None,
     ) -> None:
         logger.info(
-            'Team roster fetch team_id=%s endpoint=%s skipped_non_api=%s success=%s status=%s exception=%s top_level_keys=%s players=%s',
+            'Team roster fetch team_id=%s team_abbr=%s endpoint=%s skipped_non_api=%s success=%s status=%s exception=%s top_level_keys=%s players=%s',
             team.espn_team_id,
+            team.abbreviation,
             endpoint,
             skipped_non_api,
             success,
@@ -430,29 +460,21 @@ def _resolve_team_roster(
         return [], ''
 
     roster_url = ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id=team.espn_team_id)
-    team_url_with_roster = ESPN_TEAM_URL_WITH_ROSTER_TEMPLATE.format(team_id=team.espn_team_id)
-    team_url = ESPN_TEAM_URL_TEMPLATE.format(team_id=team.espn_team_id)
+    parsed, roster_ref_urls = _attempt_endpoint(roster_url, context=f'team roster {team.espn_team_id}')
+    if parsed:
+        return parsed, roster_url, endpoints_tried
 
-    roster_ref_urls: list[str] = []
-    team_ref_urls: list[str] = []
-    for endpoint, context, ref_target in [
-        (roster_url, f'team roster {team.espn_team_id}', 'roster'),
-        (team_url_with_roster, f'team details with roster {team.espn_team_id}', 'team'),
-        (team_url, f'team details {team.espn_team_id}', 'team'),
+    fallback_seed_urls = list(dict.fromkeys(roster_ref_urls))
+    for endpoint, context in [
+        (ESPN_TEAM_URL_WITH_ROSTER_TEMPLATE.format(team_id=team.espn_team_id), f'team details with roster {team.espn_team_id}'),
+        (ESPN_TEAM_URL_TEMPLATE.format(team_id=team.espn_team_id), f'team details {team.espn_team_id}'),
     ]:
         parsed, ref_urls = _attempt_endpoint(endpoint, context=context)
         if parsed:
             return parsed, endpoint, endpoints_tried
-        if ref_target == 'roster':
-            roster_ref_urls.extend(ref_urls)
-        else:
-            team_ref_urls.extend(ref_urls)
+        fallback_seed_urls.extend(ref_urls)
 
-    parsed_from_refs, ref_endpoint = _follow_reference_chain(list(dict.fromkeys(team_ref_urls)))
-    if parsed_from_refs:
-        return parsed_from_refs, ref_endpoint, endpoints_tried
-
-    parsed_from_refs, ref_endpoint = _follow_reference_chain(roster_ref_urls)
+    parsed_from_refs, ref_endpoint = _follow_reference_chain(list(dict.fromkeys(fallback_seed_urls)))
     if parsed_from_refs:
         return parsed_from_refs, ref_endpoint, endpoints_tried
 
@@ -494,16 +516,20 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
             failed_team_ids.append(team.espn_team_id)
             roster_counts_by_team[team.abbreviation or team.full_team_name] = 0
             logger.info(
-                'Team roster fetch team_id=%s endpoint=%s failure players=0',
+                'Team roster summary team_id=%s team_abbr=%s roster_endpoint=%s success=false endpoint=%s parsed_player_count=0',
                 team.espn_team_id,
+                team.abbreviation,
+                ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id=team.espn_team_id),
                 tried_endpoints[-1] if tried_endpoints else '-',
             )
             continue
 
         roster_counts_by_team[team.abbreviation or team.full_team_name] = len(parsed_roster)
         logger.info(
-            'Team roster fetch team_id=%s endpoint=%s success players=%s',
+            'Team roster summary team_id=%s team_abbr=%s roster_endpoint=%s success=true endpoint=%s parsed_player_count=%s',
             team.espn_team_id,
+            team.abbreviation,
+            ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id=team.espn_team_id),
             success_endpoint,
             len(parsed_roster),
         )

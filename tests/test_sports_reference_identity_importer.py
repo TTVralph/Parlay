@@ -286,6 +286,79 @@ def test_resolver_sets_identity_diagnostics_fields() -> None:
     assert resolved[0].resolved_team_hint == 'Denver Nuggets'
 
 
+
+
+def test_refresh_prefers_confirmed_team_roster_endpoint_and_defensive_fields(monkeypatch, tmp_path) -> None:
+    from app import sports_reference_identity as mod
+
+    roster_url = mod.ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id='1')
+    fallback_url = mod.ESPN_TEAM_URL_WITH_ROSTER_TEMPLATE.format(team_id='1')
+    calls: list[str] = []
+
+    payload = {
+        'athletes': [
+            {
+                'id': '901',
+                'fullName': 'Alex Sarr',
+                'displayName': 'Alex Sarr',
+                'shortName': 'A. Sarr',
+                'links': [],
+                'jersey': '20',
+                'position': 'F',
+                'teams': [],
+                'experience': {'years': 1},
+                'injuries': [],
+                'status': 'active',
+            },
+            {
+                'id': '902',
+                'displayName': 'Reed Sheppard',
+                'links': [{'href': 'https://www.espn.com/nba/player/_/id/902/reed-sheppard'}],
+                'position': {'abbreviation': 'G'},
+                'injuries': [{'status': {'type': {'name': 'out'}}}],
+                'status': {'type': {'name': 'inactive'}},
+            },
+            {
+                'id': '903',
+                'fullName': 'Type Variant',
+                'status': {'state': 'ACTIVE'},
+                'position': None,
+                'links': None,
+            },
+        ]
+    }
+
+    def _fake_fetch(url: str) -> dict[str, object]:
+        calls.append(url)
+        if url == mod.ESPN_TEAMS_URL:
+            return _teams_payload(['1'])
+        if url == roster_url:
+            return payload
+        if url == fallback_url:
+            raise RuntimeError('fallback should not be used when /roster succeeds')
+        raise RuntimeError(url)
+
+    monkeypatch.setattr(mod.SportsReferenceFetcher, 'fetch_json', lambda self, url, *, context, use_cache=True: _fake_fetch(url))
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+    monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_TEAM_ROSTER_SIZE', 1)
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
+    monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
+
+    result = refresh_nba_identity_from_basketball_reference()
+
+    assert result['healthy'] is True
+    assert result['validation_report']['players_from_roster_pages'] == 3
+    assert roster_url in calls
+    assert fallback_url not in calls
+
+    players = __import__('json').loads((tmp_path / 'nba_players.json').read_text())
+    by_name = {p['full_name']: p for p in players}
+    assert by_name['Alex Sarr']['canonical_player_id'] == 'nba-espn-901'
+    assert by_name['Alex Sarr']['current_team_abbr'] == 'T1'
+    assert by_name['Reed Sheppard']['active_status'] == 'inactive'
+    assert by_name['Type Variant']['active_status'] == 'active'
 def test_alias_generation_covers_target_rookies_and_special_names() -> None:
     for name in ['Alex Sarr', 'Nikola Topić', "Kel'el Ware"]:
         keys = build_alias_keys(name)
