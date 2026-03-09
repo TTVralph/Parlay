@@ -916,8 +916,8 @@ Murray over 2.5 threes'></textarea>
 
     function renderRows(legs){
       legsBody.innerHTML='';
-      for(const item of legs||[]){
-        const legId=String(item.leg_id||'');
+      for(const [index,item] of (legs||[]).entries()){
+        const legId=String(item.leg_id ?? index);
         const tr=document.createElement('tr');
         const legCell=document.createElement('td');
         const resultCell=document.createElement('td');

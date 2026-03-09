@@ -580,3 +580,103 @@ def test_resolved_team_date_context_hints_following_player_leg() -> None:
 
     assert resolved[0].event_id == 'nba-2026-03-07-lac-mem'
     assert resolved[1].event_id == 'nba-2026-03-07-lac-mem'
+
+
+class TeamScopedCandidateProvider:
+    def __init__(self) -> None:
+        self._mem_good = EventInfo(
+            event_id='nba-2026-03-07-lac-mem',
+            sport='NBA',
+            home_team='Memphis Grizzlies',
+            away_team='LA Clippers',
+            start_time=datetime.fromisoformat('2026-03-07T20:00:00'),
+        )
+        self._mem_other = EventInfo(
+            event_id='nba-2026-03-09-mem-dal',
+            sport='NBA',
+            home_team='Memphis Grizzlies',
+            away_team='Dallas Mavericks',
+            start_time=datetime.fromisoformat('2026-03-09T20:00:00'),
+        )
+        self._uta_good = EventInfo(
+            event_id='nba-2026-03-07-uta-por',
+            sport='NBA',
+            home_team='Utah Jazz',
+            away_team='Portland Trail Blazers',
+            start_time=datetime.fromisoformat('2026-03-07T20:00:00'),
+        )
+        self._unrelated = EventInfo(
+            event_id='nba-2026-03-07-lal-den',
+            sport='NBA',
+            home_team='Los Angeles Lakers',
+            away_team='Denver Nuggets',
+            start_time=datetime.fromisoformat('2026-03-07T21:00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'Cam Spencer':
+            return [self._mem_good, self._mem_other, self._unrelated]
+        if player == 'Keyonte George':
+            return [self._uta_good, self._unrelated]
+        return []
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return {
+            'Cam Spencer': 'Memphis Grizzlies',
+            'Keyonte George': 'Utah Jazz',
+        }.get(player)
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return None
+
+
+def test_cam_spencer_candidates_include_only_memphis_games() -> None:
+    provider = TeamScopedCandidateProvider()
+    legs = [
+        Leg(
+            raw_text='Cam Spencer over 9.5 points',
+            sport='NBA',
+            market_type='player_points',
+            player='Cam Spencer',
+            line=9.5,
+            direction='over',
+            confidence=0.9,
+            notes=[],
+        ),
+    ]
+
+    resolved = resolve_leg_events(legs, provider, posted_at=None, include_historical=True)
+    candidate_ids = {item['event_id'] for item in resolved[0].event_candidates}
+    assert candidate_ids == {'nba-2026-03-07-lac-mem', 'nba-2026-03-09-mem-dal'}
+
+
+def test_keyonte_george_candidates_include_only_utah_games() -> None:
+    provider = TeamScopedCandidateProvider()
+    legs = [
+        Leg(
+            raw_text='Keyonte George over 5.5 assists',
+            sport='NBA',
+            market_type='player_assists',
+            player='Keyonte George',
+            line=5.5,
+            direction='over',
+            confidence=0.9,
+            notes=[],
+        ),
+    ]
+
+    resolved = resolve_leg_events(legs, provider, posted_at=None, include_historical=True)
+    assert resolved[0].event_id == 'nba-2026-03-07-uta-por'
+    assert resolved[0].event_candidates == []
