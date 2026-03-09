@@ -1030,6 +1030,8 @@ Murray over 2.5 threes'></textarea>
           || ((item.player_found_in_boxscore===null||item.player_found_in_boxscore===undefined)
             ? 'Unknown'
             : (item.player_found_in_boxscore ? 'Yes' : 'No'));
+        const settlementDiag=item.settlement_diagnostics||{};
+        const marketMapping=settlementDiag.market_mapping||{};
         detailsBody.innerHTML=`
           <div>Sport: ${item.leg?.sport||item.sport||'—'}</div>
           <div>Parsed: ${item.parsed_player_name||item.parsed_player_or_team||'—'} / ${item.normalized_stat_type||item.normalized_market||'—'}</div>
@@ -1053,6 +1055,14 @@ Murray over 2.5 threes'></textarea>
           <div>Parse confidence: ${item.parse_confidence ?? '—'}</div>
           <div>Review reason: ${item.review_reason||'—'}</div>
           <div>Warnings: ${(item.validation_warnings||[]).join(' | ') || '—'}</div>
+          <div>Unmatched reason code: ${item.unmatched_reason_code||'—'}</div>
+          <div>Event resolution worked: ${settlementDiag.event_resolution_worked===undefined?'—':String(settlementDiag.event_resolution_worked)}</div>
+          <div>Stat extraction worked: ${settlementDiag.stat_extraction_worked===undefined?'—':String(settlementDiag.stat_extraction_worked)}</div>
+          <div>Event match rejection: ${settlementDiag.event_match_rejection_reason||'—'}</div>
+          <div>Roster validation: ${settlementDiag.roster_validation_result||'—'}</div>
+          <div>Stat lookup: ${settlementDiag.stat_lookup_result||'—'}</div>
+          <div>Settlement failure: ${settlementDiag.settlement_failure_reason||'—'}</div>
+          <div>Market mapping: ${marketMapping.normalized_market||'—'} -> ${marketMapping.espn_stat_field||'—'} (present: ${marketMapping.stat_field_present===undefined||marketMapping.stat_field_present===null?'—':String(marketMapping.stat_field_present)})</div>
           <div>Diagnostics: ${(item.notes||item.leg?.notes||[]).join(' | ') || '—'}</div>
         `;
         detailsWrap.appendChild(detailsBody);
@@ -1438,6 +1448,8 @@ def _process_public_check_text(
             'normalized_selection': item.settlement_explanation.normalized_selection if item.settlement_explanation else None,
             'settlement_reason_code': item.settlement_explanation.settlement_reason_code if item.settlement_explanation else None,
             'settlement_reason': item.settlement_explanation.settlement_reason if item.settlement_explanation else None,
+            'settlement_diagnostics': item.settlement_diagnostics,
+            'unmatched_reason_code': (item.settlement_diagnostics or {}).get('unmatched_reason_code'),
         })
 
     parlay_result = 'still_live' if graded.overall == 'pending' else graded.overall
@@ -1451,11 +1463,11 @@ def _process_public_check_text(
         'parlay_result': parlay_result,
     }
     if unmatched_count == len(legs):
-        out['message'] = 'Could not confidently match this slip to settled results. Please review manually.'
-        out['grading_warning'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
+        out['message'] = 'Parsed legs were detected, but settlement failed during ESPN event/stat resolution. Please review diagnostics per leg.'
+        out['grading_warning'] = 'All legs need review: check event resolution, roster validation, and stat extraction diagnostics.'
     elif unmatched_count > 0:
         out['message'] = f'{unmatched_count} leg(s) need manual review.'
-        out['grading_warning'] = f'ESPN matching could not settle {unmatched_count} parsed leg(s).'
+        out['grading_warning'] = f'{unmatched_count} leg(s) were unresolved during event/stat settlement. See per-leg diagnostics.'
 
     if ambiguous_count > 0:
         out['grading_warning'] = 'This leg matches multiple possible games. Add opponent/date or upload the full slip.'

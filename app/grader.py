@@ -151,6 +151,37 @@ def _event_status(provider: ResultsProvider, event_id: str | None) -> str | None
             return None
     return None
 
+
+
+def _extract_candidate_count_from_notes(notes: list[str], key: str) -> int | None:
+    prefix = f'diagnostic: {key}='
+    for note in notes:
+        if note.startswith(prefix):
+            try:
+                return int(note.split('=', 1)[1])
+            except ValueError:
+                return None
+    return None
+
+
+def _default_settlement_diagnostics(leg: Leg) -> dict[str, object]:
+    return {
+        'resolved_player_identity': leg.resolved_player_name or leg.player,
+        'resolved_player_team': leg.resolved_team,
+        'candidate_events_found': leg.event_candidates,
+        'final_matched_event': leg.event_label,
+        'event_match_rejection_reason': None,
+        'roster_validation_result': None,
+        'stat_lookup_result': None,
+        'settlement_failure_reason': None,
+        'unmatched_reason_code': None,
+        'event_resolution_worked': bool(leg.event_id),
+        'stat_extraction_worked': False,
+        'market_mapping': None,
+        'candidate_events_before_filtering': _extract_candidate_count_from_notes(leg.notes, 'candidate_events_before_filtering'),
+        'candidate_events_after_filtering': _extract_candidate_count_from_notes(leg.notes, 'candidate_events_after_filtering'),
+    }
+
 def _review_reason_from_notes(leg: Leg) -> str:
     lowered_notes = [note.lower() for note in leg.notes]
     if any('multiple possible games. add bet date to narrow results.' in note for note in lowered_notes):
@@ -181,6 +212,8 @@ def _review_reason_from_notes(leg: Leg) -> str:
 def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     base_kwargs = _base_leg_kwargs(leg)
     base_kwargs['validation_warnings'] = []
+    settlement_diagnostics = _default_settlement_diagnostics(leg)
+    base_kwargs['settlement_diagnostics'] = settlement_diagnostics
 
     def explained(
         *,
@@ -192,6 +225,8 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         actual_value: float | None = None,
         **kwargs,
     ) -> GradedLeg:
+        if settlement in {'unmatched', 'pending', 'void'} and settlement_diagnostics.get('unmatched_reason_code') is None:
+            settlement_diagnostics['unmatched_reason_code'] = reason_code
         graded = GradedLeg(
             leg=leg,
             settlement=settlement,  # type: ignore[arg-type]
@@ -234,6 +269,8 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
 
     if not leg.event_id:
         reason = _review_reason_from_notes(leg)
+        settlement_diagnostics['settlement_failure_reason'] = reason
+        settlement_diagnostics['unmatched_reason_code'] = reason_codes.NO_CANDIDATE_EVENTS
         return explained(
             settlement='unmatched',
             reason='No event resolved from post timestamp / schedule lookup',
@@ -304,7 +341,9 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         return explained(settlement='unmatched', reason='No player identified', reason_code=reason_codes.NO_PLAYER_IDENTIFIED, reason_message='No player identified', explanation_reason='player identity ambiguous')
 
     event_info = _event_info_for_leg(leg, provider)
+    settlement_diagnostics['final_matched_event'] = leg.event_label
     validation = validate_player_event_match(leg.player, event_info, leg.resolved_team, provider, event_id=leg.event_id)
+    settlement_diagnostics['roster_validation_result'] = 'pass' if validation.is_valid else 'fail'
     if validation.confidence == 'LOW':
         base_kwargs['resolution_confidence'] = min(float(leg.resolution_confidence or 1.0), 0.3)
         base_kwargs['validation_warnings'] = list(validation.warnings)
@@ -312,9 +351,21 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         code = reason_codes.MATCHED_EVENT_TEAM_MISMATCH
         if any('not on either roster' in warning.lower() for warning in validation.warnings):
             code = reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER
+        settlement_diagnostics['event_match_rejection_reason'] = '; '.join(validation.warnings)
+        settlement_diagnostics['settlement_failure_reason'] = '; '.join(validation.warnings)
+        if code == reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER:
+            settlement_diagnostics['unmatched_reason_code'] = reason_codes.PLAYER_NOT_ON_EVENT_ROSTER
+        else:
+            settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_TEAM_MISMATCH
         return explained(settlement='unmatched', reason='Impossible player/event match rejected', reason_code=code, reason_message='; '.join(validation.warnings), review_reason='; '.join(validation.warnings), explanation_reason='Leg marked void/review instead of graded')
 
     matched_boxscore_player_name = None
+    market_diag_fn = getattr(provider, 'get_market_mapping_diagnostics', None)
+    if callable(market_diag_fn):
+        settlement_diagnostics['market_mapping'] = market_diag_fn(leg.market_type, event_id=leg.event_id)
+        if settlement_diagnostics['market_mapping'] and settlement_diagnostics['market_mapping'].get('mapping_failed'):
+            settlement_diagnostics['settlement_failure_reason'] = 'market mapping missing'
+            settlement_diagnostics['unmatched_reason_code'] = reason_codes.MARKET_MAPPING_MISSING
     detail_lookup = getattr(provider, 'get_player_result_details', None)
     actual_value = None
     if callable(detail_lookup):
@@ -324,6 +375,7 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             matched_boxscore_player_name = details.get('matched_boxscore_player_name')
     if actual_value is None:
         actual_value = provider.get_player_result(leg.player, leg.market_type, event_id=leg.event_id)
+    settlement_diagnostics['stat_lookup_result'] = 'found' if actual_value is not None else 'missing'
     component_values_dict = None
     if leg.market_type in _COMBO_COMPONENTS:
         component_values_dict = {}
@@ -340,6 +392,8 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     if actual_value is None:
         status = _event_status(provider, leg.event_id)
         if status == 'live':
+            settlement_diagnostics['settlement_failure_reason'] = 'event not final'
+            settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_NOT_FINAL
             return explained(settlement='pending', reason='Game is in progress', reason_code=reason_codes.EVENT_UNRESOLVED, reason_message='Game is in progress', explanation_reason='event unresolved', component_values=component_values_dict)
         did_appear_fn = getattr(provider, 'did_player_appear', None)
         appeared = None
@@ -356,8 +410,14 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
                 dnp_kwargs = {**base_kwargs, 'validation_warnings': dnp_warnings}
                 base_kwargs.update(dnp_kwargs)
                 if dnp_mode == 'NEEDS_REVIEW':
+                    settlement_diagnostics['settlement_failure_reason'] = 'player did not play'
+                    settlement_diagnostics['unmatched_reason_code'] = reason_codes.PLAYER_DID_NOT_PLAY
                     return explained(settlement='unmatched', reason=f'{leg.player} did not appear in box score (DNP)', reason_code=reason_codes.DNP_REVIEW_REQUIRED, reason_message='Player did not appear in box score', review_reason='Player did not appear in box score', explanation_reason='Leg marked void/review instead of graded', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name)
+                settlement_diagnostics['settlement_failure_reason'] = 'player did not play'
+                settlement_diagnostics['unmatched_reason_code'] = reason_codes.PLAYER_DID_NOT_PLAY
                 return explained(settlement='void', reason=f'{leg.player} did not appear in box score (DNP)', reason_code=reason_codes.PLAYER_DID_NOT_PLAY, reason_message='Player did not appear in box score', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name)
+        settlement_diagnostics['settlement_failure_reason'] = 'stat not found'
+        settlement_diagnostics['unmatched_reason_code'] = reason_codes.STAT_NOT_FOUND
         return explained(settlement='unmatched', reason='Matched event but no stat result', reason_code=reason_codes.MISSING_STAT_SOURCE, reason_message='Matched event but no stat result', explanation_reason='Matched event but no stat result', player_found_in_boxscore=appeared, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name)
 
     if leg.direction == 'over':
@@ -375,6 +435,7 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         comparison = 'below' if won else 'above'
         readable = f'{actual_value} is {comparison} {leg.line}'
 
+    settlement_diagnostics['stat_extraction_worked'] = True
     return explained(
         settlement='win' if won else 'loss',
         actual_value=float(actual_value),

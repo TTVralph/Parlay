@@ -113,6 +113,7 @@ class GradedLeg(BaseModel):
     resolved_team_hint: Optional[str] = None
     validation_warnings: list[str] = Field(default_factory=list)
     settlement_explanation: Optional['SettlementExplanation'] = None
+    settlement_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class SettlementExplanation(BaseModel):

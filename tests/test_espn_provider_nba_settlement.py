@@ -120,3 +120,15 @@ def test_player_stats_settle_for_first_name_and_partial_full_name_matches() -> N
     assert provider.get_player_result('Draymond', 'player_assists', event_id='evt-1') == 5.0
     assert provider.get_player_result('Horford', 'player_rebounds', event_id='evt-1') == 5.0
     assert provider.get_player_result('Gui Santos', 'player_points', event_id='evt-1') == 20.0
+
+
+def test_threes_market_mapping_diagnostics_support_synonyms() -> None:
+    provider = StubProvider()
+    diag = provider.get_market_mapping_diagnostics('player_threes', event_id='evt-1')
+    assert diag['normalized_market'] == 'player_threes'
+    assert diag['espn_stat_field'] == '3PT'
+    assert diag['stat_field_present'] is True
+    assert diag['mapping_failed'] is False
+    assert 'threes' in diag['aliases']
+    assert 'made threes' in diag['aliases']
+    assert '3pm' in diag['aliases']

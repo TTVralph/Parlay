@@ -221,3 +221,43 @@ def test_player_resolution_falls_back_to_identity_cache_team_aliases() -> None:
 
     assert resolved[0].event_id == 'evt-bos-nyk'
     assert resolved[0].matched_by == 'player_identity_team_schedule_lookup'
+
+
+def test_same_game_team_cluster_inference_links_multiple_unresolved_player_legs() -> None:
+    class SameGameInferenceProvider(TeamScopedPlayerProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self._shared = EventInfo(
+                event_id='evt-shared',
+                sport='NBA',
+                home_team='Houston Rockets',
+                away_team='Golden State Warriors',
+                start_time=datetime.fromisoformat('2026-10-06T20:30:00'),
+            )
+
+        def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return []
+
+        def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+            if team == 'Golden State Warriors':
+                return [
+                    self._shared,
+                    EventInfo(event_id='evt-gsw-alt', sport='NBA', home_team='Los Angeles Lakers', away_team='Golden State Warriors', start_time=datetime.fromisoformat('2026-10-06T22:30:00')),
+                ]
+            if team == 'Houston Rockets':
+                return [
+                    self._shared,
+                    EventInfo(event_id='evt-hou-alt', sport='NBA', home_team='Houston Rockets', away_team='Memphis Grizzlies', start_time=datetime.fromisoformat('2026-10-06T19:30:00')),
+                ]
+            return []
+
+    provider = SameGameInferenceProvider()
+    legs = [
+        Leg(raw_text='Draymond Green under 1.5 threes', sport='NBA', market_type='player_threes', player='Draymond Green', direction='under', line=1.5, confidence=0.9),
+        Leg(raw_text='Amen Thompson under 1.5 threes', sport='NBA', market_type='player_threes', player='Amen Thompson', direction='under', line=1.5, confidence=0.9),
+    ]
+
+    resolved = resolve_leg_events(legs, provider, posted_at=date(2026, 10, 6), include_historical=True)
+
+    assert {leg.event_id for leg in resolved} == {'evt-shared'}
+    assert all(leg.matched_by == 'same_game_team_cluster_inference' for leg in resolved)
