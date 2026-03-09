@@ -8,7 +8,7 @@ from app.sports_reference_identity import refresh_nba_identity_from_basketball_r
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='Refresh NBA identity caches from Basketball-Reference')
+    parser = argparse.ArgumentParser(description='Refresh NBA identity caches from ESPN team rosters')
     parser.add_argument('--gzip', action='store_true', help='Also emit .gz cache files')
     args = parser.parse_args()
 
