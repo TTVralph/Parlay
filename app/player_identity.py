@@ -29,6 +29,8 @@ TEAM_ID_TO_NAME = {
     'nba-bos': 'Boston Celtics',
     'nba-lal': 'Los Angeles Lakers',
     'nba-okc': 'Oklahoma City Thunder',
+    'nba-dal': 'Dallas Mavericks',
+    'nba-uta': 'Utah Jazz',
 }
 
 
@@ -52,6 +54,9 @@ _PLAYERS: tuple[PlayerRecord, ...] = (
     PlayerRecord('nba-stephen-curry', 'Stephen Curry', normalize_player_name('Stephen Curry'), 'nba-gsw', 'NBA', '3975'),
     PlayerRecord('nba-scotty-pippen-jr', 'Scotty Pippen Jr.', normalize_player_name('Scotty Pippen Jr.'), 'nba-mem', 'NBA', '4432819'),
     PlayerRecord('nba-cam-spencer', 'Cam Spencer', normalize_player_name('Cam Spencer'), 'nba-mem', 'NBA', '4683778'),
+    PlayerRecord('nba-jaylen-brown', 'Jaylen Brown', normalize_player_name('Jaylen Brown'), 'nba-bos', 'NBA', '3917376'),
+    PlayerRecord('nba-cooper-flagg', 'Cooper Flagg', normalize_player_name('Cooper Flagg'), 'nba-dal', 'NBA', '5307443'),
+    PlayerRecord('nba-keyonte-george', 'Keyonte George', normalize_player_name('Keyonte George'), 'nba-uta', 'NBA', '5105848'),
 )
 
 
@@ -61,6 +66,10 @@ _PLAYER_ALIASES: tuple[PlayerAliasRecord, ...] = (
     PlayerAliasRecord('nba-stephen-curry', 'Curry', normalize_player_name('Curry')),
     PlayerAliasRecord('nba-scotty-pippen-jr', 'Scotty Pippen', normalize_player_name('Scotty Pippen')),
     PlayerAliasRecord('nba-scotty-pippen-jr', 'Scotty Pippen Jr', normalize_player_name('Scotty Pippen Jr')),
+    PlayerAliasRecord('nba-scotty-pippen-jr', 'Scotty Pippen Jr.', normalize_player_name('Scotty Pippen Jr.')),
+    PlayerAliasRecord('nba-scotty-pippen-jr', 'Scottie Pippen Jr', normalize_player_name('Scottie Pippen Jr')),
+    PlayerAliasRecord('nba-scotty-pippen-jr', 'Scottie Pippen Jr.', normalize_player_name('Scottie Pippen Jr.')),
+    PlayerAliasRecord('nba-cam-spencer', 'Cameron Spencer', normalize_player_name('Cameron Spencer')),
 )
 
 

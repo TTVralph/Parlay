@@ -148,10 +148,13 @@ def _player_team_for_date(provider: ResultsProvider, player: str, posted_at: dat
 
 
 def _resolve_player_team(provider: ResultsProvider, player: str, posted_at: datetime | None, include_historical: bool) -> str | None:
+    team_from_provider = _player_team_for_date(provider, player, posted_at, include_historical=include_historical)
+    if team_from_provider:
+        return team_from_provider
     identity = resolve_player_identity(player)
     if identity:
         return team_name_from_id(identity.team_id)
-    return _player_team_for_date(provider, player, posted_at, include_historical=include_historical)
+    return None
 
 
 def _resolve_anchor(posted_at: datetime | None) -> datetime:
@@ -203,9 +206,7 @@ def resolve_leg_events(
             player_lookup_name = str(updates.get('player', leg.player))
             candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
             if player_team:
-                team_matched_candidates = [event for event in candidates if _event_contains_team(event, player_team)]
-                if team_matched_candidates:
-                    candidates = team_matched_candidates
+                candidates = [event for event in candidates if _event_contains_team(event, player_team)]
                 context_date = _context_date_for_leg(slip_filter_value)
                 if context_date is not None:
                     team_day_links = resolved_team_date_event_ids.get((_norm(player_team), context_date), set())
