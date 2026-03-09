@@ -905,9 +905,15 @@ Murray over 2.5 threes'></textarea>
     const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
     const emptyTextMessage='Paste at least one leg first.';
     let selectedGameByLegId={};
+    let legUiStateByLegId={};
+
+    function resetManualSelectionState(){
+      selectedGameByLegId={};
+      legUiStateByLegId={};
+    }
 
     slip.addEventListener('input',()=>{
-      selectedGameByLegId={};
+      resetManualSelectionState();
     });
     document.querySelectorAll('[data-sample]').forEach((node)=>{
       node.addEventListener('click',()=>{
@@ -921,6 +927,24 @@ Murray over 2.5 threes'></textarea>
       legsBody.innerHTML='';
       for(const [index,item] of (legs||[]).entries()){
         const legId=String(item.leg_id ?? index);
+        const existingState=legUiStateByLegId[legId]||{};
+        const hasCurrentCandidates=(item.candidate_games||[]).length>0;
+        const nextState={
+          ...existingState,
+          originalCandidateEvents:existingState.originalCandidateEvents||(item.candidate_games||[]),
+          originalReviewReason:existingState.originalReviewReason||(item.review_reason||item.explanation_reason||null),
+          originalResult:existingState.originalResult||(item.result||null),
+          autoMatchedEventId:existingState.autoMatchedEventId||(item.matched_event||null),
+          wasManuallySelected:Boolean(selectedGameByLegId[legId]),
+        };
+        if(hasCurrentCandidates&&!existingState.wasManuallySelected){
+          nextState.originalCandidateEvents=item.candidate_games||[];
+          nextState.originalReviewReason=item.review_reason||item.explanation_reason||null;
+          nextState.originalResult=item.result||null;
+          nextState.autoMatchedEventId=item.matched_event||null;
+        }
+        legUiStateByLegId={...legUiStateByLegId,[legId]:nextState};
+
         const tr=document.createElement('tr');
         const legCell=document.createElement('td');
         const resultCell=document.createElement('td');
@@ -973,7 +997,9 @@ Murray over 2.5 threes'></textarea>
         legCell.appendChild(detailsWrap);
 
         resultCell.textContent=resultLabel[item.result]||String(item.result||'review');
-        const candidateGames=(item.candidate_games||[]);
+        const candidateGames=(item.candidate_games||[]).length
+          ?(item.candidate_games||[])
+          :(nextState.wasManuallySelected ? (nextState.originalCandidateEvents||[]) : []);
 
         if(candidateGames.length>0){
           const select=document.createElement('select');
@@ -993,14 +1019,37 @@ Murray over 2.5 threes'></textarea>
             const nextValue=select.value||'';
             if(nextValue){
               selectedGameByLegId={...selectedGameByLegId,[legId]:nextValue};
+              legUiStateByLegId={
+                ...legUiStateByLegId,
+                [legId]:{
+                  ...nextState,
+                  originalCandidateEvents:nextState.originalCandidateEvents||(item.candidate_games||[]),
+                  originalReviewReason:nextState.originalReviewReason||(item.review_reason||item.explanation_reason||null),
+                  originalResult:nextState.originalResult||(item.result||null),
+                  autoMatchedEventId:nextState.autoMatchedEventId||(item.matched_event||null),
+                  wasManuallySelected:true,
+                },
+              };
             }else{
               const nextSelection={...selectedGameByLegId};
               delete nextSelection[legId];
               selectedGameByLegId=nextSelection;
+              legUiStateByLegId={
+                ...legUiStateByLegId,
+                [legId]:{...nextState,wasManuallySelected:false},
+              };
             }
             submitCheck();
           });
           eventCell.appendChild(select);
+          if(nextState.wasManuallySelected){
+            const manualNote=document.createElement('div');
+            manualNote.style.marginTop='6px';
+            manualNote.style.fontSize='12px';
+            manualNote.style.color='#1d4ed8';
+            manualNote.textContent='Manual selection applied';
+            eventCell.appendChild(manualNote);
+          }
           if(item.explanation_reason){
             const reviewNote=document.createElement('div');
             reviewNote.style.marginTop='6px';
@@ -1018,19 +1067,25 @@ Murray over 2.5 threes'></textarea>
             eventCell.appendChild(matched);
           }
 
-          const resetBtn=document.createElement('button');
-          resetBtn.type='button';
-          resetBtn.className='secondary';
-          resetBtn.style.marginTop='6px';
-          resetBtn.textContent='Reset selection';
-          resetBtn.disabled=false;
-          resetBtn.addEventListener('click',()=>{
-            const nextSelection={...selectedGameByLegId};
-            delete nextSelection[legId];
-            selectedGameByLegId=nextSelection;
-            submitCheck();
-          });
-          eventCell.appendChild(resetBtn);
+          if(nextState.wasManuallySelected){
+            const resetBtn=document.createElement('button');
+            resetBtn.type='button';
+            resetBtn.className='secondary';
+            resetBtn.style.marginTop='6px';
+            resetBtn.textContent='Reset selection';
+            resetBtn.disabled=false;
+            resetBtn.addEventListener('click',()=>{
+              const nextSelection={...selectedGameByLegId};
+              delete nextSelection[legId];
+              selectedGameByLegId=nextSelection;
+              legUiStateByLegId={
+                ...legUiStateByLegId,
+                [legId]:{...nextState,wasManuallySelected:false},
+              };
+              submitCheck();
+            });
+            eventCell.appendChild(resetBtn);
+          }
         }else if(item.matched_event){
           eventCell.textContent=item.matched_event;
         }else{
@@ -1116,6 +1171,7 @@ Murray over 2.5 threes'></textarea>
         let data;
         let res;
         if(file){
+          resetManualSelectionState();
           const form=new FormData();
           form.append('file',file);
           if(slipDate.value){form.append('bet_date', slipDate.value);}
