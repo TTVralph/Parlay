@@ -244,6 +244,7 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             actual_stat_value=actual_value,
             warnings=graded.validation_warnings,
             grading_confidence=graded.resolution_confidence,
+            settlement_diagnostics=settlement_diagnostics,
         )
         return with_explanation(graded, explanation)
 

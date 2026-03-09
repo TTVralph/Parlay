@@ -9,6 +9,11 @@ def _selection_label(direction: str | None, line: float | None) -> str | None:
     return f'{direction} {line}'
 
 
+def _stat_field_used(settlement_diagnostics: dict | None) -> str | None:
+    market_mapping = (settlement_diagnostics or {}).get('market_mapping') or {}
+    return market_mapping.get('espn_stat_field')
+
+
 def _default_grading_confidence(leg: Leg, warnings: list[str]) -> float:
     parse_conf = float(leg.parse_confidence if leg.parse_confidence is not None else leg.confidence)
     resolution_conf = float(leg.resolution_confidence if leg.resolution_confidence is not None else 1.0)
@@ -25,23 +30,30 @@ def build_settlement_explanation(
     actual_stat_value: float | None = None,
     warnings: list[str] | None = None,
     grading_confidence: float | None = None,
+    settlement_diagnostics: dict | None = None,
 ) -> SettlementExplanation:
     resolved_warnings = list(warnings or [])
+    selection = _selection_label(leg.direction, leg.line)
     return SettlementExplanation(
         raw_leg_text=leg.raw_text,
         raw_player_text=leg.parsed_player_name or leg.player,
         matched_canonical_player=leg.resolved_player_name or leg.player,
+        matched_player=leg.resolved_player_name or leg.player,
         matched_team=leg.resolved_team or leg.team,
         identity_match_method=leg.identity_match_method,
         identity_confidence=leg.resolution_confidence,
         matched_event=leg.event_label,
         matched_market=leg.normalized_stat_type or leg.market_type,
-        normalized_selection=_selection_label(leg.direction, leg.line),
+        normalized_market=leg.normalized_stat_type or leg.market_type,
+        normalized_selection=selection,
+        selection=selection,
         line=leg.line,
         actual_stat_value=actual_stat_value,
         result=settlement,  # type: ignore[arg-type]
         settlement_reason_code=reason_code,
         settlement_reason=reason_message,
+        settlement_reason_text=reason_message,
+        stat_field_used=_stat_field_used(settlement_diagnostics),
         warnings=resolved_warnings,
         grading_confidence=grading_confidence if grading_confidence is not None else _default_grading_confidence(leg, resolved_warnings),
     )
