@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from .models import GradeResponse, GradedLeg, Leg
+from .services import grade_reason_codes as reason_codes
+from .services.settlement_explainer import build_settlement_explanation, with_explanation
 from .providers.base import ResultsProvider
 from .providers.factory import get_results_provider
 from .event_matcher import resolve_leg_events
@@ -179,18 +181,76 @@ def _review_reason_from_notes(leg: Leg) -> str:
 def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     base_kwargs = _base_leg_kwargs(leg)
     base_kwargs['validation_warnings'] = []
+
+    def explained(
+        *,
+        settlement: str,
+        reason: str,
+        reason_code: str,
+        reason_message: str,
+        review_reason: str | None = None,
+        actual_value: float | None = None,
+        **kwargs,
+    ) -> GradedLeg:
+        graded = GradedLeg(
+            leg=leg,
+            settlement=settlement,  # type: ignore[arg-type]
+            reason=reason,
+            actual_value=actual_value,
+            review_reason=review_reason,
+            **base_kwargs,
+            **kwargs,
+        )
+        explanation = build_settlement_explanation(
+            leg,
+            settlement=graded.settlement,
+            reason_code=reason_code,
+            reason_message=reason_message,
+            actual_stat_value=actual_value,
+            warnings=graded.validation_warnings,
+            grading_confidence=graded.resolution_confidence,
+        )
+        return with_explanation(graded, explanation)
+
     if leg.confidence < 0.75:
-        return GradedLeg(leg=leg, settlement='unmatched', reason='Could not parse stat type', explanation_reason='Could not parse stat type', review_reason='Could not parse stat type', **base_kwargs)
+        return explained(
+            settlement='unmatched',
+            reason='Could not parse stat type',
+            reason_code=reason_codes.PARSER_LOW_CONFIDENCE,
+            reason_message='Could not parse stat type with sufficient confidence',
+            review_reason='Could not parse stat type',
+            explanation_reason='Could not parse stat type',
+        )
 
     if leg.identity_match_confidence == 'LOW':
-        return GradedLeg(leg=leg, settlement='unmatched', reason='Low-confidence identity match requires review', explanation_reason='player identity ambiguous', review_reason='player identity ambiguous', **base_kwargs)
+        return explained(
+            settlement='unmatched',
+            reason='Low-confidence identity match requires review',
+            reason_code=reason_codes.IDENTITY_MATCH_AMBIGUOUS,
+            reason_message='Player identity match is ambiguous',
+            review_reason='player identity ambiguous',
+            explanation_reason='player identity ambiguous',
+        )
 
     if not leg.event_id:
         reason = _review_reason_from_notes(leg)
-        return GradedLeg(leg=leg, settlement='unmatched', reason='No event resolved from post timestamp / schedule lookup', explanation_reason=reason, review_reason=reason, **base_kwargs)
+        return explained(
+            settlement='unmatched',
+            reason='No event resolved from post timestamp / schedule lookup',
+            reason_code=reason_codes.EVENT_UNRESOLVED,
+            reason_message=reason,
+            review_reason=reason,
+            explanation_reason=reason,
+        )
 
     if leg.sport == 'NBA' and leg.market_type not in _SUPPORTED_NBA_MARKETS:
-        return GradedLeg(leg=leg, settlement='unmatched', reason='Unsupported NBA bet type for ESPN-backed grading', explanation_reason='stat unavailable', **base_kwargs)
+        return explained(
+            settlement='unmatched',
+            reason='Unsupported NBA bet type for ESPN-backed grading',
+            reason_code=reason_codes.UNSUPPORTED_MARKET,
+            reason_message='Unsupported market for this provider',
+            explanation_reason='stat unavailable',
+        )
 
     if leg.market_type in {'moneyline', 'spread', 'game_total'}:
         team_key = leg.team
@@ -201,39 +261,47 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
                 _, home = event_label.split(' @ ', 1)
                 lookup_team = home
         if not lookup_team:
-            return GradedLeg(leg=leg, settlement='unmatched', reason='No team/event context identified', explanation_reason='no valid same-team game found', **base_kwargs)
+            return explained(settlement='unmatched', reason='No team/event context identified', reason_code=reason_codes.MISSING_SETTLEMENT_INPUTS, reason_message='No team/event context identified', explanation_reason='no valid same-team game found')
         team_result = provider.get_team_result(lookup_team, event_id=leg.event_id)
         if not team_result:
             status = _event_status(provider, leg.event_id)
             if status == 'live':
-                return GradedLeg(leg=leg, settlement='pending', reason='Game is in progress', explanation_reason='event unresolved', **base_kwargs)
-            return GradedLeg(leg=leg, settlement='unmatched', reason='Could not verify team result from trusted data source', explanation_reason='event unresolved', **base_kwargs)
+                return explained(settlement='pending', reason='Game is in progress', reason_code=reason_codes.EVENT_UNRESOLVED, reason_message='Game is in progress', explanation_reason='event unresolved')
+            return explained(settlement='unmatched', reason='Could not verify team result from trusted data source', reason_code=reason_codes.MISSING_STAT_SOURCE, reason_message='Could not verify team result from trusted data source', explanation_reason='event unresolved')
 
         if leg.market_type == 'moneyline':
             won = team_result.moneyline_win if leg.team == lookup_team else provider.get_team_result(leg.team or '', event_id=leg.event_id).moneyline_win  # type: ignore[union-attr]
-            return GradedLeg(leg=leg, settlement='win' if won else 'loss', actual_value=1 if won else 0, reason=f'{leg.team} in {team_result.event.label}: ' + ('team won game' if won else 'team lost game'), explanation_reason='event resolved', **base_kwargs)
+            return explained(
+                settlement='win' if won else 'loss',
+                actual_value=1 if won else 0,
+                reason=f'{leg.team} in {team_result.event.label}: ' + ('team won game' if won else 'team lost game'),
+                reason_code=reason_codes.ACTUAL_STAT_ABOVE_LINE if won else reason_codes.ACTUAL_STAT_BELOW_LINE,
+                reason_message='Team won game' if won else 'Team lost game',
+                explanation_reason='event resolved',
+            )
 
         if leg.market_type == 'spread':
             if not leg.team or leg.line is None:
-                return GradedLeg(leg=leg, settlement='unmatched', reason='Missing team or line for spread settlement', explanation_reason='stat unavailable', **base_kwargs)
+                return explained(settlement='unmatched', reason='Missing team or line for spread settlement', reason_code=reason_codes.MISSING_SETTLEMENT_INPUTS, reason_message='Missing team or line for spread settlement', explanation_reason='stat unavailable')
             margin = team_result.team_margin(leg.team)
             covered_value = margin + leg.line
             if covered_value == 0:
-                return GradedLeg(leg=leg, settlement='push', actual_value=float(margin), reason=f'{leg.team} margin {margin} landed exactly on spread {leg.line}', explanation_reason='event resolved', **base_kwargs)
+                return explained(settlement='push', actual_value=float(margin), reason=f'{leg.team} margin {margin} landed exactly on spread {leg.line}', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{margin} landed exactly on spread {leg.line}', explanation_reason='event resolved')
             won = covered_value > 0
-            return GradedLeg(leg=leg, settlement='win' if won else 'loss', actual_value=float(margin), reason=f'{leg.team} margin {margin} vs spread {leg.line} in {team_result.event.label}', explanation_reason='event resolved', **base_kwargs)
+            return explained(settlement='win' if won else 'loss', actual_value=float(margin), reason=f'{leg.team} margin {margin} vs spread {leg.line} in {team_result.event.label}', reason_code=reason_codes.ACTUAL_STAT_ABOVE_LINE if won else reason_codes.ACTUAL_STAT_BELOW_LINE, reason_message=f'{margin} vs spread {leg.line}', explanation_reason='event resolved')
 
         if leg.market_type == 'game_total':
             if leg.line is None or leg.direction is None:
-                return GradedLeg(leg=leg, settlement='unmatched', reason='Missing total line or direction', explanation_reason='stat unavailable', **base_kwargs)
+                return explained(settlement='unmatched', reason='Missing total line or direction', reason_code=reason_codes.MISSING_SETTLEMENT_INPUTS, reason_message='Missing total line or direction', explanation_reason='stat unavailable')
             total_points = team_result.total_points
             if total_points == leg.line:
-                return GradedLeg(leg=leg, settlement='push', actual_value=float(total_points), reason='Game total landed exactly on line', explanation_reason='event resolved', **base_kwargs)
+                return explained(settlement='push', actual_value=float(total_points), reason='Game total landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{total_points} landed exactly on line {leg.line}', explanation_reason='event resolved')
             won = total_points > leg.line if leg.direction == 'over' else total_points < leg.line
-            return GradedLeg(leg=leg, settlement='win' if won else 'loss', actual_value=float(total_points), reason=f'Game total {total_points} vs {leg.direction} {leg.line} in {team_result.event.label}', explanation_reason='event resolved', **base_kwargs)
+            comparator = 'above' if total_points > leg.line else 'below'
+            return explained(settlement='win' if won else 'loss', actual_value=float(total_points), reason=f'Game total {total_points} vs {leg.direction} {leg.line} in {team_result.event.label}', reason_code=reason_codes.ACTUAL_STAT_ABOVE_LINE if comparator == 'above' else reason_codes.ACTUAL_STAT_BELOW_LINE, reason_message=f'{total_points} is {comparator} {leg.line}', explanation_reason='event resolved')
 
     if not leg.player:
-        return GradedLeg(leg=leg, settlement='unmatched', reason='No player identified', explanation_reason='player identity ambiguous', **base_kwargs)
+        return explained(settlement='unmatched', reason='No player identified', reason_code=reason_codes.NO_PLAYER_IDENTIFIED, reason_message='No player identified', explanation_reason='player identity ambiguous')
 
     event_info = _event_info_for_leg(leg, provider)
     validation = validate_player_event_match(leg.player, event_info, leg.resolved_team, provider, event_id=leg.event_id)
@@ -241,14 +309,10 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         base_kwargs['resolution_confidence'] = min(float(leg.resolution_confidence or 1.0), 0.3)
         base_kwargs['validation_warnings'] = list(validation.warnings)
     if not validation.is_valid:
-        return GradedLeg(
-            leg=leg,
-            settlement='unmatched',
-            reason='Impossible player/event match rejected',
-            explanation_reason='Leg marked void/review instead of graded',
-            review_reason='; '.join(validation.warnings),
-            **base_kwargs,
-        )
+        code = reason_codes.MATCHED_EVENT_TEAM_MISMATCH
+        if any('not on either roster' in warning.lower() for warning in validation.warnings):
+            code = reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER
+        return explained(settlement='unmatched', reason='Impossible player/event match rejected', reason_code=code, reason_message='; '.join(validation.warnings), review_reason='; '.join(validation.warnings), explanation_reason='Leg marked void/review instead of graded')
 
     matched_boxscore_player_name = None
     detail_lookup = getattr(provider, 'get_player_result_details', None)
@@ -272,11 +336,11 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         if actual_value is None and component_values_dict:
             actual_value = float(sum(component_values_dict.values()))
     if leg.line is None or leg.direction is None:
-        return GradedLeg(leg=leg, settlement='unmatched', reason='Missing values required for settlement', explanation_reason='stat unavailable', component_values=component_values_dict, **base_kwargs)
+        return explained(settlement='unmatched', reason='Missing values required for settlement', reason_code=reason_codes.MISSING_SETTLEMENT_INPUTS, reason_message='Missing values required for settlement', explanation_reason='stat unavailable', component_values=component_values_dict)
     if actual_value is None:
         status = _event_status(provider, leg.event_id)
         if status == 'live':
-            return GradedLeg(leg=leg, settlement='pending', reason='Game is in progress', explanation_reason='event unresolved', component_values=component_values_dict, **base_kwargs)
+            return explained(settlement='pending', reason='Game is in progress', reason_code=reason_codes.EVENT_UNRESOLVED, reason_message='Game is in progress', explanation_reason='event unresolved', component_values=component_values_dict)
         did_appear_fn = getattr(provider, 'did_player_appear', None)
         appeared = None
         if callable(did_appear_fn):
@@ -290,34 +354,38 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
                 dnp_mode = _dnp_settlement_mode(provider)
                 dnp_warnings = ['Player did not appear in box score', 'Leg marked void/review instead of graded']
                 dnp_kwargs = {**base_kwargs, 'validation_warnings': dnp_warnings}
+                base_kwargs.update(dnp_kwargs)
                 if dnp_mode == 'NEEDS_REVIEW':
-                    return GradedLeg(leg=leg, settlement='unmatched', reason=f'{leg.player} did not appear in box score (DNP)', explanation_reason='Leg marked void/review instead of graded', review_reason='Player did not appear in box score', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name, **dnp_kwargs)
-                return GradedLeg(leg=leg, settlement='void', reason=f'{leg.player} did not appear in box score (DNP)', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name, **dnp_kwargs)
-        return GradedLeg(leg=leg, settlement='unmatched', reason='Matched event but no stat result', explanation_reason='Matched event but no stat result', player_found_in_boxscore=appeared, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name, **base_kwargs)
+                    return explained(settlement='unmatched', reason=f'{leg.player} did not appear in box score (DNP)', reason_code=reason_codes.DNP_REVIEW_REQUIRED, reason_message='Player did not appear in box score', review_reason='Player did not appear in box score', explanation_reason='Leg marked void/review instead of graded', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name)
+                return explained(settlement='void', reason=f'{leg.player} did not appear in box score (DNP)', reason_code=reason_codes.PLAYER_DID_NOT_PLAY, reason_message='Player did not appear in box score', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name)
+        return explained(settlement='unmatched', reason='Matched event but no stat result', reason_code=reason_codes.MISSING_STAT_SOURCE, reason_message='Matched event but no stat result', explanation_reason='Matched event but no stat result', player_found_in_boxscore=appeared, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name)
 
     if leg.direction == 'over':
         won = actual_value > leg.line
         if actual_value == leg.line:
-            return GradedLeg(leg=leg, settlement='push', actual_value=actual_value, reason='Landed exactly on line', explanation_reason='event resolved', component_values=component_values_dict, **base_kwargs)
+            return explained(settlement='push', actual_value=float(actual_value), reason='Landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{actual_value} landed exactly on {leg.line}', explanation_reason='event resolved', component_values=component_values_dict)
+        reason_code = reason_codes.ACTUAL_STAT_ABOVE_LINE if won else reason_codes.ACTUAL_STAT_BELOW_LINE
+        comparison = 'above' if won else 'below'
+        readable = f'{actual_value} is {comparison} {leg.line}'
     else:
         won = actual_value < leg.line
         if actual_value == leg.line:
-            return GradedLeg(leg=leg, settlement='push', actual_value=actual_value, reason='Landed exactly on line', explanation_reason='event resolved', component_values=component_values_dict, **base_kwargs)
+            return explained(settlement='push', actual_value=float(actual_value), reason='Landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{actual_value} landed exactly on {leg.line}', explanation_reason='event resolved', component_values=component_values_dict)
+        reason_code = reason_codes.ACTUAL_STAT_BELOW_LINE if won else reason_codes.ACTUAL_STAT_ABOVE_LINE
+        comparison = 'below' if won else 'above'
+        readable = f'{actual_value} is {comparison} {leg.line}'
 
-    return GradedLeg(
-        leg=leg,
+    return explained(
         settlement='win' if won else 'loss',
         actual_value=float(actual_value),
         reason=f'{leg.player} in {leg.event_label}: actual {actual_value} vs line {leg.line}',
+        reason_code=reason_code,
+        reason_message=readable,
         explanation_reason='event resolved',
         component_values=component_values_dict,
         matched_boxscore_player_name=matched_boxscore_player_name or leg.resolved_player_name or leg.player,
         player_found_in_boxscore=True,
-        **base_kwargs,
     )
-
-
-
 def grade_text(
     text: str,
     provider: ResultsProvider | None = None,

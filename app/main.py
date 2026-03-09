@@ -1018,7 +1018,10 @@ Murray over 2.5 threes'></textarea>
           <div>Actual: ${item.actual_value ?? '—'}</div>
           ${componentRows}
           <div>Result: ${resultLabel[item.result]||String(item.result||'review')}</div>
-          <div>Reason: ${item.explanation_reason||'—'}</div>
+          <div>Identity: ${(item.identity_match_method||'—')} (${item.identity_match_confidence||'—'})</div>
+          <div>Selection: ${item.normalized_selection||'—'}</div>
+          <div>Reason code: ${item.settlement_reason_code||'—'}</div>
+          <div>Reason: ${item.settlement_reason||item.explanation_reason||'—'}</div>
           <div>Resolved player: ${item.resolved_player_name||'—'} (${item.resolved_player_id||'—'})</div>
           <div>Resolved team: ${item.resolved_team||'—'}</div>
           <div>Player in box score: ${boxscoreText}</div>
@@ -1193,6 +1196,11 @@ Murray over 2.5 threes'></textarea>
           player_found_in_boxscore:item.player_found_in_boxscore,
           notes:item.notes||item.leg?.notes||[],
           validation_warnings:item.validation_warnings||[],
+          identity_match_method:item.identity_match_method||item.leg?.identity_match_method||null,
+          identity_match_confidence:item.identity_match_confidence||item.leg?.identity_match_confidence||null,
+          normalized_selection:item.settlement_explanation?.normalized_selection||null,
+          settlement_reason_code:item.settlement_explanation?.settlement_reason_code||null,
+          settlement_reason:item.settlement_explanation?.settlement_reason||null,
         })),
         parlay_result:(body.result?.overall==='pending'?'still_live':(body.result?.overall||'needs_review')),
       };
@@ -1403,6 +1411,12 @@ def _process_public_check_text(
             'player_found_in_boxscore': item.player_found_in_boxscore,
             'validation_warnings': item.validation_warnings,
             'notes': item.leg.notes,
+            'identity_match_method': item.identity_match_method or item.leg.identity_match_method,
+            'identity_match_confidence': item.identity_match_confidence or item.leg.identity_match_confidence,
+            'settlement_explanation': item.settlement_explanation.model_dump() if item.settlement_explanation else None,
+            'normalized_selection': item.settlement_explanation.normalized_selection if item.settlement_explanation else None,
+            'settlement_reason_code': item.settlement_explanation.settlement_reason_code if item.settlement_explanation else None,
+            'settlement_reason': item.settlement_explanation.settlement_reason if item.settlement_explanation else None,
         })
 
     parlay_result = 'still_live' if graded.overall == 'pending' else graded.overall
@@ -2397,6 +2411,10 @@ async def ingest_screenshot_grade_and_save(
             'bookmaker_notes': parsed_slip.notes,
             'financial_notes': financials.notes,
             'parsed_screenshot': parsed_screenshot.model_dump(),
+            'settlement_explanations': [
+                leg.settlement_explanation.model_dump() if leg.settlement_explanation else None
+                for leg in result.legs
+            ],
         }),
         bookmaker=financials.bookmaker,
         stake_amount=financials.stake_amount,
