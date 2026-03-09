@@ -14,6 +14,9 @@ MarketType = Literal[
     "player_rebounds",
     "player_assists",
     "player_threes",
+    "player_steals",
+    "player_blocks",
+    "player_turnovers",
     "player_pra",
     "player_pr",
     "player_pa",
@@ -128,6 +131,9 @@ class SettlementExplanation(BaseModel):
     normalized_selection: Optional[str] = None
     line: Optional[float] = None
     actual_stat_value: Optional[float] = None
+    stat_components: list[str] = Field(default_factory=list)
+    component_values: dict[str, float] = Field(default_factory=dict)
+    computed_total: Optional[float] = None
     result: Settlement = 'unmatched'
     settlement_reason_code: str
     settlement_reason: str

@@ -6,30 +6,11 @@ from datetime import date, datetime
 from .models import GradeResponse, GradedLeg, Leg
 from .services import grade_reason_codes as reason_codes
 from .services.settlement_explainer import build_settlement_explanation, with_explanation
+from .services.market_registry import MARKET_REGISTRY, player_market_to_canonical
 from .providers.base import ResultsProvider
 from .providers.factory import get_results_provider
 from .event_matcher import resolve_leg_events
 from .parser import parse_text
-
-
-_SUPPORTED_NBA_MARKETS = {
-    'moneyline',
-    'player_points',
-    'player_assists',
-    'player_rebounds',
-    'player_threes',
-    'player_pra',
-    'player_pr',
-    'player_pa',
-    'player_ra',
-}
-
-_COMBO_COMPONENTS = {
-    'player_pra': ('player_points', 'player_rebounds', 'player_assists'),
-    'player_pr': ('player_points', 'player_rebounds'),
-    'player_pa': ('player_points', 'player_assists'),
-    'player_ra': ('player_rebounds', 'player_assists'),
-}
 
 
 _MARKET_LABELS = {
@@ -40,6 +21,9 @@ _MARKET_LABELS = {
     'player_rebounds': 'Rebounds',
     'player_assists': 'Assists',
     'player_threes': 'Threes Made',
+    'player_steals': 'Steals',
+    'player_blocks': 'Blocks',
+    'player_turnovers': 'Turnovers',
     'player_pra': 'PRA',
     'player_pr': 'PR',
     'player_pa': 'PA',
@@ -50,12 +34,16 @@ _MARKET_LABELS = {
     'player_hits': 'Hits',
 }
 
-_COMPONENT_LABELS = {
-    'player_points': 'Points',
-    'player_rebounds': 'Rebounds',
-    'player_assists': 'Assists',
-}
 
+_STAT_COMPONENT_TO_PLAYER_MARKET = {
+    'PTS': 'player_points',
+    'REB': 'player_rebounds',
+    'AST': 'player_assists',
+    '3PM': 'player_threes',
+    'STL': 'player_steals',
+    'BLK': 'player_blocks',
+    'TOV': 'player_turnovers',
+}
 
 @dataclass
 class ValidationResult:
@@ -245,6 +233,9 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             warnings=graded.validation_warnings,
             grading_confidence=graded.resolution_confidence,
             settlement_diagnostics=settlement_diagnostics,
+            stat_components=kwargs.get('stat_components'),
+            component_values=kwargs.get('component_values'),
+            computed_total=kwargs.get('computed_total'),
         )
         return with_explanation(graded, explanation)
 
@@ -281,7 +272,9 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             explanation_reason=reason,
         )
 
-    if leg.sport == 'NBA' and leg.market_type not in _SUPPORTED_NBA_MARKETS:
+    canonical_market = player_market_to_canonical(leg.market_type)
+
+    if leg.sport == 'NBA' and leg.market_type.startswith('player_') and canonical_market is None:
         return explained(
             settlement='unmatched',
             reason='Unsupported NBA bet type for ESPN-backed grading',
@@ -376,26 +369,36 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             matched_boxscore_player_name = details.get('matched_boxscore_player_name')
     if actual_value is None:
         actual_value = provider.get_player_result(leg.player, leg.market_type, event_id=leg.event_id)
-    settlement_diagnostics['stat_lookup_result'] = 'found' if actual_value is not None else 'missing'
     component_values_dict = None
-    if leg.market_type in _COMBO_COMPONENTS:
+    stat_components: list[str] | None = None
+    computed_total: float | None = None
+    market_entry = MARKET_REGISTRY.get(canonical_market) if canonical_market else None
+    if market_entry and market_entry['market_type'] == 'combo_stat':
         component_values_dict = {}
-        for component_market in _COMBO_COMPONENTS[leg.market_type]:
-            component_value = provider.get_player_result(leg.player, component_market, event_id=leg.event_id)
+        stat_components = list(market_entry['stat_components'])
+        for component in stat_components:
+            lookup_market = _STAT_COMPONENT_TO_PLAYER_MARKET.get(component)
+            if not lookup_market:
+                component_values_dict = None
+                break
+            component_value = provider.get_player_result(leg.player, lookup_market, event_id=leg.event_id)
             if component_value is None:
                 component_values_dict = None
                 break
-            component_values_dict[_COMPONENT_LABELS.get(component_market, component_market)] = float(component_value)
-        if actual_value is None and component_values_dict:
-            actual_value = float(sum(component_values_dict.values()))
+            component_values_dict[component] = float(component_value)
+        if component_values_dict:
+            computed_total = float(sum(component_values_dict.values()))
+            actual_value = computed_total
+
+    settlement_diagnostics['stat_lookup_result'] = 'found' if actual_value is not None else 'missing'
     if leg.line is None or leg.direction is None:
-        return explained(settlement='unmatched', reason='Missing values required for settlement', reason_code=reason_codes.MISSING_SETTLEMENT_INPUTS, reason_message='Missing values required for settlement', explanation_reason='stat unavailable', component_values=component_values_dict)
+        return explained(settlement='unmatched', reason='Missing values required for settlement', reason_code=reason_codes.MISSING_SETTLEMENT_INPUTS, reason_message='Missing values required for settlement', explanation_reason='stat unavailable', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
     if actual_value is None:
         status = _event_status(provider, leg.event_id)
         if status == 'live':
             settlement_diagnostics['settlement_failure_reason'] = 'event not final'
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_NOT_FINAL
-            return explained(settlement='pending', reason='Game is in progress', reason_code=reason_codes.EVENT_UNRESOLVED, reason_message='Game is in progress', explanation_reason='event unresolved', component_values=component_values_dict)
+            return explained(settlement='pending', reason='Game is in progress', reason_code=reason_codes.EVENT_UNRESOLVED, reason_message='Game is in progress', explanation_reason='event unresolved', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
         did_appear_fn = getattr(provider, 'did_player_appear', None)
         appeared = None
         if callable(did_appear_fn):
@@ -413,29 +416,33 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
                 if dnp_mode == 'NEEDS_REVIEW':
                     settlement_diagnostics['settlement_failure_reason'] = 'player did not play'
                     settlement_diagnostics['unmatched_reason_code'] = reason_codes.PLAYER_DID_NOT_PLAY
-                    return explained(settlement='unmatched', reason=f'{leg.player} did not appear in box score (DNP)', reason_code=reason_codes.DNP_REVIEW_REQUIRED, reason_message='Player did not appear in box score', review_reason='Player did not appear in box score', explanation_reason='Leg marked void/review instead of graded', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name)
+                    return explained(settlement='unmatched', reason=f'{leg.player} did not appear in box score (DNP)', reason_code=reason_codes.DNP_REVIEW_REQUIRED, reason_message='Player did not appear in box score', review_reason='Player did not appear in box score', explanation_reason='Leg marked void/review instead of graded', player_found_in_boxscore=False, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
                 settlement_diagnostics['settlement_failure_reason'] = 'player did not play'
                 settlement_diagnostics['unmatched_reason_code'] = reason_codes.PLAYER_DID_NOT_PLAY
-                return explained(settlement='void', reason=f'{leg.player} did not appear in box score (DNP)', reason_code=reason_codes.PLAYER_DID_NOT_PLAY, reason_message='Player did not appear in box score', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name)
+                return explained(settlement='void', reason=f'{leg.player} did not appear in box score (DNP)', reason_code=reason_codes.PLAYER_DID_NOT_PLAY, reason_message='Player did not appear in box score', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
         settlement_diagnostics['settlement_failure_reason'] = 'stat not found'
         settlement_diagnostics['unmatched_reason_code'] = reason_codes.STAT_NOT_FOUND
-        return explained(settlement='unmatched', reason='Matched event but no stat result', reason_code=reason_codes.MISSING_STAT_SOURCE, reason_message='Matched event but no stat result', explanation_reason='Matched event but no stat result', player_found_in_boxscore=appeared, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name)
+        return explained(settlement='unmatched', reason='Matched event but no stat result', reason_code=reason_codes.MISSING_STAT_SOURCE, reason_message='Matched event but no stat result', explanation_reason='Matched event but no stat result', player_found_in_boxscore=appeared, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
 
     if leg.direction == 'over':
         won = actual_value > leg.line
         if actual_value == leg.line:
-            return explained(settlement='push', actual_value=float(actual_value), reason='Landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{actual_value} landed exactly on {leg.line}', explanation_reason='event resolved', component_values=component_values_dict)
+            return explained(settlement='push', actual_value=float(actual_value), reason='Landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{actual_value} landed exactly on {leg.line}', explanation_reason='event resolved', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
         reason_code = reason_codes.ACTUAL_STAT_ABOVE_LINE if won else reason_codes.ACTUAL_STAT_BELOW_LINE
         comparison = 'above' if won else 'below'
         readable = f'{actual_value} is {comparison} {leg.line}'
     else:
         won = actual_value < leg.line
         if actual_value == leg.line:
-            return explained(settlement='push', actual_value=float(actual_value), reason='Landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{actual_value} landed exactly on {leg.line}', explanation_reason='event resolved', component_values=component_values_dict)
+            return explained(settlement='push', actual_value=float(actual_value), reason='Landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{actual_value} landed exactly on {leg.line}', explanation_reason='event resolved', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
         reason_code = reason_codes.ACTUAL_STAT_BELOW_LINE if won else reason_codes.ACTUAL_STAT_ABOVE_LINE
         comparison = 'below' if won else 'above'
         readable = f'{actual_value} is {comparison} {leg.line}'
 
+
+    if market_entry and market_entry['market_type'] == 'combo_stat' and component_values_dict:
+        breakdown = ' + '.join(f"{key} {value:g}" for key, value in component_values_dict.items())
+        readable = f"{actual_value:g} {market_entry['display_name']} is {comparison} {leg.line} ({breakdown})"
     settlement_diagnostics['stat_extraction_worked'] = True
     return explained(
         settlement='win' if won else 'loss',
@@ -445,6 +452,8 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         reason_message=readable,
         explanation_reason='event resolved',
         component_values=component_values_dict,
+        stat_components=stat_components,
+        computed_total=computed_total,
         matched_boxscore_player_name=matched_boxscore_player_name or leg.resolved_player_name or leg.player,
         player_found_in_boxscore=True,
     )
