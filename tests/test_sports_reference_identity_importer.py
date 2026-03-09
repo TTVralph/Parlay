@@ -150,6 +150,43 @@ def test_refresh_supports_flat_athletes_roster_shape(monkeypatch, tmp_path) -> N
     assert result['validation_report']['players_from_roster_pages'] == 3
 
 
+
+
+def test_refresh_follows_team_and_athlete_reference_links(monkeypatch, tmp_path) -> None:
+    from app import sports_reference_identity as mod
+
+    team_url = mod.ESPN_TEAM_URL_TEMPLATE.format(team_id='1')
+    roster_ref = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/1/athletes'
+    athlete_ref = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/athletes/123'
+
+    def _fake_fetch(url: str) -> dict[str, object]:
+        if url == mod.ESPN_TEAMS_URL:
+            return _teams_payload(['1'])
+        if url == mod.ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id='1'):
+            raise RuntimeError('missing roster endpoint')
+        if url == team_url:
+            return {'team': {'id': '1'}, 'links': [{'rel': ['athletes'], 'href': roster_ref}]}
+        if url == roster_ref:
+            return {'athletes': [{'$ref': athlete_ref}]}
+        if url == athlete_ref:
+            return {'id': '123', 'displayName': 'Linked Athlete'}
+        raise RuntimeError(url)
+
+    monkeypatch.setattr(mod.SportsReferenceFetcher, 'fetch_json', lambda self, url, *, context, use_cache=True: _fake_fetch(url))
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+    monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_TEAM_ROSTER_SIZE', 1)
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
+    monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
+
+    result = refresh_nba_identity_from_basketball_reference()
+    assert result['healthy'] is True
+    assert result['validation_report']['players_from_roster_pages'] == 1
+    players = __import__('json').loads((tmp_path / 'nba_players.json').read_text())
+    assert players[0]['full_name'] == 'Linked Athlete'
+
+
 def test_resolution_exposes_identity_metadata() -> None:
     result = resolve_player_identity('Nikola Jokic', sport='NBA')
     assert result.identity_source
