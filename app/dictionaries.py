@@ -13,6 +13,9 @@ TEAM_ALIASES = {
     'thunder': 'Oklahoma City Thunder',
     'mavericks': 'Dallas Mavericks',
     'mavs': 'Dallas Mavericks',
+    'rockets': 'Houston Rockets',
+    'heat': 'Miami Heat',
+    'pistons': 'Detroit Pistons',
 
     # NFL
     'kc': 'Kansas City Chiefs',
@@ -49,6 +52,11 @@ PLAYER_ALIASES = {
     'curry': 'Stephen Curry',
     'sga': 'Shai Gilgeous-Alexander',
     'flagg': 'Cooper Flagg',
+    'draymond green': 'Draymond Green',
+    'amen thompson': 'Amen Thompson',
+    'bam adebayo': 'Bam Adebayo',
+    'cade cunningham': 'Cade Cunningham',
+    'desmond bane': 'Desmond Bane',
 
     # NFL
     'mahomes': 'Patrick Mahomes',
@@ -109,6 +117,9 @@ TEAM_SPORTS = {
     'Golden State Warriors': 'NBA',
     'Oklahoma City Thunder': 'NBA',
     'Dallas Mavericks': 'NBA',
+    'Houston Rockets': 'NBA',
+    'Miami Heat': 'NBA',
+    'Detroit Pistons': 'NBA',
     'Kansas City Chiefs': 'NFL',
     'Buffalo Bills': 'NFL',
     'San Francisco 49ers': 'NFL',
@@ -127,6 +138,11 @@ PLAYER_SPORTS = {
     'Stephen Curry': 'NBA',
     'Shai Gilgeous-Alexander': 'NBA',
     'Cooper Flagg': 'NBA',
+    'Draymond Green': 'NBA',
+    'Amen Thompson': 'NBA',
+    'Bam Adebayo': 'NBA',
+    'Cade Cunningham': 'NBA',
+    'Desmond Bane': 'NBA',
     'Patrick Mahomes': 'NFL',
     'Josh Allen': 'NFL',
     'Christian McCaffrey': 'NFL',

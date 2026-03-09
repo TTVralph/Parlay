@@ -109,3 +109,26 @@ def test_missing_bet_date_produces_helpful_review_reason() -> None:
 def test_bet_date_autoselects_single_team_game() -> None:
     result = grade_text('Jamal Murray over 2.5 threes', posted_at=datetime.fromisoformat('2026-03-09T00:00:00'))
     assert result.legs[0].leg.event_id == 'nba-2026-03-09-okc-den'
+
+
+class _MatchedBoxScoreProvider:
+    def resolve_player_event(self, player: str, as_of):
+        from app.providers.base import EventInfo
+        return EventInfo(event_id='evt-2', sport='NBA', home_team='Golden State Warriors', away_team='Boston Celtics', start_time=datetime.utcnow())
+
+    def get_player_result_details(self, player: str, market_type: str, event_id=None):
+        return {'actual_value': 6.0, 'matched_boxscore_player_name': 'Draymond Green'}
+
+    def get_player_result(self, player: str, market_type: str, event_id=None):
+        return 6.0
+
+    def get_event_status(self, event_id: str):
+        return 'final'
+
+
+def test_grading_includes_matched_boxscore_player_name() -> None:
+    result = grade_text('Draymond Green over 4.5 assists', provider=_MatchedBoxScoreProvider())
+    leg = result.legs[0]
+    assert leg.settlement == 'win'
+    assert leg.matched_boxscore_player_name == 'Draymond Green'
+    assert leg.player_found_in_boxscore is True

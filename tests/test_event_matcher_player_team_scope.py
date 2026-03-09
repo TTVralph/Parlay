@@ -149,7 +149,7 @@ def test_amen_thompson_team_filtering_excludes_unrelated_games() -> None:
     assert resolved[0].event_candidates == []
 
 
-def test_unresolved_player_team_goes_to_review_without_random_games() -> None:
+def test_cade_cunningham_resolves_team_even_when_event_unavailable() -> None:
     provider = TeamScopedPlayerProvider()
     leg = Leg(
         raw_text='Cade Cunningham over 24.5 points',
@@ -165,7 +165,7 @@ def test_unresolved_player_team_goes_to_review_without_random_games() -> None:
 
     assert resolved[0].event_id is None
     assert resolved[0].event_candidates == []
-    assert 'Player team could not be resolved' in resolved[0].notes
+    assert resolved[0].resolved_team == 'Detroit Pistons'
 
 
 def test_zero_team_games_on_selected_date_returns_specific_reason() -> None:

@@ -64,6 +64,11 @@ def _base_leg_kwargs(leg: Leg) -> dict:
         'resolved_player_name': leg.resolved_player_name,
         'resolved_team': leg.resolved_team,
         'selected_bet_date': leg.selected_bet_date,
+        'parsed_player_name': leg.parsed_player_name,
+        'normalized_stat_type': leg.normalized_stat_type or _MARKET_LABELS.get(leg.market_type, leg.market_type),
+        'resolved_player_id': leg.resolved_player_id,
+        'resolution_confidence': leg.resolution_confidence,
+        'parse_confidence': leg.parse_confidence or leg.confidence,
     }
 
 
@@ -82,21 +87,25 @@ def _review_reason_from_notes(leg: Leg) -> str:
     lowered_notes = [note.lower() for note in leg.notes]
     if any('missing bet date' in note for note in lowered_notes):
         return 'missing bet date'
+    if any('could not parse stat type' in note for note in lowered_notes):
+        return 'Could not parse stat type'
     if any('player team could not be resolved' in note for note in lowered_notes):
-        return 'player team could not be resolved'
+        return 'Could not resolve player team'
     if any("no game found for player's team on selected date" in note for note in lowered_notes):
         return "no team game found on selected date"
     if any('multiple valid games remain after filtering' in note for note in lowered_notes):
         return 'multiple valid games remain after filtering'
     if len(leg.event_candidates) > 1:
         return 'Multiple possible games. Add bet date to narrow results.'
+    if any('could not confidently resolve event/date for this leg' in note for note in lowered_notes):
+        return 'Could not resolve NBA player'
     return 'event unresolved'
 
 
 def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     base_kwargs = _base_leg_kwargs(leg)
     if leg.confidence < 0.75:
-        return GradedLeg(leg=leg, settlement='unmatched', reason='Low-confidence parse; send to manual review', explanation_reason='Low-confidence parse; send to manual review', review_reason='low-confidence parse', **base_kwargs)
+        return GradedLeg(leg=leg, settlement='unmatched', reason='Could not parse stat type', explanation_reason='Could not parse stat type', review_reason='Could not parse stat type', **base_kwargs)
 
     if not leg.event_id:
         reason = _review_reason_from_notes(leg)
@@ -148,7 +157,16 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     if not leg.player:
         return GradedLeg(leg=leg, settlement='unmatched', reason='No player identified', explanation_reason='player identity ambiguous', **base_kwargs)
 
-    actual_value = provider.get_player_result(leg.player, leg.market_type, event_id=leg.event_id)
+    matched_boxscore_player_name = None
+    detail_lookup = getattr(provider, 'get_player_result_details', None)
+    actual_value = None
+    if callable(detail_lookup):
+        details = detail_lookup(leg.player, leg.market_type, event_id=leg.event_id)
+        if details:
+            actual_value = details.get('actual_value')
+            matched_boxscore_player_name = details.get('matched_boxscore_player_name')
+    if actual_value is None:
+        actual_value = provider.get_player_result(leg.player, leg.market_type, event_id=leg.event_id)
     component_values_dict = None
     if leg.market_type in _COMBO_COMPONENTS:
         component_values_dict = {}
@@ -176,8 +194,8 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             except Exception:
                 appeared = None
             if appeared is False:
-                return GradedLeg(leg=leg, settlement='void', reason=f'{leg.player} did not appear in box score (DNP)', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, **base_kwargs)
-        return GradedLeg(leg=leg, settlement='unmatched', reason='Could not verify player stat from trusted data source', explanation_reason='stat unavailable', player_found_in_boxscore=appeared, component_values=component_values_dict, **base_kwargs)
+                return GradedLeg(leg=leg, settlement='void', reason=f'{leg.player} did not appear in box score (DNP)', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name, **base_kwargs)
+        return GradedLeg(leg=leg, settlement='unmatched', reason='Matched event but player not found in box score', explanation_reason='Matched event but player not found in box score', player_found_in_boxscore=appeared, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name, **base_kwargs)
 
     if leg.direction == 'over':
         won = actual_value > leg.line
@@ -195,6 +213,8 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         reason=f'{leg.player} in {leg.event_label}: actual {actual_value} vs line {leg.line}',
         explanation_reason='event resolved',
         component_values=component_values_dict,
+        matched_boxscore_player_name=matched_boxscore_player_name or leg.resolved_player_name or leg.player,
+        player_found_in_boxscore=True,
         **base_kwargs,
     )
 

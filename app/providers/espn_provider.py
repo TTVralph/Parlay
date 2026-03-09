@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from .base import EventInfo, ResultsProvider, TeamResult
+from ..player_identity import resolve_player_resolution
 
 
 _SUPPORTED_PLAYER_MARKETS = {
@@ -216,10 +217,10 @@ class ESPNNBAResultsProvider(ResultsProvider):
 
 
     def _player_team_from_summary(self, summary: dict[str, Any], player: str) -> str | None:
-        resolved_player_name = self._resolve_player_name(summary, player)
-        if not resolved_player_name:
+        entry = self._resolve_player_entry(summary, player)
+        if not entry:
             return None
-        target = self._norm(resolved_player_name)
+        target = self._norm(entry['display_name'])
         team_matches: dict[str, str] = {}
         for team_block in (summary.get('boxscore') or {}).get('players') or []:
             team_meta = team_block.get('team') or {}
@@ -318,21 +319,31 @@ class ESPNNBAResultsProvider(ResultsProvider):
             away_score=away_score,
         )
 
-    def _resolve_player_name(self, summary: dict[str, Any], player: str) -> str | None:
-        matches: dict[str, str] = {}
+
+    def _resolve_player_entry(self, summary: dict[str, Any], player: str) -> dict[str, str] | None:
+        target_resolution = resolve_player_resolution(player)
+        target_id = target_resolution.resolved_player_id if target_resolution else None
+        target_name = target_resolution.resolved_player_name if target_resolution else player
+        matches: list[dict[str, str]] = []
         for team_block in (summary.get('boxscore') or {}).get('players') or []:
             for stat_block in team_block.get('statistics') or []:
                 for athlete in stat_block.get('athletes') or []:
                     athlete_obj = athlete.get('athlete') or {}
-                    athlete_id = str(athlete_obj.get('id') or '')
+                    athlete_id = str(athlete_obj.get('id') or '').strip()
                     display_name = str(athlete_obj.get('displayName') or '').strip()
                     if not display_name:
                         continue
-                    if self._person_name_matches(player, display_name):
-                        matches[athlete_id or self._norm(display_name)] = display_name
+                    if target_id and athlete_id and athlete_id == target_id:
+                        return {'athlete_id': athlete_id, 'display_name': display_name}
+                    if self._person_name_matches(target_name, display_name):
+                        matches.append({'athlete_id': athlete_id, 'display_name': display_name})
         if len(matches) == 1:
-            return next(iter(matches.values()))
+            return matches[0]
         return None
+
+    def _resolve_player_name(self, summary: dict[str, Any], player: str) -> str | None:
+        entry = self._resolve_player_entry(summary, player)
+        return entry['display_name'] if entry else None
 
     def did_player_appear(self, player: str, event_id: str | None = None) -> bool | None:
         if not event_id:
@@ -373,10 +384,10 @@ class ESPNNBAResultsProvider(ResultsProvider):
         summary = self._summary(event_id)
         if not summary:
             return None
-        resolved_player_name = self._resolve_player_name(summary, player)
-        if not resolved_player_name:
+        entry = self._resolve_player_entry(summary, player)
+        if not entry:
             return None
-        target = self._norm(resolved_player_name)
+        target = self._norm(entry['display_name'])
 
         for team_block in (summary.get('boxscore') or {}).get('players') or []:
             for stat_block in team_block.get('statistics') or []:
@@ -397,6 +408,24 @@ class ESPNNBAResultsProvider(ResultsProvider):
                         return None
                     return self._parse_stat_value(stats[idx], market_type)
         return None
+
+    def get_player_result_details(self, player: str, market_type: str, event_id: str | None = None) -> dict[str, Any] | None:
+        if not event_id:
+            return None
+        status = self.get_event_status(event_id)
+        if status != 'final':
+            return None
+        summary = self._summary(event_id)
+        if not summary:
+            return None
+        entry = self._resolve_player_entry(summary, player)
+        actual_value = self._extract_player_stat(event_id, player, market_type)
+        if actual_value is None:
+            return None
+        return {
+            'actual_value': float(actual_value),
+            'matched_boxscore_player_name': entry['display_name'] if entry else None,
+        }
 
     def get_player_result(self, player: str, market_type: str, event_id: str | None = None) -> float | None:
         if not event_id:
