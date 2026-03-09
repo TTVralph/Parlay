@@ -225,6 +225,7 @@ def resolve_leg_events(
                 updates['resolution_ambiguity_reason'] = resolution.ambiguity_reason
                 if resolution.candidate_players:
                     updates['candidate_players'] = list(resolution.candidate_players)
+                    notes.append(f"diagnostic: closest_directory_matches={', '.join(resolution.candidate_players)}")
             player_lookup_name = str(updates.get('player', leg.player))
             resolved_player_name = player_lookup_name
             player_team = _resolve_player_team(provider, player_lookup_name, leg.sport, anchor, include_historical)

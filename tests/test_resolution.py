@@ -687,6 +687,12 @@ from app.player_identity import resolve_player_resolution
 
 def test_required_nba_players_resolve_with_team() -> None:
     expected = {
+        'Michael Porter Jr': 'Denver Nuggets',
+        'Josh Giddey': 'Chicago Bulls',
+        'Evan Mobley': 'Cleveland Cavaliers',
+        'Khris Middleton': 'Washington Wizards',
+        'Moussa Diabate': 'Charlotte Hornets',
+        'Pelle Larson': 'Miami Heat',
         'Draymond Green': 'Golden State Warriors',
         'Amen Thompson': 'Houston Rockets',
         'Bam Adebayo': 'Miami Heat',
