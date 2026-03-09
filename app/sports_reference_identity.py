@@ -15,6 +15,7 @@ from urllib import error, request
 SPORTS_REFERENCE_SITE = 'espn'
 ESPN_TEAMS_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams'
 ESPN_TEAM_ROSTER_URL_TEMPLATE = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{team_id}/roster'
+ESPN_TEAM_URL_TEMPLATE = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{team_id}'
 
 NBA_PLAYERS_CACHE_PATH = Path(__file__).resolve().parent.parent / 'data' / 'nba_players.json'
 NBA_TEAMS_CACHE_PATH = Path(__file__).resolve().parent.parent / 'data' / 'nba_teams.json'
@@ -166,6 +167,18 @@ class SportsReferenceFetcher:
 
         raise RuntimeError(f'Unable to fetch {url}')
 
+    def inspect_endpoint(self, url: str, *, context: str) -> tuple[int | None, str | None, str | None]:
+        req = request.Request(url, headers={'User-Agent': self.user_agent, 'Accept-Language': 'en-US,en;q=0.9'})
+        try:
+            with request.urlopen(req, timeout=self.request_timeout_seconds) as response:
+                body = response.read().decode('utf-8', errors='ignore')
+                return getattr(response, 'status', None), body[:500], None
+        except error.HTTPError as exc:
+            body = exc.read().decode('utf-8', errors='ignore') if hasattr(exc, 'read') else ''
+            return exc.code, body[:500], str(exc)
+        except Exception as exc:  # pragma: no cover - diagnostic path
+            return None, None, str(exc)
+
 
 def _canonical_player_id(player_id: str) -> str:
     return f'nba-espn-{player_id}'
@@ -206,8 +219,50 @@ def _parse_teams(payload: dict[str, object]) -> list[TeamIdentity]:
     return teams
 
 
-def _parse_team_roster(payload: dict[str, object], team: TeamIdentity) -> list[dict[str, str]]:
+def _maybe_absolute_espn_url(url: str) -> str:
+    cleaned = url.strip()
+    if not cleaned:
+        return ''
+    if cleaned.startswith('http://') or cleaned.startswith('https://'):
+        return cleaned
+    if cleaned.startswith('/'):
+        return f'https://site.api.espn.com{cleaned}'
+    return ''
+
+
+def _extract_roster_reference_urls(payload: object) -> list[str]:
+    urls: list[str] = []
+
+    def _walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in {'$ref', 'href', 'url'} and isinstance(value, str):
+                    candidate = _maybe_absolute_espn_url(value)
+                    if candidate and ('athletes' in candidate or 'roster' in candidate):
+                        urls.append(candidate)
+                elif key == 'link' and isinstance(value, dict):
+                    href = value.get('href')
+                    if isinstance(href, str):
+                        candidate = _maybe_absolute_espn_url(href)
+                        if candidate and ('athletes' in candidate or 'roster' in candidate):
+                            urls.append(candidate)
+                _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(payload)
+    return list(dict.fromkeys(urls))
+
+
+def _parse_team_roster(
+    payload: dict[str, object],
+    team: TeamIdentity,
+    *,
+    source_url: str,
+) -> tuple[list[dict[str, str]], list[str]]:
     rows: list[dict[str, str]] = []
+    reference_urls: list[str] = []
     athletes = payload.get('athletes', []) if isinstance(payload, dict) else []
     for athlete in athletes:
         if not isinstance(athlete, dict):
@@ -218,20 +273,134 @@ def _parse_team_roster(payload: dict[str, object], team: TeamIdentity) -> list[d
                 continue
             player_id = str(player.get('id') or '').strip()
             full_name = str(player.get('displayName') or player.get('fullName') or '').strip()
-            if not player_id or not full_name:
-                continue
+            if player_id and full_name:
+                rows.append(
+                    {
+                        'player_id': player_id,
+                        'full_name': full_name,
+                        'active_status': 'inactive' if str(player.get('status', {}).get('type', {}).get('name') or '').lower() == 'inactive' else 'active',
+                        'source_url': source_url,
+                        'current_team_name': team.full_team_name,
+                        'current_team_abbr': team.abbreviation,
+                        'team_id': team.canonical_team_id,
+                    }
+                )
+            reference_urls.extend(_extract_roster_reference_urls(player))
+        reference_urls.extend(_extract_roster_reference_urls(athlete))
+
+    if not rows:
+        for key in ('items', 'athlete', 'player'):
+            nested = payload.get(key)
+            if isinstance(nested, list):
+                for player in nested:
+                    if not isinstance(player, dict):
+                        continue
+                    player_id = str(player.get('id') or '').strip()
+                    full_name = str(player.get('displayName') or player.get('fullName') or '').strip()
+                    if player_id and full_name:
+                        rows.append(
+                            {
+                                'player_id': player_id,
+                                'full_name': full_name,
+                                'active_status': 'inactive' if str(player.get('status', {}).get('type', {}).get('name') or '').lower() == 'inactive' else 'active',
+                                'source_url': source_url,
+                                'current_team_name': team.full_team_name,
+                                'current_team_abbr': team.abbreviation,
+                                'team_id': team.canonical_team_id,
+                            }
+                        )
+
+    if not rows and isinstance(payload, dict):
+        player_id = str(payload.get('id') or '').strip()
+        full_name = str(payload.get('displayName') or payload.get('fullName') or '').strip()
+        if player_id and full_name:
             rows.append(
                 {
                     'player_id': player_id,
                     'full_name': full_name,
-                    'active_status': 'inactive' if str(player.get('status', {}).get('type', {}).get('name') or '').lower() == 'inactive' else 'active',
-                    'source_url': ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id=team.espn_team_id),
+                    'active_status': 'inactive' if str(payload.get('status', {}).get('type', {}).get('name') or '').lower() == 'inactive' else 'active',
+                    'source_url': source_url,
                     'current_team_name': team.full_team_name,
                     'current_team_abbr': team.abbreviation,
                     'team_id': team.canonical_team_id,
                 }
             )
-    return rows
+
+    reference_urls.extend(_extract_roster_reference_urls(payload))
+    return rows, list(dict.fromkeys(reference_urls))
+
+
+def _resolve_team_roster(
+    fetcher: SportsReferenceFetcher,
+    team: TeamIdentity,
+) -> tuple[list[dict[str, str]], str, list[str]]:
+    endpoints_tried: list[str] = []
+
+    def _follow_reference_chain(seed_urls: list[str]) -> tuple[list[dict[str, str]], str]:
+        pending = [url for url in seed_urls if url and url not in endpoints_tried]
+        while pending:
+            ref_url = pending.pop(0)
+            endpoints_tried.append(ref_url)
+            try:
+                ref_payload = fetcher.fetch_json(ref_url, context=f'team roster ref {team.espn_team_id}')
+            except Exception:
+                continue
+            parsed_ref, nested_refs = _parse_team_roster(ref_payload, team, source_url=ref_url)
+            if parsed_ref:
+                return parsed_ref, ref_url
+            for nested_ref in nested_refs:
+                if nested_ref and nested_ref not in endpoints_tried and nested_ref not in pending:
+                    pending.append(nested_ref)
+        return [], ''
+
+    roster_url = ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id=team.espn_team_id)
+    endpoints_tried.append(roster_url)
+    try:
+        roster_payload = fetcher.fetch_json(roster_url, context=f'team roster {team.espn_team_id}')
+        parsed, ref_urls = _parse_team_roster(roster_payload, team, source_url=roster_url)
+        if parsed:
+            return parsed, roster_url, endpoints_tried
+        parsed_from_refs, ref_endpoint = _follow_reference_chain(ref_urls)
+        if parsed_from_refs:
+            return parsed_from_refs, ref_endpoint, endpoints_tried
+    except Exception:
+        pass
+
+    team_url = ESPN_TEAM_URL_TEMPLATE.format(team_id=team.espn_team_id)
+    team_payload: dict[str, object] = {}
+    endpoints_tried.append(team_url)
+    try:
+        team_payload = fetcher.fetch_json(team_url, context=f'team details {team.espn_team_id}')
+        parsed, ref_urls = _parse_team_roster(team_payload, team, source_url=team_url)
+        if parsed:
+            return parsed, team_url, endpoints_tried
+        parsed_from_refs, ref_endpoint = _follow_reference_chain(ref_urls)
+        if parsed_from_refs:
+            return parsed_from_refs, ref_endpoint, endpoints_tried
+    except Exception:
+        pass
+
+    parsed_from_refs, ref_endpoint = _follow_reference_chain(_extract_roster_reference_urls(team_payload))
+    if parsed_from_refs:
+        return parsed_from_refs, ref_endpoint, endpoints_tried
+
+    return [], '', endpoints_tried
+
+
+def _log_sample_endpoint_inspection(fetcher: SportsReferenceFetcher, team: TeamIdentity) -> None:
+    for url in [
+        ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id=team.espn_team_id),
+        ESPN_TEAM_URL_TEMPLATE.format(team_id=team.espn_team_id),
+    ]:
+        status, preview, exc_text = fetcher.inspect_endpoint(url, context=f'endpoint inspection team {team.espn_team_id}')
+        logger.info(
+            'Endpoint inspection team=%s url=%s status=%s exception=%s preview=%s',
+            team.espn_team_id,
+            url,
+            status,
+            exc_text or '-',
+            (preview or '').replace('\n', ' ')[:500],
+        )
 
 
 def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False) -> dict[str, str | int | dict[str, object] | bool]:
@@ -244,21 +413,28 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
 
     teams_payload = fetcher.fetch_json(ESPN_TEAMS_URL, context='teams index')
     parsed_teams = _parse_teams(teams_payload)
+    if parsed_teams:
+        _log_sample_endpoint_inspection(fetcher, parsed_teams[0])
 
     for team in parsed_teams:
-        try:
-            roster_payload = fetcher.fetch_json(
-                ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id=team.espn_team_id),
-                context=f'team roster {team.espn_team_id}',
-            )
-            parsed_roster = _parse_team_roster(roster_payload, team)
-        except Exception:
+        parsed_roster, success_endpoint, tried_endpoints = _resolve_team_roster(fetcher, team)
+        if not parsed_roster:
             failed_team_ids.append(team.espn_team_id)
             roster_counts_by_team[team.abbreviation or team.full_team_name] = 0
+            logger.info(
+                'Team roster fetch team_id=%s endpoint=%s failure players=0',
+                team.espn_team_id,
+                tried_endpoints[-1] if tried_endpoints else '-',
+            )
             continue
 
         roster_counts_by_team[team.abbreviation or team.full_team_name] = len(parsed_roster)
-        logger.info('Roster %s: %s players parsed', team.abbreviation or team.full_team_name, len(parsed_roster))
+        logger.info(
+            'Team roster fetch team_id=%s endpoint=%s success players=%s',
+            team.espn_team_id,
+            success_endpoint,
+            len(parsed_roster),
+        )
         for row in parsed_roster:
             canonical_id = _canonical_player_id(row['player_id'])
             players_by_id[canonical_id] = {
