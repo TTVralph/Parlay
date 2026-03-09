@@ -949,6 +949,7 @@ Murray over 2.5 threes'></textarea>
             ? 'Unknown'
             : (item.player_found_in_boxscore ? 'Yes' : 'No'));
         detailsBody.innerHTML=`
+          <div>Sport: ${item.leg?.sport||item.sport||'—'}</div>
           <div>Parsed: ${item.parsed_player_name||item.parsed_player_or_team||'—'} / ${item.normalized_stat_type||item.normalized_market||'—'}</div>
           <div>Matched event: ${item.matched_event||'—'}</div>
           <div>Stat used: ${item.normalized_market||'—'}</div>
@@ -961,6 +962,9 @@ Murray over 2.5 threes'></textarea>
           <div>Resolved team: ${item.resolved_team||'—'}</div>
           <div>Player in box score: ${boxscoreText}</div>
           <div>Resolution confidence: ${item.resolution_confidence ?? '—'}</div>
+          <div>Resolution ambiguity: ${item.resolution_ambiguity_reason ?? '—'}</div>
+          <div>Candidate players: ${(item.candidate_players||[]).join(', ') || '—'}</div>
+          <div>Candidate events: ${(item.candidate_events||[]).map((e)=>e.event_label||e.event_id).join(', ') || '—'}</div>
           <div>Parse confidence: ${item.parse_confidence ?? '—'}</div>
           <div>Review reason: ${item.review_reason||'—'}</div>
         `;

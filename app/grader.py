@@ -69,6 +69,8 @@ def _base_leg_kwargs(leg: Leg) -> dict:
         'resolved_player_id': leg.resolved_player_id,
         'resolution_confidence': leg.resolution_confidence,
         'parse_confidence': leg.parse_confidence or leg.confidence,
+        'resolution_ambiguity_reason': leg.resolution_ambiguity_reason,
+        'candidate_players': leg.candidate_players,
     }
 
 
@@ -89,14 +91,18 @@ def _review_reason_from_notes(leg: Leg) -> str:
         return 'missing bet date'
     if any('could not parse stat type' in note for note in lowered_notes):
         return 'Could not parse stat type'
-    if any('player team could not be resolved' in note for note in lowered_notes):
-        return 'Could not resolve player team'
-    if any("no game found for player's team on selected date" in note for note in lowered_notes):
-        return "no team game found on selected date"
-    if any('multiple valid games remain after filtering' in note for note in lowered_notes):
-        return 'multiple valid games remain after filtering'
+    if any('player identity ambiguous' in note for note in lowered_notes):
+        return 'player identity ambiguous'
+    if any('player not found in sport directory' in note for note in lowered_notes):
+        return 'player not found in sport directory'
+    if any('team could not be resolved from player identity' in note for note in lowered_notes):
+        return 'team could not be resolved from player identity'
+    if any('no game found for resolved team on date' in note for note in lowered_notes):
+        return 'no game found for resolved team on date'
+    if any('multiple games found for resolved team on date' in note for note in lowered_notes):
+        return 'multiple games found for resolved team on date'
     if len(leg.event_candidates) > 1:
-        return 'Multiple possible games. Add bet date to narrow results.'
+        return 'multiple games found for resolved team on date'
     if any('could not confidently resolve event/date for this leg' in note for note in lowered_notes):
         return 'Could not resolve NBA player'
     return 'event unresolved'
