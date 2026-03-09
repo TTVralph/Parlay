@@ -252,21 +252,8 @@ def resolve_leg_events(
             candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
             notes.append(f'diagnostic: candidate_events_before_filtering={len(candidates)}')
             logger.debug('NBA prop candidate games before team filtering: player=%s candidates=%s', player_lookup_name, _event_ids(candidates))
-            if leg.sport == 'NBA' and not player_team:
-                if PLAYER_TEAM_UNRESOLVED_WARNING not in notes:
-                    notes.append(PLAYER_TEAM_UNRESOLVED_WARNING)
-                updates['notes'] = notes
-                updates['matched_by'] = None
-                updates['event_candidates'] = []
-                updates['parsed_player_name'] = leg.parsed_player_name or leg.player
-                updates['normalized_stat_type'] = leg.normalized_stat_type or leg.market_type
-                updates['resolved_player_name'] = resolved_player_name
-                updates['resolved_player_id'] = player_identity_id
-                updates['resolved_team'] = player_team
-                updates['selected_bet_date'] = explicit_slip_date.isoformat() if explicit_slip_date else None
-                resolved.append(leg.model_copy(update=updates))
-                logger.debug('NBA prop final selected game: player=%s selected=%s reason=%s', player_lookup_name, None, PLAYER_TEAM_UNRESOLVED_WARNING)
-                continue
+            if leg.sport == 'NBA' and not player_team and PLAYER_TEAM_UNRESOLVED_WARNING not in notes:
+                notes.append(PLAYER_TEAM_UNRESOLVED_WARNING)
 
             if player_team:
                 team_candidates = _team_candidates(provider, player_team, anchor, include_historical=include_historical)
