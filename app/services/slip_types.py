@@ -6,11 +6,14 @@ from dataclasses import dataclass, field
 @dataclass
 class ParsedSlipLeg:
     sport: str | None = None
+    raw_player_text: str | None = None
     player_name: str | None = None
     market: str | None = None
     line: float | None = None
     selection: str | None = None
     raw_text: str = ''
+    match_method: str | None = None
+    match_confidence: str | None = None
 
 
 @dataclass

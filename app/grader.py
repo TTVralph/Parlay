@@ -63,6 +63,9 @@ class ValidationResult:
 
 
 def _event_info_for_leg(leg: Leg, provider: ResultsProvider):
+    if leg.identity_match_confidence == 'LOW':
+        return GradedLeg(leg=leg, settlement='unmatched', reason='Low-confidence identity match requires review', explanation_reason='player identity ambiguous', review_reason='player identity ambiguous', **base_kwargs)
+
     if not leg.event_id:
         return None
     event_info_fn = getattr(provider, 'get_event_info', None)
@@ -128,6 +131,10 @@ def _base_leg_kwargs(leg: Leg) -> dict:
         'parse_confidence': leg.parse_confidence or leg.confidence,
         'resolution_ambiguity_reason': leg.resolution_ambiguity_reason,
         'candidate_players': leg.candidate_players,
+        'identity_source': leg.identity_source,
+        'identity_last_refreshed_at': leg.identity_last_refreshed_at,
+        'identity_match_method': leg.identity_match_method,
+        'identity_match_confidence': leg.identity_match_confidence,
     }
 
 
@@ -174,6 +181,9 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     base_kwargs['validation_warnings'] = []
     if leg.confidence < 0.75:
         return GradedLeg(leg=leg, settlement='unmatched', reason='Could not parse stat type', explanation_reason='Could not parse stat type', review_reason='Could not parse stat type', **base_kwargs)
+
+    if leg.identity_match_confidence == 'LOW':
+        return GradedLeg(leg=leg, settlement='unmatched', reason='Low-confidence identity match requires review', explanation_reason='player identity ambiguous', review_reason='player identity ambiguous', **base_kwargs)
 
     if not leg.event_id:
         reason = _review_reason_from_notes(leg)

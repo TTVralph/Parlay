@@ -62,6 +62,8 @@ class Leg(BaseModel):
     parse_confidence: Optional[float] = None
     identity_source: Optional[str] = None
     identity_last_refreshed_at: Optional[str] = None
+    identity_match_method: Optional[str] = None
+    identity_match_confidence: Optional[Literal['HIGH', 'MEDIUM', 'LOW']] = None
     resolved_team_hint: Optional[str] = None
 
 
@@ -106,6 +108,8 @@ class GradedLeg(BaseModel):
     parse_confidence: Optional[float] = None
     identity_source: Optional[str] = None
     identity_last_refreshed_at: Optional[str] = None
+    identity_match_method: Optional[str] = None
+    identity_match_confidence: Optional[Literal['HIGH', 'MEDIUM', 'LOW']] = None
     resolved_team_hint: Optional[str] = None
     validation_warnings: list[str] = Field(default_factory=list)
 
@@ -236,12 +240,15 @@ class XFetchRequest(BaseModel):
 
 class ParsedScreenshotLeg(BaseModel):
     raw_leg_text: str
+    raw_player_text: Optional[str] = None
     player_name: Optional[str] = None
     stat_type: Optional[str] = None
     line: Optional[float] = None
     direction: Optional[Direction] = None
     normalized_label: str
     confidence: Optional[float] = None
+    match_method: Optional[str] = None
+    match_confidence: Optional[Literal['HIGH', 'MEDIUM', 'LOW']] = None
 
 
 class ParsedScreenshotResponse(BaseModel):
