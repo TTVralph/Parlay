@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -84,6 +85,7 @@ _MARKET_VARIANTS = {
 _SPORTSBOOK_VARIANTS = {'prizepicks': 'prizepicks_like'}
 _SCREENSHOT_STATE_VARIANTS = {'in_progress': 'live'}
 _CONFIDENCE_VARIANTS = {'very high': 'high', 'strong': 'high', 'moderate': 'medium', 'uncertain': 'low', 'weak': 'low'}
+_LEG_LIST_KEYS = ('parsed_legs', 'players', 'bets', 'legs')
 
 
 class VisionSchemaValidationError(RuntimeError):
@@ -237,6 +239,7 @@ def _validate_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    source_legs = _extract_leg_rows(payload)
     normalized: dict[str, Any] = {
         'sportsbook': _normalize_sportsbook(payload.get('sportsbook')),
         'screenshot_state': _normalize_screenshot_state(payload.get('screenshot_state')),
@@ -244,10 +247,38 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         'warnings': _normalize_warnings(payload.get('warnings')),
         'parsed_legs': [],
     }
-    for leg in payload.get('parsed_legs', []):
+    for leg in source_legs:
         if isinstance(leg, dict):
-            normalized['parsed_legs'].append({'player_name': str(leg.get('player_name', '')), 'market': _normalize_market(leg.get('market')), 'line': _normalize_line(leg.get('line')), 'selection': _normalize_selection(leg.get('selection')), 'raw_text': str(leg.get('raw_text', ''))})
+            prop_parts = _parse_prop_text(leg.get('prop'))
+            normalized['parsed_legs'].append(
+                {
+                    'player_name': str(leg.get('player_name') or leg.get('name') or ''),
+                    'market': _normalize_market(leg.get('market') or prop_parts.get('market')),
+                    'line': _normalize_line(leg.get('line') or prop_parts.get('line')),
+                    'selection': _normalize_selection(leg.get('selection') or prop_parts.get('selection')),
+                    'raw_text': str(leg.get('raw_text') or leg.get('prop') or ''),
+                }
+            )
     return normalized
+
+
+def _extract_leg_rows(payload: dict[str, Any]) -> list[Any]:
+    for key in _LEG_LIST_KEYS:
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return rows
+    return []
+
+
+def _parse_prop_text(value: Any) -> dict[str, Any]:
+    text = str(value or '').strip()
+    if not text:
+        return {}
+    match = re.match(r'^(over|under)\s+([0-9]+(?:\.[0-9]+)?)\s+(.+)$', text, flags=re.IGNORECASE)
+    if not match:
+        return {}
+    selection, line, market = match.groups()
+    return {'selection': selection.lower(), 'line': line, 'market': market}
 
 
 def _normalize_market(value: Any) -> str:
