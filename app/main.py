@@ -1398,15 +1398,19 @@ def _process_public_check_text(
         }
 
     try:
-        graded = grade_text(
-            normalized,
-            provider=_public_check_provider,
-            posted_at=date_of_slip,
-            bet_date=bet_date,
-            include_historical=search_historical,
-            selected_event_id=selected_event_id,
-            selected_event_by_leg_id=selected_event_by_leg_id,
-        )
+        grade_kwargs: dict[str, object] = {
+            'provider': _public_check_provider,
+            'posted_at': date_of_slip,
+        }
+        if bet_date is not None:
+            grade_kwargs['bet_date'] = bet_date
+        if search_historical:
+            grade_kwargs['include_historical'] = True
+        if selected_event_id:
+            grade_kwargs['selected_event_id'] = selected_event_id
+        if selected_event_by_leg_id:
+            grade_kwargs['selected_event_by_leg_id'] = selected_event_by_leg_id
+        graded = grade_text(normalized, **grade_kwargs)
     except Exception:
         return {
             'ok': False,
@@ -1483,11 +1487,11 @@ def _process_public_check_text(
         'parlay_result': parlay_result,
     }
     if unmatched_count == len(legs):
-        out['message'] = 'Parsed legs were detected, but settlement failed during ESPN event/stat resolution. Please review diagnostics per leg.'
-        out['grading_warning'] = 'All legs need review: check event resolution, roster validation, and stat extraction diagnostics.'
+        out['message'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
+        out['grading_warning'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
     elif unmatched_count > 0:
         out['message'] = f'{unmatched_count} leg(s) need manual review.'
-        out['grading_warning'] = f'{unmatched_count} leg(s) were unresolved during event/stat settlement. See per-leg diagnostics.'
+        out['grading_warning'] = f'{unmatched_count} leg(s) need manual review.'
 
     if ambiguous_count > 0:
         out['grading_warning'] = 'This leg matches multiple possible games. Add opponent/date or upload the full slip.'
@@ -2440,7 +2444,7 @@ async def ingest_screenshot_grade(
     financials = extract_financials(parsed_screenshot.raw_text, bookmaker_hint=parsed_slip.bookmaker)
     parsed_bet_date = date.fromisoformat(bet_date) if bet_date else (date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None)
     grading_text = grading_text or parsed_slip.cleaned_text
-    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date)
+    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date, code_path='screenshot_parse_grading')
     return IngestGradeResponse(
         source_type='screenshot',
         source_ref=file.filename or 'upload',
@@ -2477,7 +2481,7 @@ async def ingest_screenshot_grade_and_save(
     financials = extract_financials(parsed_screenshot.raw_text, bookmaker_hint=parsed_slip.bookmaker)
     parsed_bet_date = date.fromisoformat(bet_date) if bet_date else (date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None)
     grading_text = grading_text or parsed_slip.cleaned_text
-    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date)
+    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date, code_path='saved_screenshot_grading')
     ticket = save_graded_ticket(
         db,
         grading_text,

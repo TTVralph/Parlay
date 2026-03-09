@@ -21,9 +21,8 @@ class SlipParserService:
             parsed = self._vision.parse(image_bytes=image_bytes, filename=filename)
             model_confidence = parsed.confidence
             for leg in parsed.parsed_legs:
-                leg.market = normalize_market(leg.market)
                 leg.selection = normalize_selection(leg.selection)
-            apply_confidence_and_warnings(parsed)
+            apply_confidence_and_warnings(parsed, code_path='screenshot_parse_primary')
             parsed.primary_parser_status = 'success'
             parsed.primary_confidence = model_confidence
             parsed.primary_warnings = list(parsed.warnings)
@@ -65,6 +64,9 @@ class SlipParserService:
             primary_debug_artifacts = None
 
         fallback = self._ocr_fallback.parse(image_bytes=image_bytes, filename=filename)
+        for leg in fallback.parsed_legs:
+            leg.selection = normalize_selection(leg.selection)
+        apply_confidence_and_warnings(fallback, code_path='screenshot_parse_fallback')
         fallback.primary_parser_status = 'failed' if primary_result is None else 'success_fallback_triggered'
         fallback.primary_failure_category = primary_failure_category or fallback_reason
         fallback.primary_provider_error = primary_provider_error

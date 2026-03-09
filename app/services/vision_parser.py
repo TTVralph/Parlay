@@ -14,6 +14,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .image_preprocessor import preprocess_screenshot
+from .market_registry import normalize_market as normalize_market_with_registry
 from .slip_types import ParsedSlip, ParsedSlipLeg
 from .vision_prompt_builder import build_vision_prompts
 
@@ -530,7 +531,11 @@ def _parse_prop_text(value: Any) -> dict[str, Any]:
 
 
 def _normalize_market(value: Any) -> str:
-    return _MARKET_VARIANTS.get(str(value or '').strip().lower(), str(value or '').strip().lower())
+    raw_market = str(value or '').strip().lower()
+    registry_normalized = normalize_market_with_registry(raw_market)
+    if registry_normalized:
+        return registry_normalized
+    return _MARKET_VARIANTS.get(raw_market, raw_market)
 
 
 def _normalize_selection(value: Any) -> str:

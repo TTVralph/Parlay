@@ -45,6 +45,17 @@ _STAT_COMPONENT_TO_PLAYER_MARKET = {
     'TOV': 'player_turnovers',
 }
 
+
+_STAT_COMPONENT_LABELS = {
+    'PTS': 'Points',
+    'REB': 'Rebounds',
+    'AST': 'Assists',
+    '3PM': 'Threes Made',
+    'STL': 'Steals',
+    'BLK': 'Blocks',
+    'TOV': 'Turnovers',
+}
+
 @dataclass
 class ValidationResult:
     is_valid: bool
@@ -197,7 +208,7 @@ def _review_reason_from_notes(leg: Leg) -> str:
     return 'event unresolved'
 
 
-def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
+def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_text_slip_grading') -> GradedLeg:
     base_kwargs = _base_leg_kwargs(leg)
     base_kwargs['validation_warnings'] = []
     settlement_diagnostics = _default_settlement_diagnostics(leg)
@@ -272,7 +283,15 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             explanation_reason=reason,
         )
 
+
     canonical_market = player_market_to_canonical(leg.market_type)
+    registry_entry = MARKET_REGISTRY.get(canonical_market) if canonical_market else None
+    settlement_diagnostics['market_normalization'] = {
+        'code_path': code_path,
+        'raw_market_text': leg.market_type,
+        'normalized_market': canonical_market,
+        'registry_entry_found': bool(registry_entry),
+    }
 
     if leg.sport == 'NBA' and leg.market_type.startswith('player_') and canonical_market is None:
         return explained(
@@ -372,7 +391,7 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     component_values_dict = None
     stat_components: list[str] | None = None
     computed_total: float | None = None
-    market_entry = MARKET_REGISTRY.get(canonical_market) if canonical_market else None
+    market_entry = registry_entry
     if market_entry and market_entry['market_type'] == 'combo_stat':
         component_values_dict = {}
         stat_components = list(market_entry['stat_components'])
@@ -385,7 +404,8 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             if component_value is None:
                 component_values_dict = None
                 break
-            component_values_dict[component] = float(component_value)
+            component_label = _STAT_COMPONENT_LABELS.get(component, component)
+            component_values_dict[component_label] = float(component_value)
         if component_values_dict:
             computed_total = float(sum(component_values_dict.values()))
             actual_value = computed_total
@@ -466,6 +486,7 @@ def grade_text(
     selected_event_id: str | None = None,
     selected_event_by_leg_id: dict[str, str] | None = None,
     bet_date: date | None = None,
+    code_path: str = 'manual_text_slip_grading',
 ) -> GradeResponse:
     provider = provider or get_results_provider()
     legs = parse_text(text)
@@ -489,7 +510,7 @@ def grade_text(
             selected_event_by_leg_id=selected_event_by_leg_id,
             bet_date=bet_date,
         )
-    graded = [settle_leg(leg, provider) for leg in resolved_legs]
+    graded = [settle_leg(leg, provider, code_path=code_path) for leg in resolved_legs]
 
     settlements = [item.settlement for item in graded]
     if any(settlement == 'loss' for settlement in settlements):

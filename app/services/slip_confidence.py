@@ -1,14 +1,10 @@
 from __future__ import annotations
 
+from .market_registry import MARKET_REGISTRY, normalize_market
 from .slip_types import ParsedSlip
 
-SUPPORTED_MARKETS = {
-    'points', 'rebounds', 'assists', 'threes',
-    'points + assists', 'points + rebounds', 'rebounds + assists', 'points + rebounds + assists',
-}
 
-
-def apply_confidence_and_warnings(parsed: ParsedSlip) -> None:
+def apply_confidence_and_warnings(parsed: ParsedSlip, *, code_path: str = 'screenshot_parse') -> None:
     warnings = list(parsed.warnings)
     if not parsed.parsed_legs:
         parsed.confidence = 'low'
@@ -23,8 +19,17 @@ def apply_confidence_and_warnings(parsed: ParsedSlip) -> None:
         if key in seen:
             warnings.append(f'duplicate legs -> warning: {leg.raw_text}')
         seen.add(key)
-        if leg.market and leg.market not in SUPPORTED_MARKETS:
-            warnings.append(f'unsupported market -> warning: {leg.market}')
+        if leg.market:
+            raw_market = leg.market
+            normalized_market = normalize_market(raw_market)
+            registry_hit = bool(normalized_market and MARKET_REGISTRY.get(normalized_market))
+            warnings.append(
+                f"market debug -> path={code_path}; raw={raw_market}; normalized={normalized_market or 'none'}; registry_hit={'yes' if registry_hit else 'no'}"
+            )
+            if normalized_market:
+                leg.market = normalized_market
+            if not registry_hit:
+                warnings.append(f'unsupported market -> warning: {raw_market}')
         if not leg.player_name or leg.line is None:
             has_missing = True
             warnings.append(f'missing player or line -> low confidence: {leg.raw_text}')
