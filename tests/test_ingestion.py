@@ -65,7 +65,7 @@ def test_screenshot_grade_returns_structured_parsed_output_and_autodetected_date
 
     captured = {}
 
-    def _fake_grade_text(text, posted_at=None, bet_date=None):
+    def _fake_grade_text(text, posted_at=None, bet_date=None, code_path=''):
         captured['text'] = text
         captured['bet_date'] = bet_date
         return {'overall': 'needs_review', 'legs': []}
@@ -85,3 +85,48 @@ def test_screenshot_grade_returns_structured_parsed_output_and_autodetected_date
     assert body['parsed_screenshot']['parsed_legs'][0]['direction'] == 'over'
     assert captured['text'].startswith('Draymond Green Over 4.5 Assists')
     assert str(captured['bet_date']) == '2026-03-06'
+
+
+def test_screenshot_grade_normalizes_pra_without_unsupported_warning(monkeypatch) -> None:
+    from app.services.slip_parser import SlipParserService
+    from app.services.slip_types import ParsedSlip, ParsedSlipLeg
+
+    class _VisionWithPRA:
+        def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip:
+            return ParsedSlip(
+                raw_text='Cooper Flagg Over 25.5 PRA',
+                parsed_legs=[
+                    ParsedSlipLeg(
+                        player_name='Cooper Flagg',
+                        market='PRA',
+                        line=25.5,
+                        selection='over',
+                        raw_text='Cooper Flagg Over 25.5 PRA',
+                    )
+                ],
+                confidence='high',
+                warnings=[],
+            )
+
+    class _UnusedFallback:
+        def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip:
+            return ParsedSlip(raw_text='', parsed_legs=[], confidence='low', warnings=[])
+
+    monkeypatch.setattr('app.main.slip_parser_service', SlipParserService(vision_parser=_VisionWithPRA(), ocr_fallback=_UnusedFallback()))
+    monkeypatch.setattr('app.main.grade_text', lambda text, posted_at=None, bet_date=None, code_path='': {'overall': 'needs_review', 'legs': []})
+
+    fake_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + b'0' * 32
+    response = client.post(
+        '/ingest/screenshot/grade',
+        files={'file': ('slip.png', io.BytesIO(fake_png), 'image/png')},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    warnings = body['parsed_screenshot']['parse_warnings']
+    assert all('unsupported market -> warning: pra' not in warning.lower() for warning in warnings)
+    market_debug = next(warning for warning in warnings if warning.startswith('market debug ->'))
+    assert 'path=screenshot_parse_primary' in market_debug
+    assert 'raw=PRA' in market_debug
+    assert 'normalized=pra' in market_debug
+    assert 'registry_hit=yes' in market_debug
