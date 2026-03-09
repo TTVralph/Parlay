@@ -210,6 +210,24 @@ class XFetchRequest(BaseModel):
     posted_at: Optional[datetime] = None
 
 
+
+
+class ParsedScreenshotLeg(BaseModel):
+    raw_leg_text: str
+    player_name: Optional[str] = None
+    stat_type: Optional[str] = None
+    line: Optional[float] = None
+    direction: Optional[Direction] = None
+    normalized_label: str
+    confidence: Optional[float] = None
+
+
+class ParsedScreenshotResponse(BaseModel):
+    raw_text: str
+    parsed_legs: list[ParsedScreenshotLeg] = Field(default_factory=list)
+    detected_bet_date: Optional[str] = None
+    parse_warnings: list[str] = Field(default_factory=list)
+
 class OCRExtractResponse(BaseModel):
     filename: str
     raw_text: str
@@ -230,6 +248,7 @@ class IngestGradeResponse(BaseModel):
     to_win_amount: Optional[float] = None
     american_odds: Optional[int] = None
     decimal_odds: Optional[float] = None
+    parsed_screenshot: Optional[ParsedScreenshotResponse] = None
     result: GradeResponse
 
 

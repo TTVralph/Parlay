@@ -124,6 +124,7 @@ from .models import (
 from .ocr import get_ocr_provider
 from .ocr.providers import validate_image_upload
 from .parser import parse_text
+from .screenshot_parser import parse_screenshot_text
 from .odds_matcher import match_ticket_odds
 from .providers.allsports_client import AllSportsClient, AllSportsError
 from .providers.allsports_normalizer import (
@@ -1039,18 +1040,25 @@ Murray over 2.5 threes'></textarea>
     }
 
     function normalizeScreenshotPayload(body){
-      const parsedLegs=(body.result?.legs||[]).map((item)=>item.leg?.raw_text||'—');
+      const parsedFromScreenshot=body.parsed_screenshot||{};
+      const parsedLegObjects=parsedFromScreenshot.parsed_legs||[];
+      const parsedLegs=parsedLegObjects.map((item)=>item.normalized_label||item.raw_leg_text||'—');
       const allReview=parsedLegs.length>0&&(body.result?.legs||[]).every((item)=>item.settlement==='unmatched');
       const extracted=(body.extracted_text||'').trim();
-      const parseWarning=parsedLegs.length===0
-        ?(extracted
-          ?'OCR text was extracted but it was not parseable into bet legs. Try a clearer screenshot.'
-          :'No valid bet legs were detected from this input.')
-        :null;
+      const parseWarnings=parsedFromScreenshot.parse_warnings||[];
+      const parseWarning=parseWarnings.length
+        ?parseWarnings.join(' | ')
+        :(parsedLegs.length===0
+          ?(extracted
+            ?'OCR text was extracted but it was not parseable into bet legs. Try a clearer screenshot.'
+            :'No valid bet legs were detected from this input.')
+          :null);
       return {
         ok:true,
         extracted_text:body.extracted_text||'',
         parsed_legs:parsedLegs,
+        parsed_leg_objects:parsedLegObjects,
+        detected_bet_date:parsedFromScreenshot.detected_bet_date||null,
         parse_warning:parseWarning,
         grading_warning:allReview?'Parsed legs were detected, but ESPN matching could not settle any leg.':null,
         legs:(body.result?.legs||[]).map((item)=>({
@@ -1100,6 +1108,8 @@ Murray over 2.5 threes'></textarea>
           const body=await res.json();
           if(!res.ok){msg.textContent=body.detail||body.message||'Could not check this screenshot right now.';return;}
           data=normalizeScreenshotPayload(body);
+          if(data.parsed_legs&&data.parsed_legs.length){slip.value=data.parsed_legs.join('\n');}
+          if(!slipDate.value&&data.detected_bet_date){slipDate.value=data.detected_bet_date;}
         }else{
           const stakeRaw=(stakeAmount.value||'').trim();
           const payload={text};
@@ -2187,20 +2197,23 @@ async def ingest_screenshot_grade(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     parsed_posted_at = datetime.fromisoformat(posted_at) if posted_at else None
     parsed_slip = parse_slip_text(ocr_result.cleaned_text, bookmaker_hint=bookmaker_hint)
+    parsed_screenshot = parse_screenshot_text(ocr_result.raw_text, parsed_slip.cleaned_text)
     financials = extract_financials(ocr_result.raw_text, bookmaker_hint=parsed_slip.bookmaker)
-    parsed_bet_date = date.fromisoformat(bet_date) if bet_date else None
-    result = grade_text(parsed_slip.cleaned_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date)
+    parsed_bet_date = date.fromisoformat(bet_date) if bet_date else (date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None)
+    grading_text = '\n'.join(leg.normalized_label for leg in parsed_screenshot.parsed_legs) or parsed_slip.cleaned_text
+    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date)
     return IngestGradeResponse(
         source_type='screenshot',
         source_ref=file.filename or 'upload',
         extracted_text=ocr_result.raw_text,
-        cleaned_text=parsed_slip.cleaned_text,
+        cleaned_text=grading_text,
         posted_at=parsed_posted_at,
         bookmaker=financials.bookmaker,
         stake_amount=financials.stake_amount,
         to_win_amount=financials.to_win_amount,
         american_odds=financials.american_odds,
         decimal_odds=financials.decimal_odds,
+        parsed_screenshot=parsed_screenshot,
         result=result,
     )
 
@@ -2222,12 +2235,14 @@ async def ingest_screenshot_grade_and_save(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     parsed_posted_at = datetime.fromisoformat(posted_at) if posted_at else None
     parsed_slip = parse_slip_text(ocr_result.cleaned_text, bookmaker_hint=bookmaker_hint)
+    parsed_screenshot = parse_screenshot_text(ocr_result.raw_text, parsed_slip.cleaned_text)
     financials = extract_financials(ocr_result.raw_text, bookmaker_hint=parsed_slip.bookmaker)
-    parsed_bet_date = date.fromisoformat(bet_date) if bet_date else None
-    result = grade_text(parsed_slip.cleaned_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date)
+    parsed_bet_date = date.fromisoformat(bet_date) if bet_date else (date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None)
+    grading_text = '\n'.join(leg.normalized_label for leg in parsed_screenshot.parsed_legs) or parsed_slip.cleaned_text
+    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date)
     ticket = save_graded_ticket(
         db,
-        parsed_slip.cleaned_text,
+        grading_text,
         result,
         posted_at=parsed_posted_at,
         source_type='screenshot',
@@ -2240,6 +2255,7 @@ async def ingest_screenshot_grade_and_save(
             'bookmaker': parsed_slip.bookmaker,
             'bookmaker_notes': parsed_slip.notes,
             'financial_notes': financials.notes,
+            'parsed_screenshot': parsed_screenshot.model_dump(),
         }),
         bookmaker=financials.bookmaker,
         stake_amount=financials.stake_amount,

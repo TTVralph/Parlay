@@ -92,6 +92,14 @@ MARKET_ALIASES = {
     'rec yds': 'player_receiving_yards',
     'receiving yards': 'player_receiving_yards',
     'hits': 'player_hits',
+    'pts + ast': 'player_pa',
+    'points + assists': 'player_pa',
+    'pts + reb': 'player_pr',
+    'points + rebounds': 'player_pr',
+    'reb + ast': 'player_ra',
+    'rebounds + assists': 'player_ra',
+    'points + rebounds + assists': 'player_pra',
+    '3-pointers made': 'player_threes',
 }
 
 TEAM_SPORTS = {
