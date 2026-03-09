@@ -5,6 +5,8 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
+from uuid import uuid4
 
 import httpx
 
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """You are a sportsbook slip parser.
 
-Extract only complete player prop bet legs from the screenshot.
+Extract complete player prop bet legs from the screenshot.
 
 Rules:
 - Return structured JSON only.
@@ -26,6 +28,11 @@ Rules:
   over, under
 - Preserve player_name exactly as shown in the screenshot.
 - Preserve a short raw_text for each leg.
+- Legs may be visually multi-line. You may associate adjacent lines in the same row/card (e.g. player name line, market subtitle line, and selection/line) when layout strongly indicates they belong together.
+- Do not require all useful text for a leg to be present in a single line string.
+- If likely player prop rows are present but line/market association is unclear, omit uncertain legs and add warnings like:
+  - Detected likely player prop rows but line/market association was unclear
+  - Image may contain multi-line leg layout
 - Extract only complete, high-confidence legs.
 - If a leg is incomplete or unclear, omit it and add a warning.
 - If the screenshot shows LIVE, a quarter/period marker, a game clock, or in-progress indicators, set screenshot_state to "live".
@@ -95,13 +102,23 @@ class OpenAIVisionSlipParser:
         self._api_key = os.getenv('OPENAI_API_KEY')
         self._model = 'gpt-4o-mini'
         self._url = os.getenv('OPENAI_RESPONSES_URL', 'https://api.openai.com/v1/responses')
+        self._debug_mode = os.getenv('SCREENSHOT_DEBUG_MODE', '').lower() in {'1', 'true', 'yes', 'on'}
+        self._debug_dir = Path(os.getenv('SCREENSHOT_DEBUG_DIR', 'tmp/screenshot_debug'))
 
     def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip:
         if not self._api_key:
             raise RuntimeError('OPENAI_API_KEY is required for vision screenshot parsing.')
 
-        processed = preprocess_screenshot(image_bytes)
+        try:
+            processed = preprocess_screenshot(image_bytes)
+        except Exception as exc:
+            raise RuntimeError(f'vision_preprocessing_error: {exc}') from exc
+
         detected_sportsbook = detect_sportsbook_layout(processed.image_bytes)
+        debug_artifacts: dict[str, str] = {}
+
+        if self._debug_mode:
+            debug_artifacts.update(self._save_image_artifacts(image_bytes, processed.image_bytes, filename))
 
         logger.info(
             'vision_parser.start model=%s parse_mode=responses_structured preprocessing=%s detected_sportsbook=%s',
@@ -113,6 +130,8 @@ class OpenAIVisionSlipParser:
         try:
             result = self._call_provider(processed.image_bytes, detected_sportsbook)
             data = result.payload
+            if self._debug_mode:
+                debug_artifacts.update(self._save_json_artifact(data, filename))
         except Exception as exc:
             failure = classify_failure(exc)
             logger.warning('vision_parser.failure class=%s error=%s', failure, str(exc))
@@ -137,6 +156,12 @@ class OpenAIVisionSlipParser:
             sportsbook_layout=data['sportsbook'],
             preprocessing_metadata=processed.metadata(),
             primary_parser_status='success',
+            primary_confidence=data['confidence'],
+            primary_warnings=list(data['warnings']),
+            primary_detected_sportsbook=result.detected_sportsbook,
+            primary_screenshot_state=data['screenshot_state'],
+            primary_parsed_leg_count=len(data['parsed_legs']),
+            debug_artifacts=debug_artifacts or None,
         )
         logger.info(
             'vision_parser.success model=%s parse_mode=responses_structured parser_confidence=%s detected_sportsbook=%s',
@@ -145,6 +170,25 @@ class OpenAIVisionSlipParser:
             detected_sportsbook,
         )
         return parsed
+
+    def _save_image_artifacts(self, original: bytes, processed: bytes, filename: str | None) -> dict[str, str]:
+        self._debug_dir.mkdir(parents=True, exist_ok=True)
+        base = (Path(filename or 'upload').stem or 'upload') + '_' + uuid4().hex[:8]
+        orig_path = self._debug_dir / f'{base}_original.png'
+        proc_path = self._debug_dir / f'{base}_preprocessed.png'
+        orig_path.write_bytes(original)
+        proc_path.write_bytes(processed)
+        return {
+            'debug_original_image_path': str(orig_path),
+            'debug_preprocessed_image_path': str(proc_path),
+        }
+
+    def _save_json_artifact(self, parsed_json: dict, filename: str | None) -> dict[str, str]:
+        self._debug_dir.mkdir(parents=True, exist_ok=True)
+        base = (Path(filename or 'upload').stem or 'upload') + '_' + uuid4().hex[:8]
+        parsed_path = self._debug_dir / f'{base}_primary_response.json'
+        parsed_path.write_text(json.dumps(parsed_json, indent=2))
+        return {'debug_primary_response_path': str(parsed_path)}
 
     def _call_provider(self, image_bytes: bytes, detected_sportsbook: str) -> VisionCallResult:
         image_b64 = base64.b64encode(image_bytes).decode('ascii')
@@ -183,27 +227,29 @@ class OpenAIVisionSlipParser:
 
         output_text = body.get('output_text')
         if not output_text:
-            raise RuntimeError('Provider returned empty structured output.')
+            raise RuntimeError('vision_schema_error: Provider returned empty structured output.')
 
         try:
             data = json.loads(output_text)
         except json.JSONDecodeError as exc:
-            raise RuntimeError('Failed to decode provider JSON output.') from exc
+            raise RuntimeError('vision_schema_error: Failed to decode provider JSON output.') from exc
 
         return VisionCallResult(payload=data, detected_sportsbook=detected_sportsbook)
 
 
 def classify_failure(exc: Exception) -> str:
     text = str(exc).lower()
+    if 'vision_preprocessing_error' in text:
+        return 'vision_preprocessing_error'
+    if 'vision_schema_error' in text or 'decode' in text or 'json' in text or 'structured output' in text:
+        return 'vision_schema_error'
     if 'api_key' in text or 'required' in text or '401' in text:
-        return 'configuration_error'
+        return 'vision_provider_error'
     if isinstance(exc, httpx.HTTPStatusError):
-        return 'provider_error'
-    if 'decode' in text or 'json' in text or 'structured output' in text:
-        return 'parse_error'
+        return 'vision_provider_error'
     if 'image' in text or 'too large' in text or 'unsupported' in text:
-        return 'low_quality_image'
-    return 'provider_error'
+        return 'vision_preprocessing_error'
+    return 'vision_provider_error'
 
 
 def detect_sportsbook_layout(image_bytes: bytes) -> str:

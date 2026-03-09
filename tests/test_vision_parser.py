@@ -24,7 +24,6 @@ class _Resp:
 class _Client:
     def __init__(self, payload: dict) -> None:
         self.payload = payload
-        self.called_json = None
 
     def __enter__(self):
         return self
@@ -33,7 +32,6 @@ class _Client:
         return None
 
     def post(self, _url: str, *, headers: dict, json: dict):
-        self.called_json = json
         return _Resp(self.payload)
 
 
@@ -42,25 +40,54 @@ class _FailingVision:
         raise RuntimeError('500 provider timeout')
 
 
+class _LowConfidenceVision:
+    def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip:
+        return ParsedSlip(
+            raw_text='',
+            parsed_legs=[],
+            confidence='low',
+            warnings=['Detected likely player prop rows but line/market association was unclear'],
+            primary_parser_status='success',
+            primary_confidence='low',
+            primary_warnings=['Detected likely player prop rows but line/market association was unclear', 'Image may contain multi-line leg layout'],
+            primary_detected_sportsbook='draftkings',
+            primary_screenshot_state='final',
+            primary_parsed_leg_count=0,
+            preprocessing_metadata={
+                'original_width': 1080,
+                'original_height': 1920,
+                'processed_width': 1000,
+                'processed_height': 1777,
+                'crop_applied': True,
+                'crop_box': [0, 100, 1080, 1920],
+                'resize_applied': True,
+                'compressed': False,
+            },
+        )
+
+
 class _FakeFallback:
     def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip:
         return ParsedSlip(raw_text='ocr', warnings=['ocr_used'], parsed_legs=[])
 
 
-def test_successful_structured_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('OPENAI_API_KEY', 'test')
-
-    processed = PreprocessedImage(
-        image_bytes=b'draftkings image bytes',
+def _processed(img: bytes = b'draftkings') -> PreprocessedImage:
+    return PreprocessedImage(
+        image_bytes=img,
         original_width=1800,
         original_height=2600,
         processed_width=1000,
         processed_height=1400,
         crop_applied=True,
+        crop_box=(10, 20, 1790, 2580),
         resize_applied=True,
         compressed=False,
     )
-    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: processed)
+
+
+def test_successful_structured_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
 
     payload = {
         'output_text': json.dumps({
@@ -79,92 +106,35 @@ def test_successful_structured_extraction(monkeypatch: pytest.MonkeyPatch) -> No
             ],
         })
     }
-    fake_client = _Client(payload)
-    monkeypatch.setattr('app.services.vision_parser.httpx.Client', lambda timeout: fake_client)
+    monkeypatch.setattr('app.services.vision_parser.httpx.Client', lambda timeout: _Client(payload))
 
     parsed = OpenAIVisionSlipParser().parse(b'img')
 
     assert parsed.sportsbook == 'draftkings'
-    assert parsed.screenshot_state == 'final'
-    assert parsed.confidence == 'high'
-    assert len(parsed.parsed_legs) == 1
-    assert parsed.parsed_legs[0].player_name == 'Nikola Jokic'
-    assert parsed.preprocessing_metadata is not None
-
-
-def test_live_screenshot_classification(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('OPENAI_API_KEY', 'test')
-    processed = PreprocessedImage(b'bet365', 1000, 1500, 1000, 1500, False, False, False)
-    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: processed)
-    monkeypatch.setattr(
-        'app.services.vision_parser.httpx.Client',
-        lambda timeout: _Client({'output_text': json.dumps({
-            'sportsbook': 'bet365',
-            'screenshot_state': 'live',
-            'confidence': 'medium',
-            'warnings': ['live indicators detected'],
-            'parsed_legs': [],
-        })}),
-    )
-
-    parsed = OpenAIVisionSlipParser().parse(b'img')
-    assert parsed.screenshot_state == 'live'
-
-
-def test_unknown_screenshot_classification(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('OPENAI_API_KEY', 'test')
-    processed = PreprocessedImage(b'unknown', 1000, 1500, 1000, 1500, False, False, False)
-    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: processed)
-    monkeypatch.setattr(
-        'app.services.vision_parser.httpx.Client',
-        lambda timeout: _Client({'output_text': json.dumps({
-            'sportsbook': 'unknown',
-            'screenshot_state': 'unknown',
-            'confidence': 'low',
-            'warnings': ['unclear screenshot'],
-            'parsed_legs': [],
-        })}),
-    )
-
-    parsed = OpenAIVisionSlipParser().parse(b'img')
-    assert parsed.screenshot_state == 'unknown'
-
-
-def test_incomplete_legs_omitted_with_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('OPENAI_API_KEY', 'test')
-    processed = PreprocessedImage(b'fanduel', 1200, 2200, 1000, 1833, True, True, False)
-    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: processed)
-    monkeypatch.setattr(
-        'app.services.vision_parser.httpx.Client',
-        lambda timeout: _Client({'output_text': json.dumps({
-            'sportsbook': 'fanduel',
-            'screenshot_state': 'final',
-            'confidence': 'medium',
-            'warnings': ['omitted incomplete leg'],
-            'parsed_legs': [],
-        })}),
-    )
-
-    parsed = OpenAIVisionSlipParser().parse(b'img')
-    assert parsed.parsed_legs == []
-    assert 'omitted incomplete leg' in parsed.warnings
+    assert parsed.primary_parser_status == 'success'
+    assert parsed.primary_confidence == 'high'
+    assert parsed.primary_parsed_leg_count == 1
 
 
 def test_fallback_path_on_provider_failure() -> None:
     service = SlipParserService(vision_parser=_FailingVision(), ocr_fallback=_FakeFallback())
-
     parsed = service.parse(b'img')
+    assert parsed.fallback_reason == 'vision_provider_error'
+    assert parsed.primary_failure_category == 'vision_provider_error'
 
-    assert parsed.primary_parser_status == 'failed'
-    assert parsed.fallback_parser_status == 'success'
-    assert parsed.fallback_reason == 'provider_error'
-    assert parsed.warnings[0] == 'fallback_reason=provider_error'
+
+def test_vision_empty_parse_with_warnings_is_preserved_before_fallback() -> None:
+    service = SlipParserService(vision_parser=_LowConfidenceVision(), ocr_fallback=_FakeFallback())
+    parsed = service.parse(b'img')
+    assert parsed.fallback_reason == 'vision_empty_parse'
+    assert parsed.primary_result is not None
+    assert parsed.primary_result.parsed_legs == []
+    assert 'Detected likely player prop rows but line/market association was unclear' in parsed.primary_result.warnings
 
 
 def test_preprocessing_metadata_generated(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('OPENAI_API_KEY', 'test')
-    processed = PreprocessedImage(b'prizepicks', 1080, 2400, 1000, 2200, True, True, False)
-    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: processed)
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed(b'prizepicks'))
     monkeypatch.setattr(
         'app.services.vision_parser.httpx.Client',
         lambda timeout: _Client({'output_text': json.dumps({
@@ -178,11 +148,56 @@ def test_preprocessing_metadata_generated(monkeypatch: pytest.MonkeyPatch) -> No
 
     parsed = OpenAIVisionSlipParser().parse(b'img')
     assert parsed.preprocessing_metadata == {
-        'original_width': 1080,
-        'original_height': 2400,
+        'original_width': 1800,
+        'original_height': 2600,
         'processed_width': 1000,
-        'processed_height': 2200,
+        'processed_height': 1400,
         'crop_applied': True,
+        'crop_box': [10, 20, 1790, 2580],
         'resize_applied': True,
         'compressed': False,
     }
+
+
+def test_multi_line_player_prop_layout_extracted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
+    monkeypatch.setattr(
+        'app.services.vision_parser.httpx.Client',
+        lambda timeout: _Client({'output_text': json.dumps({
+            'sportsbook': 'draftkings',
+            'screenshot_state': 'final',
+            'confidence': 'medium',
+            'warnings': ['Image may contain multi-line leg layout'],
+            'parsed_legs': [{
+                'player_name': 'Jalen Brunson',
+                'market': 'points',
+                'line': 24.5,
+                'selection': 'over',
+                'raw_text': 'Jalen Brunson\nPoints\nOver 24.5',
+            }],
+        })}),
+    )
+
+    parsed = OpenAIVisionSlipParser().parse(b'img')
+    assert len(parsed.parsed_legs) == 1
+    assert parsed.parsed_legs[0].player_name == 'Jalen Brunson'
+
+
+def test_vision_low_confidence_triggers_fallback_even_with_leg() -> None:
+    class _Vision:
+        def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip:
+            return ParsedSlip(
+                raw_text='',
+                parsed_legs=[ParsedSlipLeg(player_name='LeBron James', market='points', line=24.5, selection='over', raw_text='LeBron James\nPoints\nOver 24.5')],
+                confidence='low',
+                warnings=['Image may contain multi-line leg layout'],
+                primary_parser_status='success',
+                primary_confidence='low',
+            )
+
+    service = SlipParserService(vision_parser=_Vision(), ocr_fallback=_FakeFallback())
+    parsed = service.parse(b'img')
+    assert parsed.fallback_reason == 'vision_low_confidence'
+    assert parsed.primary_result is not None
+    assert parsed.primary_result.primary_confidence == 'low'

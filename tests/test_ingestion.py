@@ -70,7 +70,7 @@ def test_screenshot_grade_returns_structured_parsed_output_and_autodetected_date
         captured['bet_date'] = bet_date
         return {'overall': 'needs_review', 'legs': []}
 
-    monkeypatch.setattr('app.main.get_ocr_provider', lambda: _FakeOCR())
+    monkeypatch.setattr('app.services.ocr_fallback.get_ocr_provider', lambda: _FakeOCR())
     monkeypatch.setattr('app.main.grade_text', _fake_grade_text)
 
     fake_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + b'0' * 32
