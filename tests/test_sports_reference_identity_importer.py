@@ -95,6 +95,9 @@ def test_refresh_processes_all_30_teams_and_merges_roster_only_players(monkeypat
     monkeypatch.setattr(mod, '_fetch_text', _fake_fetch)
     monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
     monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+    monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
+    monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
 
     result = refresh_nba_identity_from_basketball_reference()
     assert set(fetched_rosters) == set(mod.NBA_TEAM_ABBREVIATIONS)
@@ -128,6 +131,9 @@ def test_refresh_marks_incomplete_when_too_many_team_rosters_fail(monkeypatch, t
     monkeypatch.setattr(mod, '_fetch_text', _fake_fetch)
     monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
     monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+    monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
+    monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
 
     result = refresh_nba_identity_from_basketball_reference()
     assert result['healthy'] is False
@@ -179,3 +185,106 @@ def test_alias_generation_covers_target_rookies_and_special_names() -> None:
         keys = build_alias_keys(name)
         assert keys
         assert normalize_name(name) in keys
+
+
+def test_refresh_preserves_roster_assignment_over_player_page_metadata(monkeypatch, tmp_path) -> None:
+    from app import sports_reference_identity as mod
+
+    def _fake_fetch(url: str, timeout: int = 10) -> str:
+        if '/players/' in url and url.endswith('/a/'):
+            return '<table><tr><th data-stat="player"><a href="/players/a/alexsar01.html">Alex Sarr</a></th><td data-stat="year_max">2026</td></tr></table>'
+        if '/players/' in url and url.endswith('/b/'):
+            return '<table><tr><th data-stat="player"><a href="/players/b/benchman01.html">Bench Man</a></th><td data-stat="year_max">2026</td></tr></table>'
+        if '/players/' in url and any(url.endswith(f'/{ch}/') for ch in 'cdefghijklnmopqrstuvwxyz'):
+            return '<table></table>'
+        if url == mod.TEAMS_URL:
+            return TEAMS_HTML
+        for team_abbr in mod.NBA_TEAM_ABBREVIATIONS:
+            roster_url = mod.TEAM_ROSTER_URL_TEMPLATE.format(team_abbr=team_abbr, season_year=datetime.now().year)
+            if url == roster_url:
+                return '<table id="roster"><tbody><tr><td data-stat="player"><a href="/players/a/alexsar01.html">Alex Sarr</a></td></tr></tbody></table>'
+        if '/players/' in url and url.endswith('.html'):
+            return '<div>Team:</strong> <a href="/teams/ATL/2026.html">Atlanta Hawks</a></div>'
+        raise RuntimeError(url)
+
+    monkeypatch.setattr(mod, '_fetch_text', _fake_fetch)
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+    monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_TEAM_ROSTER_SIZE', 1)
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
+    monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
+
+    refresh_nba_identity_from_basketball_reference()
+    players = __import__('json').loads((tmp_path / 'nba_players.json').read_text())
+    alex = next(p for p in players if p['canonical_player_id'] == 'nba-br-alexsar01')
+    assert alex['current_team_abbr'] != 'ATL'
+    assert alex['roster_data_applied'] is True
+
+
+def test_unhealthy_refresh_with_null_team_fields_does_not_overwrite_cache(monkeypatch, tmp_path) -> None:
+    from app import sports_reference_identity as mod
+
+    original_players = [{'canonical_player_id': 'nba-br-keepme01', 'full_name': 'Keep Me'}]
+    (tmp_path / 'nba_players.json').write_text(__import__('json').dumps(original_players))
+
+    def _fake_fetch(url: str, timeout: int = 10) -> str:
+        if '/players/' in url and url.endswith('/a/'):
+            return '<table><tr><th data-stat="player"><a href="/players/a/alexsar01.html">Alex Sarr</a></th><td data-stat="year_max">2026</td></tr></table>'
+        if '/players/' in url and url.endswith('/b/'):
+            return '<table><tr><th data-stat="player"><a href="/players/b/benchman01.html">Bench Man</a></th><td data-stat="year_max">2026</td></tr></table>'
+        if '/players/' in url and any(url.endswith(f'/{ch}/') for ch in 'cdefghijklnmopqrstuvwxyz'):
+            return '<table></table>'
+        if url == mod.TEAMS_URL:
+            return TEAMS_HTML
+        for team_abbr in mod.NBA_TEAM_ABBREVIATIONS:
+            roster_url = mod.TEAM_ROSTER_URL_TEMPLATE.format(team_abbr=team_abbr, season_year=datetime.now().year)
+            if url == roster_url:
+                return '<table id="roster"><tbody><tr><td data-stat="player"><a href="/players/a/alexsar01.html">Alex Sarr</a></td></tr></tbody></table>'
+        if '/players/' in url and url.endswith('.html'):
+            return '<div>No team block</div>'
+        raise RuntimeError(url)
+
+    monkeypatch.setattr(mod, '_fetch_text', _fake_fetch)
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+    monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_TEAM_ROSTER_SIZE', 1)
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
+    monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
+
+    result = refresh_nba_identity_from_basketball_reference()
+    assert result['healthy'] is False
+    assert result['validation_report']['active_players_with_null_team_fields']
+    assert __import__('json').loads((tmp_path / 'nba_players.json').read_text()) == original_players
+
+
+def test_unhealthy_refresh_with_incomplete_team_coverage(monkeypatch, tmp_path) -> None:
+    from app import sports_reference_identity as mod
+
+    def _fake_fetch(url: str, timeout: int = 10) -> str:
+        if '/players/' in url and url.endswith('/a/'):
+            return INDEX_HTML
+        if '/players/' in url and any(url.endswith(f'/{ch}/') for ch in 'bcdefghijklnmopqrstuvwxyz'):
+            return '<table></table>'
+        if url == mod.TEAMS_URL:
+            return TEAMS_HTML
+        roster_ok = mod.TEAM_ROSTER_URL_TEMPLATE.format(team_abbr='ATL', season_year=datetime.now().year)
+        if url == roster_ok:
+            return '<table id="roster"><tbody><tr><td data-stat="player"><a href="/players/a/alexsar01.html">Alex Sarr</a></td></tr></tbody></table>'
+        if '/teams/' in url and url.endswith('.html'):
+            raise RuntimeError('team roster failed')
+        if '/players/' in url and url.endswith('.html'):
+            return PLAYER_HTML
+        raise RuntimeError(url)
+
+    monkeypatch.setattr(mod, '_fetch_text', _fake_fetch)
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+    monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
+    monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
+
+    result = refresh_nba_identity_from_basketball_reference()
+    assert result['healthy'] is False
+    assert 'not all teams contributed roster players' in result['validation_report']['health_reasons']
