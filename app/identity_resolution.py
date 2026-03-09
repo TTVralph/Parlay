@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from functools import lru_cache
 import json
@@ -8,7 +9,7 @@ import logging
 from pathlib import Path
 import re
 from time import monotonic
-from typing import Protocol
+from typing import Any, Protocol
 from urllib import error, request
 
 SportCode = str
@@ -16,7 +17,14 @@ logger = logging.getLogger(__name__)
 
 _NBA_DIRECTORY_PATH = Path(__file__).resolve().parent / 'data' / 'nba_players_directory.json'
 _NBA_REFRESH_INTERVAL_SECONDS = 60 * 60 * 12
-_NBA_REFRESH_TIMEOUT_SECONDS = 4
+_NBA_REFRESH_TIMEOUT_SECONDS = 6
+_NBA_STALE_AFTER = timedelta(hours=30)
+_MIN_EXPECTED_NBA_PLAYERS = 350
+_MAX_ROSTER_SIZE_WARNING_DELTA = 5
+
+_NBA_LEAGUE_DIRECTORY_URL = 'https://cdn.nba.com/static/json/liveData/leagueRoster.json'
+_ESPN_TEAMS_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams'
+_ESPN_TEAM_ROSTER_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{team_id}/roster'
 
 
 @dataclass(frozen=True)
@@ -89,30 +97,222 @@ def _slugify_player_id(name: str) -> str:
     return re.sub(r'[^a-z0-9]+', '-', normalize_entity_name(name)).strip('-')
 
 
+def _slugify_team_id(team: str) -> str:
+    return f"nba-{re.sub(r'[^a-z0-9]+', '-', normalize_entity_name(team)).strip('-')}"
+
+
+def _fetch_json(url: str, *, timeout: int = _NBA_REFRESH_TIMEOUT_SECONDS, urlopen: Any = request.urlopen) -> dict[str, Any]:
+    with urlopen(url, timeout=timeout) as response:
+        payload = json.load(response)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _player_name(row: dict[str, Any]) -> str:
+    return str(row.get('fullName') or row.get('longName') or row.get('displayName') or '').strip()
+
+
+def _build_alias_keys(name: str) -> list[str]:
+    if not name:
+        return []
+    parts = re.sub(r"[.'’]", '', name).split()
+    aliases: set[str] = set()
+    if len(parts) >= 2:
+        aliases.add(parts[-1])
+    return sorted(alias for alias in aliases if alias and alias.lower() != name.lower())
+
+
+def _extract_nba_league_players(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for team in payload.get('leagueRoster', {}).get('teams', []):
+        if not isinstance(team, dict):
+            continue
+        team_name = str(team.get('teamName') or '').strip()
+        team_abbr = str(team.get('teamTricode') or '').strip()
+        team_id = str(team.get('teamId') or '').strip()
+        canonical_team_id = _slugify_team_id(team_name or team_abbr or team_id)
+        for player in team.get('players', []):
+            if not isinstance(player, dict):
+                continue
+            name = _player_name(player)
+            if not name:
+                continue
+            rows.append({
+                'full_name': name,
+                'normalized_name': normalize_entity_name(name),
+                'source_player_ids': {'nba': str(player.get('personId') or '')},
+                'team_id': canonical_team_id,
+                'team_name': team_name or None,
+                'active_status': 'active' if str(player.get('rosterStatus') or '').lower() != 'inactive' else 'inactive',
+                'source_urls': [_NBA_LEAGUE_DIRECTORY_URL],
+                'alias_keys': _build_alias_keys(name),
+            })
+    return rows
+
+
+def _extract_espn_teams(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+    teams: dict[str, dict[str, str]] = {}
+    for team_wrapper in payload.get('sports', [{}])[0].get('leagues', [{}])[0].get('teams', []):
+        team = team_wrapper.get('team', {}) if isinstance(team_wrapper, dict) else {}
+        if not isinstance(team, dict):
+            continue
+        team_id = str(team.get('id') or '').strip()
+        name = str(team.get('displayName') or '').strip()
+        if not team_id or not name:
+            continue
+        teams[team_id] = {'team_name': name, 'team_id': _slugify_team_id(name), 'abbr': str(team.get('abbreviation') or '').strip()}
+    return teams
+
+
+def _extract_espn_roster_players(team_id: str, payload: dict[str, Any], team_info: dict[str, str]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for athlete in payload.get('athletes', []):
+        if not isinstance(athlete, dict):
+            continue
+        for player in athlete.get('items', []):
+            if not isinstance(player, dict):
+                continue
+            name = str(player.get('fullName') or player.get('displayName') or '').strip()
+            if not name:
+                continue
+            rows.append({
+                'full_name': name,
+                'normalized_name': normalize_entity_name(name),
+                'source_player_ids': {'espn': str(player.get('id') or '')},
+                'team_id': team_info['team_id'],
+                'team_name': team_info['team_name'],
+                'active_status': 'active',
+                'source_urls': [_ESPN_TEAM_ROSTER_URL.format(team_id=team_id)],
+                'alias_keys': _build_alias_keys(name),
+            })
+    return rows
+
+
+def _merge_player_rows(main_rows: list[dict[str, Any]], roster_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    by_name = {normalize_entity_name(row['full_name']): row for row in main_rows}
+    missing_from_main: list[str] = []
+    for row in roster_rows:
+        key = normalize_entity_name(row['full_name'])
+        if key in by_name:
+            existing = by_name[key]
+            existing['source_player_ids'] = {**row.get('source_player_ids', {}), **existing.get('source_player_ids', {})}
+            existing['source_urls'] = sorted(set(existing.get('source_urls', []) + row.get('source_urls', [])))
+            if not existing.get('team_name'):
+                existing['team_name'] = row.get('team_name')
+                existing['team_id'] = row.get('team_id')
+            existing['alias_keys'] = sorted(set(existing.get('alias_keys', []) + row.get('alias_keys', [])))
+        else:
+            by_name[key] = row
+            missing_from_main.append(row['full_name'])
+    return list(by_name.values()), sorted(set(missing_from_main))
+
+
+def _validate_directory(players: list[dict[str, Any]], roster_rows: list[dict[str, Any]], missing_from_main: list[str]) -> dict[str, Any]:
+    duplicate_names = sorted({p['full_name'] for p in players if sum(1 for x in players if x['normalized_name'] == p['normalized_name']) > 1})
+    roster_by_team: dict[str, int] = {}
+    dir_by_team: dict[str, int] = {}
+    roster_names = {normalize_entity_name(p['full_name']) for p in roster_rows}
+    for row in roster_rows:
+        roster_by_team[row.get('team_name') or 'Unknown'] = roster_by_team.get(row.get('team_name') or 'Unknown', 0) + 1
+    for row in players:
+        dir_by_team[row.get('team_name') or 'Unknown'] = dir_by_team.get(row.get('team_name') or 'Unknown', 0) + 1
+    suspicious = []
+    for team_name, roster_count in roster_by_team.items():
+        directory_count = dir_by_team.get(team_name, 0)
+        if abs(directory_count - roster_count) >= _MAX_ROSTER_SIZE_WARNING_DELTA:
+            suspicious.append({'team': team_name, 'roster_count': roster_count, 'directory_count': directory_count})
+
+    missing_from_rosters = sorted([p['full_name'] for p in players if normalize_entity_name(p['full_name']) not in roster_names])
+    missing_team = sorted([p['full_name'] for p in players if not p.get('team_id') or not p.get('team_name')])
+    severe = len(players) < _MIN_EXPECTED_NBA_PLAYERS or len(suspicious) >= 8
+    return {
+        'total_players_loaded': len(players),
+        'players_missing_team_assignments': missing_team,
+        'duplicate_or_conflicting_names': duplicate_names,
+        'suspicious_roster_count_mismatches': suspicious,
+        'players_in_team_rosters_missing_from_main_directory': missing_from_main,
+        'players_in_directory_missing_from_all_team_rosters': missing_from_rosters,
+        'severe_failure': severe,
+    }
+
+
+def refresh_nba_player_directory(*, urlopen: Any = request.urlopen) -> bool:
+    try:
+        league_payload = _fetch_json(_NBA_LEAGUE_DIRECTORY_URL, urlopen=urlopen)
+        league_rows = _extract_nba_league_players(league_payload)
+        if not league_rows:
+            logger.warning('NBA directory refresh failed: league directory source returned no players')
+            return False
+
+        roster_rows: list[dict[str, Any]] = []
+        teams_payload = _fetch_json(_ESPN_TEAMS_URL, urlopen=urlopen)
+        for team_id, team_info in _extract_espn_teams(teams_payload).items():
+            try:
+                roster_payload = _fetch_json(_ESPN_TEAM_ROSTER_URL.format(team_id=team_id), urlopen=urlopen)
+            except (error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+                continue
+            roster_rows.extend(_extract_espn_roster_players(team_id, roster_payload, team_info))
+
+        merged_rows, missing_from_main = _merge_player_rows(league_rows, roster_rows)
+        now = datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat()
+        players: list[dict[str, Any]] = []
+        for row in merged_rows:
+            full_name = row['full_name']
+            players.append({
+                'canonical_player_id': f"nba-{_slugify_player_id(full_name)}",
+                'full_name': full_name,
+                'normalized_name': row.get('normalized_name') or normalize_entity_name(full_name),
+                'alias_keys': sorted(set(row.get('alias_keys', []))),
+                'aliases': sorted(set(row.get('alias_keys', []))),
+                'current_team_id': row.get('team_id'),
+                'current_team_name': row.get('team_name'),
+                'team_id': row.get('team_id'),
+                'team_name': row.get('team_name'),
+                'active_status': row.get('active_status') or 'active',
+                'source_player_ids': {k: v for k, v in row.get('source_player_ids', {}).items() if v},
+                'source_urls': sorted(set(row.get('source_urls', []))),
+                'last_refreshed_at': now,
+                'sport': 'NBA',
+            })
+        players.sort(key=lambda item: item['full_name'])
+
+        validation_report = _validate_directory(players, roster_rows, missing_from_main)
+        payload = {
+            'version': 2,
+            'generated_at': now,
+            'last_refreshed_at': now,
+            'source_urls': [_NBA_LEAGUE_DIRECTORY_URL, _ESPN_TEAMS_URL],
+            'validation_report': validation_report,
+            'players': players,
+        }
+        _NBA_DIRECTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _NBA_DIRECTORY_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+        _player_directory.cache_clear()
+        logger.info('NBA directory refresh complete players=%s severe_failure=%s', len(players), validation_report['severe_failure'])
+        return True
+    except (error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        logger.warning('NBA directory refresh failed: %s', exc)
+        return False
+
+
+def _is_directory_stale(payload: dict[str, Any]) -> bool:
+    timestamp = payload.get('last_refreshed_at') or payload.get('generated_at')
+    if not isinstance(timestamp, str):
+        return True
+    try:
+        refreshed = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    except ValueError:
+        return True
+    if refreshed.tzinfo is None:
+        refreshed = refreshed.replace(tzinfo=timezone.utc)
+    return datetime.now(tz=timezone.utc) - refreshed > _NBA_STALE_AFTER
+
+
 def _maybe_refresh_nba_directory() -> None:
-    # best effort online refresh; never blocks primary identity resolution path
     now = monotonic()
     if now - _maybe_refresh_nba_directory._last_checked < _NBA_REFRESH_INTERVAL_SECONDS:  # type: ignore[attr-defined]
         return
     _maybe_refresh_nba_directory._last_checked = now  # type: ignore[attr-defined]
-
-    feed_url = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams'
-    try:
-        with request.urlopen(feed_url, timeout=_NBA_REFRESH_TIMEOUT_SECONDS) as response:
-            payload = json.load(response)
-        teams = payload.get('sports', [{}])[0].get('leagues', [{}])[0].get('teams', [])
-        if not teams:
-            return
-        directory = json.loads(_NBA_DIRECTORY_PATH.read_text()) if _NBA_DIRECTORY_PATH.exists() else {'players': []}
-        if not isinstance(directory.get('players'), list):
-            return
-        directory['last_refresh_attempt'] = 'success'
-        directory['last_refresh_team_count'] = len(teams)
-        _NBA_DIRECTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _NBA_DIRECTORY_PATH.write_text(json.dumps(directory, indent=2, sort_keys=True) + '\n')
-        _player_directory.cache_clear()
-    except (error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        logger.debug('Skipping NBA directory refresh; feed unavailable: %s', exc)
+    refresh_nba_player_directory()
 
 
 _maybe_refresh_nba_directory._last_checked = 0.0  # type: ignore[attr-defined]
@@ -122,51 +322,48 @@ class NBAIdentityAdapter:
     sport = 'NBA'
 
     def load_teams(self) -> tuple[CanonicalTeamIdentity, ...]:
-        teams = (
-            ('nba-atl', '1', 'Atlanta Hawks', 'ATL', ('Hawks', 'Atlanta')),
-            ('nba-bos', '2', 'Boston Celtics', 'BOS', ('Celtics', 'Boston')),
-            ('nba-bkn', '17', 'Brooklyn Nets', 'BKN', ('Nets', 'Brooklyn')),
-            ('nba-cha', '30', 'Charlotte Hornets', 'CHA', ('Hornets', 'Charlotte')),
-            ('nba-chi', '4', 'Chicago Bulls', 'CHI', ('Bulls', 'Chicago')),
-            ('nba-cle', '5', 'Cleveland Cavaliers', 'CLE', ('Cavaliers', 'Cavs', 'Cleveland')),
-            ('nba-dal', '6', 'Dallas Mavericks', 'DAL', ('Mavericks', 'Mavs', 'Dallas')),
-            ('nba-den', '7', 'Denver Nuggets', 'DEN', ('Nuggets', 'Denver')),
-            ('nba-det', '8', 'Detroit Pistons', 'DET', ('Pistons', 'Detroit')),
-            ('nba-gsw', '9', 'Golden State Warriors', 'GSW', ('Warriors', 'Golden State')),
-            ('nba-hou', '10', 'Houston Rockets', 'HOU', ('Rockets', 'Houston')),
-            ('nba-ind', '11', 'Indiana Pacers', 'IND', ('Pacers', 'Indiana')),
-            ('nba-lac', '12', 'LA Clippers', 'LAC', ('Clippers', 'Los Angeles Clippers')),
-            ('nba-lal', '13', 'Los Angeles Lakers', 'LAL', ('Lakers', 'LA Lakers')),
-            ('nba-mem', '29', 'Memphis Grizzlies', 'MEM', ('Grizzlies', 'Memphis')),
-            ('nba-mia', '14', 'Miami Heat', 'MIA', ('Heat', 'Miami')),
-            ('nba-mil', '15', 'Milwaukee Bucks', 'MIL', ('Bucks', 'Milwaukee')),
-            ('nba-min', '16', 'Minnesota Timberwolves', 'MIN', ('Timberwolves', 'Wolves', 'Minnesota')),
-            ('nba-nop', '3', 'New Orleans Pelicans', 'NOP', ('Pelicans', 'New Orleans')),
-            ('nba-nyk', '18', 'New York Knicks', 'NYK', ('Knicks', 'New York')),
-            ('nba-okc', '25', 'Oklahoma City Thunder', 'OKC', ('Thunder', 'Oklahoma City')),
-            ('nba-orl', '19', 'Orlando Magic', 'ORL', ('Magic', 'Orlando')),
-            ('nba-phi', '20', 'Philadelphia 76ers', 'PHI', ('76ers', 'Sixers', 'Philadelphia')),
-            ('nba-phx', '21', 'Phoenix Suns', 'PHX', ('Suns', 'Phoenix')),
-            ('nba-por', '22', 'Portland Trail Blazers', 'POR', ('Trail Blazers', 'Blazers', 'Portland')),
-            ('nba-sac', '23', 'Sacramento Kings', 'SAC', ('Kings', 'Sacramento')),
-            ('nba-sas', '24', 'San Antonio Spurs', 'SAS', ('Spurs', 'San Antonio')),
-            ('nba-tor', '28', 'Toronto Raptors', 'TOR', ('Raptors', 'Toronto')),
-            ('nba-uta', '26', 'Utah Jazz', 'UTA', ('Jazz', 'Utah')),
-            ('nba-was', '27', 'Washington Wizards', 'WAS', ('Wizards', 'Washington')),
-        )
-        return tuple(
-            CanonicalTeamIdentity('NBA', team_id, {'espn': espn_id}, team_name, normalize_entity_name(team_name), (abbr,), aliases)
-            for team_id, espn_id, team_name, abbr, aliases in teams
-        )
+        players = self.load_players()
+        seen: dict[str, CanonicalTeamIdentity] = {}
+        for p in players:
+            if not p.team_id or not p.team_name:
+                continue
+            if p.team_id in seen:
+                continue
+            seen[p.team_id] = CanonicalTeamIdentity(
+                sport='NBA',
+                canonical_team_id=p.team_id,
+                source_team_ids={},
+                full_team_name=p.team_name,
+                normalized_team_name=normalize_entity_name(p.team_name),
+                abbreviations=(),
+                aliases=(),
+            )
+        return tuple(seen.values())
 
     def load_players(self) -> tuple[CanonicalPlayerIdentity, ...]:
         _maybe_refresh_nba_directory()
         if not _NBA_DIRECTORY_PATH.exists():
+            logger.warning('NBA directory file missing; identity resolution will be incomplete')
             return ()
         payload = json.loads(_NBA_DIRECTORY_PATH.read_text())
         players = payload.get('players') if isinstance(payload, dict) else []
         if not isinstance(players, list):
             return ()
+
+        validation = payload.get('validation_report', {}) if isinstance(payload, dict) else {}
+        has_refresh_metadata = isinstance(payload, dict) and isinstance(payload.get('last_refreshed_at') or payload.get('generated_at'), str)
+        stale = _is_directory_stale(payload) if has_refresh_metadata else False
+        severe_failure = bool(validation.get('severe_failure')) if isinstance(validation, dict) else False
+        total_players = validation.get('total_players_loaded') if isinstance(validation, dict) else None
+        incomplete = isinstance(total_players, int) and total_players < _MIN_EXPECTED_NBA_PLAYERS
+        unreliable = stale or severe_failure or incomplete
+        if unreliable:
+            logger.warning(
+                'NBA directory is stale or incomplete; team assignments considered unsafe stale=%s severe=%s total=%s',
+                stale,
+                severe_failure,
+                len(players),
+            )
 
         parsed: list[CanonicalPlayerIdentity] = []
         for row in players:
@@ -175,9 +372,11 @@ class NBAIdentityAdapter:
             full_name = str(row.get('full_name') or '').strip()
             if not full_name:
                 continue
-            aliases = tuple(str(alias).strip() for alias in row.get('aliases', []) if str(alias).strip())
+            aliases = tuple(str(alias).strip() for alias in row.get('alias_keys', row.get('aliases', [])) if str(alias).strip())
             canonical_player_id = str(row.get('canonical_player_id') or f"nba-{_slugify_player_id(full_name)}")
             source_ids = row.get('source_player_ids')
+            team_id = row.get('current_team_id', row.get('team_id'))
+            team_name = row.get('current_team_name', row.get('team_name'))
             parsed.append(
                 CanonicalPlayerIdentity(
                     sport='NBA',
@@ -186,8 +385,9 @@ class NBAIdentityAdapter:
                     full_name=full_name,
                     normalized_name=normalize_entity_name(str(row.get('normalized_name') or full_name)),
                     alternate_names=aliases,
-                    team_id=str(row.get('team_id')) if row.get('team_id') else None,
-                    team_name=str(row.get('team_name')) if row.get('team_name') else None,
+                    team_id=(str(team_id) if team_id and not unreliable else None),
+                    team_name=(str(team_name) if team_name and not unreliable else None),
+                    active_status=str(row.get('active_status') or 'active'),
                 )
             )
         return tuple(parsed)
