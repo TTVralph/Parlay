@@ -5,7 +5,7 @@ import logging
 import re
 
 from .models import Leg
-from .player_identity import resolve_player_identity, team_name_from_id
+from .player_identity import resolve_player_resolution, team_name_from_id
 from .providers.base import EventInfo, ResultsProvider
 
 AMBIGUOUS_EVENT_WARNING = 'Multiple possible games. Add bet date to narrow results.'
@@ -174,9 +174,9 @@ def _resolve_player_team(provider: ResultsProvider, player: str, posted_at: date
     team_from_provider = _player_team_for_date(provider, player, posted_at, include_historical=include_historical)
     if team_from_provider:
         return team_from_provider
-    identity = resolve_player_identity(player)
-    if identity:
-        return team_name_from_id(identity.team_id)
+    resolution = resolve_player_resolution(player)
+    if resolution:
+        return resolution.resolved_team
     return None
 
 
@@ -219,11 +219,12 @@ def resolve_leg_events(
         player_identity_id: str | None = None
         resolved_player_name: str | None = None
         if leg.player:
-            identity = resolve_player_identity(leg.player)
-            if identity and leg.player != identity.canonical_name:
-                updates['player'] = identity.canonical_name
-            if identity:
-                player_identity_id = identity.id
+            resolution = resolve_player_resolution(leg.player)
+            if resolution and leg.player != resolution.resolved_player_name:
+                updates['player'] = resolution.resolved_player_name
+            if resolution:
+                player_identity_id = resolution.resolved_player_id
+                updates['resolution_confidence'] = resolution.resolution_confidence
             player_lookup_name = str(updates.get('player', leg.player))
             resolved_player_name = player_lookup_name
             player_team = _resolve_player_team(provider, player_lookup_name, anchor, include_historical)
@@ -248,7 +249,10 @@ def resolve_leg_events(
                 updates['notes'] = notes
                 updates['matched_by'] = None
                 updates['event_candidates'] = []
+                updates['parsed_player_name'] = leg.parsed_player_name or leg.player
+                updates['normalized_stat_type'] = leg.normalized_stat_type or leg.market_type
                 updates['resolved_player_name'] = resolved_player_name
+                updates['resolved_player_id'] = player_identity_id
                 updates['resolved_team'] = player_team
                 updates['selected_bet_date'] = explicit_slip_date.isoformat() if explicit_slip_date else None
                 resolved.append(leg.model_copy(update=updates))
@@ -311,7 +315,10 @@ def resolve_leg_events(
                 if linked:
                     candidates = linked
 
+        updates['parsed_player_name'] = leg.parsed_player_name or leg.player
+        updates['normalized_stat_type'] = leg.normalized_stat_type or leg.market_type
         updates['resolved_player_name'] = resolved_player_name
+        updates['resolved_player_id'] = player_identity_id
         updates['resolved_team'] = player_team
         updates['selected_bet_date'] = explicit_slip_date.isoformat() if explicit_slip_date else None
         updates['notes'] = notes

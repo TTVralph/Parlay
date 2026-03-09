@@ -944,11 +944,12 @@ Murray over 2.5 threes'></textarea>
         detailsBody.style.color='#334155';
         const componentValues=item.component_values||{};
         const componentRows=Object.keys(componentValues).map((key)=>`<div>${key}: ${componentValues[key]}</div>`).join('');
-        const boxscoreText=(item.player_found_in_boxscore===null||item.player_found_in_boxscore===undefined)
-          ? 'Unknown'
-          : (item.player_found_in_boxscore ? 'Yes' : 'No');
+        const boxscoreText=item.matched_boxscore_player_name
+          || ((item.player_found_in_boxscore===null||item.player_found_in_boxscore===undefined)
+            ? 'Unknown'
+            : (item.player_found_in_boxscore ? 'Yes' : 'No'));
         detailsBody.innerHTML=`
-          <div>Parsed: ${item.parsed_player_or_team||'—'} / ${item.normalized_market||'—'}</div>
+          <div>Parsed: ${item.parsed_player_name||item.parsed_player_or_team||'—'} / ${item.normalized_stat_type||item.normalized_market||'—'}</div>
           <div>Matched event: ${item.matched_event||'—'}</div>
           <div>Stat used: ${item.normalized_market||'—'}</div>
           <div>Line: ${item.line ?? '—'}</div>
@@ -956,7 +957,12 @@ Murray over 2.5 threes'></textarea>
           ${componentRows}
           <div>Result: ${resultLabel[item.result]||String(item.result||'review')}</div>
           <div>Reason: ${item.explanation_reason||'—'}</div>
+          <div>Resolved player: ${item.resolved_player_name||'—'} (${item.resolved_player_id||'—'})</div>
+          <div>Resolved team: ${item.resolved_team||'—'}</div>
           <div>Player in box score: ${boxscoreText}</div>
+          <div>Resolution confidence: ${item.resolution_confidence ?? '—'}</div>
+          <div>Parse confidence: ${item.parse_confidence ?? '—'}</div>
+          <div>Review reason: ${item.review_reason||'—'}</div>
         `;
         detailsWrap.appendChild(detailsBody);
         legCell.appendChild(detailsWrap);
@@ -1076,6 +1082,12 @@ Murray over 2.5 threes'></textarea>
           candidate_events:item.candidate_events||item.candidate_games||item.leg?.event_candidates||[],
           resolved_player_name:item.resolved_player_name||item.leg?.resolved_player_name||null,
           resolved_team:item.resolved_team||item.leg?.resolved_team||null,
+          resolved_player_id:item.resolved_player_id||item.leg?.resolved_player_id||null,
+          parsed_player_name:item.parsed_player_name||item.leg?.parsed_player_name||null,
+          normalized_stat_type:item.normalized_stat_type||item.leg?.normalized_stat_type||null,
+          resolution_confidence:item.resolution_confidence||item.leg?.resolution_confidence||null,
+          parse_confidence:item.parse_confidence||item.leg?.parse_confidence||null,
+          matched_boxscore_player_name:item.matched_boxscore_player_name||null,
           selected_bet_date:item.selected_bet_date||item.leg?.selected_bet_date||null,
           player_found_in_boxscore:item.player_found_in_boxscore,
         })),
@@ -1273,6 +1285,12 @@ def _process_public_check_text(
             'candidate_events': item.candidate_events or item.candidate_games or item.leg.event_candidates,
             'resolved_player_name': item.resolved_player_name or item.leg.resolved_player_name,
             'resolved_team': item.resolved_team or item.leg.resolved_team,
+            'resolved_player_id': item.resolved_player_id or item.leg.resolved_player_id,
+            'parsed_player_name': item.parsed_player_name or item.leg.parsed_player_name,
+            'normalized_stat_type': item.normalized_stat_type or item.leg.normalized_stat_type,
+            'resolution_confidence': item.resolution_confidence or item.leg.resolution_confidence,
+            'parse_confidence': item.parse_confidence or item.leg.parse_confidence,
+            'matched_boxscore_player_name': item.matched_boxscore_player_name,
             'selected_bet_date': item.selected_bet_date or item.leg.selected_bet_date,
             'player_found_in_boxscore': item.player_found_in_boxscore,
         })

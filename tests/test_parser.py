@@ -16,7 +16,7 @@ def test_parse_plus_shorthand_with_opponent_context_and_partial_player_name() ->
     legs = parse_text('Draymond 5+ Assists Vs Thunder')
     assert len(legs) == 1
     leg = legs[0]
-    assert leg.player == 'Draymond'
+    assert leg.player == 'Draymond Green'
     assert leg.market_type == 'player_assists'
     assert leg.direction == 'over'
     assert leg.line == 4.5
@@ -44,3 +44,11 @@ def test_parse_threes_made_alias_maps_to_player_threes() -> None:
     legs = parse_text('Nikola Jokic over 1.5 3pt made')
     assert len(legs) == 1
     assert legs[0].market_type == 'player_threes'
+
+
+def test_pts_plus_ast_normalizes_to_player_pa_without_low_confidence() -> None:
+    legs = parse_text('Bam Adebayo Over 23.5 Pts + Ast')
+    assert len(legs) == 1
+    assert legs[0].market_type == 'player_pa'
+    assert legs[0].confidence >= 0.9
+    assert 'Could not parse stat type' not in legs[0].notes

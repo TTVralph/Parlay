@@ -42,7 +42,7 @@ class OpponentFilterProvider:
         return []
 
     def resolve_player_event_candidates(self, player: str, as_of: datetime | None):
-        if player != 'Draymond':
+        if player not in {'Draymond', 'Draymond Green'}:
             return []
         return [
             EventInfo(event_id='evt-bos-gsw', sport='NBA', home_team='Boston Celtics', away_team='Golden State Warriors', start_time=datetime(2026, 1, 1, tzinfo=timezone.utc)),
@@ -680,3 +680,21 @@ def test_keyonte_george_candidates_include_only_utah_games() -> None:
     resolved = resolve_leg_events(legs, provider, posted_at=None, include_historical=True)
     assert resolved[0].event_id == 'nba-2026-03-07-uta-por'
     assert resolved[0].event_candidates == []
+
+
+from app.player_identity import resolve_player_resolution
+
+
+def test_required_nba_players_resolve_with_team() -> None:
+    expected = {
+        'Draymond Green': 'Golden State Warriors',
+        'Amen Thompson': 'Houston Rockets',
+        'Bam Adebayo': 'Miami Heat',
+        'Cade Cunningham': 'Detroit Pistons',
+        'Desmond Bane': 'Memphis Grizzlies',
+    }
+    for player, team in expected.items():
+        resolution = resolve_player_resolution(player)
+        assert resolution is not None
+        assert resolution.resolved_team == team
+        assert resolution.resolution_confidence >= 0.95
