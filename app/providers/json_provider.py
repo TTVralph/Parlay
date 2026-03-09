@@ -128,4 +128,21 @@ class JsonResultsProvider(ResultsProvider):
         box = self._player_results.get(event_id) or {}
         player_row = box.get(player) or {}
         value = player_row.get(market_type)
-        return float(value) if value is not None else None
+        if value is not None:
+            return float(value)
+        combo_components = self._combo_markets.get(market_type)
+        if not combo_components:
+            return None
+        component_values: list[float] = []
+        for component_market in combo_components:
+            component = player_row.get(component_market)
+            if component is None:
+                return None
+            component_values.append(float(component))
+        return float(sum(component_values))
+    _combo_markets = {
+        'player_pra': ('player_points', 'player_rebounds', 'player_assists'),
+        'player_pr': ('player_points', 'player_rebounds'),
+        'player_pa': ('player_points', 'player_assists'),
+        'player_ra': ('player_rebounds', 'player_assists'),
+    }

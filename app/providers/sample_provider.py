@@ -7,6 +7,13 @@ from ..sample_results import EVENTS, PLAYER_RESULTS_BY_EVENT
 
 
 class SampleResultsProvider(ResultsProvider):
+    _combo_markets = {
+        'player_pra': ('player_points', 'player_rebounds', 'player_assists'),
+        'player_pr': ('player_points', 'player_rebounds'),
+        'player_pa': ('player_points', 'player_assists'),
+        'player_ra': ('player_rebounds', 'player_assists'),
+    }
+
     def _event_info(self, event_id: str) -> EventInfo:
         row = EVENTS[event_id]
         return EventInfo(
@@ -124,4 +131,16 @@ class SampleResultsProvider(ResultsProvider):
         player_result = event_box.get(player)
         if not player_result:
             return None
-        return player_result.get(market_type)
+        value = player_result.get(market_type)
+        if value is not None:
+            return float(value)
+        combo_components = self._combo_markets.get(market_type)
+        if not combo_components:
+            return None
+        component_values: list[float] = []
+        for component_market in combo_components:
+            component = player_result.get(component_market)
+            if component is None:
+                return None
+            component_values.append(float(component))
+        return float(sum(component_values))

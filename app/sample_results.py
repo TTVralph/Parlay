@@ -32,6 +32,15 @@ EVENTS = {
         'away_score': 109,
         'moneyline_winner': 'Denver Nuggets',
     },
+    'nba-2026-03-06-bos-dal': {
+        'sport': 'NBA',
+        'home_team': 'Boston Celtics',
+        'away_team': 'Dallas Mavericks',
+        'start_time': datetime.fromisoformat('2026-03-06T19:30:00'),
+        'home_score': 118,
+        'away_score': 109,
+        'moneyline_winner': 'Boston Celtics',
+    },
     'nba-2026-03-08-bos-gsw': {
         'sport': 'NBA',
         'home_team': 'Boston Celtics',
@@ -89,6 +98,9 @@ PLAYER_RESULTS_BY_EVENT = {
         'Nikola Jokic': {'player_points': 26, 'player_rebounds': 13, 'player_assists': 8, 'player_threes': 1, 'player_pra': 47},
         'Jamal Murray': {'player_points': 21, 'player_rebounds': 4, 'player_assists': 6, 'player_threes': 2, 'player_pra': 31},
         'Jalen Brunson': {'player_points': 29, 'player_rebounds': 3, 'player_assists': 7, 'player_threes': 4, 'player_pra': 39},
+    },
+    'nba-2026-03-06-bos-dal': {
+        'Cooper Flagg': {'player_points': 16, 'player_rebounds': 8, 'player_assists': 6, 'player_threes': 1},
     },
     'nba-2026-03-07-den-lal': {
         'Nikola Jokic': {'player_points': 27, 'player_rebounds': 11, 'player_assists': 9, 'player_threes': 1, 'player_pra': 47},

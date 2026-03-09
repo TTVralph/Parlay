@@ -15,7 +15,14 @@ _SUPPORTED_PLAYER_MARKETS = {
     'player_points': {'points', 'pts', 'point'},
     'player_assists': {'assists', 'ast', 'assist'},
     'player_rebounds': {'rebounds', 'reb', 'total rebounds'},
-    'player_threes': {'3pt made', '3pt field goals made', 'three point field goals made', 'threes made', '3-pointers made', '3pt', '3pm'},
+    'player_threes': {'3pt made', '3pt field goals made', 'three point field goals made', 'three-point field goals made', 'threes made', '3-pointers made', '3 pointers made', '3pt', '3pm'},
+}
+
+_COMBO_PLAYER_MARKETS = {
+    'player_pra': ('player_points', 'player_rebounds', 'player_assists'),
+    'player_pr': ('player_points', 'player_rebounds'),
+    'player_pa': ('player_points', 'player_assists'),
+    'player_ra': ('player_rebounds', 'player_assists'),
 }
 
 
@@ -351,6 +358,15 @@ class ESPNNBAResultsProvider(ResultsProvider):
             return None
 
     def _extract_player_stat(self, event_id: str, player: str, market_type: str) -> float | None:
+        if market_type in _COMBO_PLAYER_MARKETS:
+            values: list[float] = []
+            for component_market in _COMBO_PLAYER_MARKETS[market_type]:
+                component = self._extract_player_stat(event_id, player, component_market)
+                if component is None:
+                    return None
+                values.append(float(component))
+            return float(sum(values))
+
         aliases = _SUPPORTED_PLAYER_MARKETS.get(market_type)
         if not aliases:
             return None
