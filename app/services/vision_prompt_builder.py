@@ -26,6 +26,11 @@ Rules:
 - If the screenshot shows LIVE, a quarter/period marker, a game clock, or in-progress indicators, set screenshot_state to \"live\".
 - If unclear, set screenshot_state to \"unknown\".
 - Do not guess missing values.
+- Use only allowed enum values from schema for sportsbook, screenshot_state, confidence, market, and selection.
+- line must be a number (e.g. 1.5), never a quoted string.
+- Do not emit extra fields beyond the schema.
+- Do not invent unsupported markets.
+- Convert labels like made threes / 3pm / 3pt made / three pointers into threes.
 """
 
 _SHARED_USER_PROMPT = (
