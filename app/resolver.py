@@ -97,6 +97,17 @@ def _event_contains_team(event: EventInfo, team: str | None) -> bool:
     return norm_team in {_norm(event.home_team), _norm(event.away_team)}
 
 
+def _context_date_for_leg(slip_value: date | datetime | None) -> date | None:
+    if isinstance(slip_value, datetime):
+        return slip_value.date()
+    return slip_value
+
+
+def _context_date_for_event(event: EventInfo, slip_value: date | datetime | None) -> date:
+    context_date = _context_date_for_leg(slip_value)
+    return context_date or event.start_time.date()
+
+
 def _team_candidates(provider: ResultsProvider, team: str, posted_at: datetime | None, include_historical: bool) -> list[EventInfo]:
     resolver = getattr(provider, 'resolve_team_event_candidates', None)
     if callable(resolver):
@@ -171,6 +182,7 @@ def resolve_leg_events(
     resolved: list[Leg] = []
     resolved_event_ids: set[str] = set()
     resolved_team_event_ids: dict[str, set[str]] = {}
+    resolved_team_date_event_ids: dict[tuple[str, date], set[str]] = {}
     for index, leg in enumerate(legs):
         updates: dict[str, object | None] = {}
         notes = list(leg.notes)
@@ -192,6 +204,11 @@ def resolve_leg_events(
             candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
             if player_team:
                 candidates = [event for event in candidates if _event_contains_team(event, player_team)]
+                context_date = _context_date_for_leg(slip_filter_value)
+                if context_date is not None:
+                    team_day_links = resolved_team_date_event_ids.get((_norm(player_team), context_date), set())
+                    if len(team_day_links) == 1:
+                        candidates = [event for event in candidates if event.event_id in team_day_links] or candidates
                 team_links = resolved_team_event_ids.get(_norm(player_team), set())
                 if len(team_links) == 1:
                     candidates = [event for event in candidates if event.event_id in team_links] or candidates
@@ -229,8 +246,10 @@ def resolve_leg_events(
             resolved_event_ids.add(event.event_id)
             if leg.team:
                 resolved_team_event_ids.setdefault(_norm(leg.team), set()).add(event.event_id)
+                resolved_team_date_event_ids.setdefault((_norm(leg.team), _context_date_for_event(event, slip_filter_value)), set()).add(event.event_id)
             if player_team:
                 resolved_team_event_ids.setdefault(_norm(player_team), set()).add(event.event_id)
+                resolved_team_date_event_ids.setdefault((_norm(player_team), _context_date_for_event(event, slip_filter_value)), set()).add(event.event_id)
             updates['event_id'] = event.event_id
             updates['event_label'] = event.label
             updates['event_start_time'] = event.start_time

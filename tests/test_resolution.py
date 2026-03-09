@@ -489,3 +489,94 @@ def test_scotty_pippen_alias_under_assists_settles_win_on_2026_03_07() -> None:
     assert result.legs[1].leg.event_label == 'LA Clippers @ Memphis Grizzlies'
     assert result.legs[1].settlement == 'win'
     assert result.legs[1].actual_value == 3.0
+
+class TeamDateHintProvider:
+    def __init__(self) -> None:
+        self._evt_target = EventInfo(
+            event_id='nba-2026-03-07-lac-mem',
+            sport='NBA',
+            home_team='Memphis Grizzlies',
+            away_team='LA Clippers',
+            start_time=datetime.fromisoformat('2026-03-08T01:00:00+00:00'),
+        )
+        self._evt_other_day = EventInfo(
+            event_id='nba-2026-03-08-sas-mem',
+            sport='NBA',
+            home_team='Memphis Grizzlies',
+            away_team='San Antonio Spurs',
+            start_time=datetime.fromisoformat('2026-03-09T01:00:00+00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        if team == 'Memphis Grizzlies':
+            return [self._evt_target]
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player in {'Cam Spencer', 'Scotty Pippen Jr.'}:
+            return [self._evt_other_day, self._evt_target]
+        return []
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player in {'Cam Spencer', 'Scotty Pippen Jr.'}:
+            return 'Memphis Grizzlies'
+        return None
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return None
+
+
+def test_player_team_date_filter_auto_resolves_single_remaining_candidate() -> None:
+    provider = TeamDateHintProvider()
+    result = grade_text(
+        'Cam Spencer over 9.5 points',
+        provider=provider,
+        posted_at=date.fromisoformat('2026-03-07'),
+        include_historical=True,
+    )
+
+    assert result.legs[0].leg.event_id == 'nba-2026-03-07-lac-mem'
+    assert result.legs[0].leg.event_candidates == []
+
+
+def test_resolved_team_date_context_hints_following_player_leg() -> None:
+    provider = TeamDateHintProvider()
+    legs = [
+        Leg(
+            raw_text='Memphis ML',
+            sport='NBA',
+            market_type='moneyline',
+            team='Memphis Grizzlies',
+            confidence=0.9,
+            notes=[],
+        ),
+        Leg(
+            raw_text='Scotty Pippen under 4.5 assists',
+            sport='NBA',
+            market_type='player_assists',
+            player='Scotty Pippen Jr.',
+            direction='under',
+            line=4.5,
+            confidence=0.9,
+            notes=[],
+        ),
+    ]
+
+    resolved = resolve_leg_events(
+        legs,
+        provider,
+        posted_at=date.fromisoformat('2026-03-07'),
+        include_historical=True,
+    )
+
+    assert resolved[0].event_id == 'nba-2026-03-07-lac-mem'
+    assert resolved[1].event_id == 'nba-2026-03-07-lac-mem'
