@@ -47,6 +47,22 @@ class SlipParserService:
             fallback_reason = classify_failure(exc)
             primary_failure_category = fallback_reason
             primary_provider_error = str(exc)
+            exc_diagnostics = getattr(exc, 'diagnostics', None)
+            if isinstance(exc_diagnostics, dict):
+                if exc_diagnostics.get('parser_strategy_used'):
+                    # preserve parser strategy visibility even on provider failure
+                    primary_parser_strategy = str(exc_diagnostics['parser_strategy_used'])
+                else:
+                    primary_parser_strategy = None
+                primary_detected = exc_diagnostics.get('detected_sportsbook')
+            else:
+                primary_parser_strategy = None
+                primary_detected = None
+            primary_debug_artifacts = dict(exc_diagnostics) if isinstance(exc_diagnostics, dict) else None
+        else:
+            primary_parser_strategy = None
+            primary_detected = None
+            primary_debug_artifacts = None
 
         fallback = self._ocr_fallback.parse(image_bytes=image_bytes, filename=filename)
         fallback.primary_parser_status = 'failed' if primary_result is None else 'success_fallback_triggered'
@@ -56,7 +72,7 @@ class SlipParserService:
         fallback.primary_confidence = primary_result.confidence if primary_result else None
         fallback.primary_warnings = list(primary_result.warnings) if primary_result else []
         fallback.primary_detected_sportsbook = primary_result.primary_detected_sportsbook if primary_result else None
-        fallback.primary_parser_strategy_used = primary_result.primary_parser_strategy_used if primary_result else None
+        fallback.primary_parser_strategy_used = primary_result.primary_parser_strategy_used if primary_result else primary_parser_strategy
         fallback.primary_screenshot_state = primary_result.screenshot_state if primary_result else None
         fallback.primary_parsed_leg_count = len(primary_result.parsed_legs) if primary_result else 0
         fallback.fallback_parser_status = 'success'
@@ -65,6 +81,10 @@ class SlipParserService:
             fallback.preprocessing_metadata = primary_result.preprocessing_metadata
         if primary_result and primary_result.debug_artifacts:
             fallback.debug_artifacts = dict(primary_result.debug_artifacts)
+        elif primary_debug_artifacts:
+            fallback.debug_artifacts = primary_debug_artifacts
+        if not fallback.primary_detected_sportsbook and primary_detected:
+            fallback.primary_detected_sportsbook = str(primary_detected)
         if fallback_reason:
             fallback.warnings.insert(0, f'fallback_reason={fallback_reason}')
         return fallback
