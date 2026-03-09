@@ -23,8 +23,13 @@ class ParsedSlip:
     parsed_legs: list[ParsedSlipLeg] = field(default_factory=list)
     confidence: str = 'low'
     warnings: list[str] = field(default_factory=list)
+    screenshot_state: str = 'unknown'
+    sportsbook: str = 'unknown'
     sportsbook_layout: str | None = None
     detected_bet_date: str | None = None
     stake_amount: float | None = None
     to_win_amount: float | None = None
     preprocessing_metadata: dict[str, Any] | None = None
+    primary_parser_status: str = 'not_attempted'
+    fallback_parser_status: str = 'not_attempted'
+    fallback_reason: str | None = None
