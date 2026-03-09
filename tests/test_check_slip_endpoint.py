@@ -21,3 +21,12 @@ def test_check_slip_endpoint_returns_review_when_unmatched_legs():
     assert body['legs'][0]['candidate_games'] == []
     assert body['legs'][1]['candidate_games'] == []
     assert body['legs'][0]['explanation_reason'] == 'Low-confidence parse; send to manual review'
+
+
+def test_check_slip_accepts_bet_date_field():
+    client = TestClient(app)
+    response = client.post('/check-slip', json={'text': 'Denver ML', 'bet_date': '2026-03-09'})
+    assert response.status_code == 200
+    body = response.json()
+    assert body['ok'] is True
+    assert 'legs' in body

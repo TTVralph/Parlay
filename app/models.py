@@ -50,6 +50,9 @@ class Leg(BaseModel):
     event_start_time: Optional[datetime] = None
     matched_by: Optional[str] = None
     event_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    resolved_player_name: Optional[str] = None
+    resolved_team: Optional[str] = None
+    selected_bet_date: Optional[str] = None
 
 
 class ParseResponse(BaseModel):
@@ -63,6 +66,7 @@ class GradeRequest(BaseModel):
         default=None,
         description="Timestamp for the original post/slip, used for event/date resolution",
     )
+    bet_date: Optional[str] = Field(default=None, description='Optional bet/slip date in YYYY-MM-DD format')
 
 
 class GradedLeg(BaseModel):
@@ -76,7 +80,12 @@ class GradedLeg(BaseModel):
     component_values: Optional[dict[str, float]] = None
     explanation_reason: Optional[str] = None
     candidate_games: list[dict[str, Any]] = Field(default_factory=list)
+    candidate_events: list[dict[str, Any]] = Field(default_factory=list)
     player_found_in_boxscore: Optional[bool] = None
+    review_reason: Optional[str] = None
+    resolved_player_name: Optional[str] = None
+    resolved_team: Optional[str] = None
+    selected_bet_date: Optional[str] = None
 
 
 class GradeResponse(BaseModel):
