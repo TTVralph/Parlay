@@ -5,14 +5,14 @@ import logging
 import re
 
 from .models import Leg
-from .player_identity import resolve_player_resolution, team_name_from_id
+from .identity_resolution import resolve_player_identity
 from .providers.base import EventInfo, ResultsProvider
 
-AMBIGUOUS_EVENT_WARNING = 'Multiple possible games. Add bet date to narrow results.'
-PLAYER_TEAM_UNRESOLVED_WARNING = 'Player team could not be resolved'
+AMBIGUOUS_EVENT_WARNING = 'multiple games found for resolved team on date'
+PLAYER_TEAM_UNRESOLVED_WARNING = 'team could not be resolved from player identity'
 MISSING_BET_DATE_WARNING = 'Missing bet date'
-NO_TEAM_GAME_ON_SELECTED_DATE_WARNING = "No game found for player's team on selected date"
-MULTIPLE_TEAM_GAMES_WARNING = 'Multiple valid games remain after filtering'
+NO_TEAM_GAME_ON_SELECTED_DATE_WARNING = 'no game found for resolved team on date'
+MULTIPLE_TEAM_GAMES_WARNING = 'multiple games found for resolved team on date'
 
 logger = logging.getLogger(__name__)
 
@@ -170,14 +170,12 @@ def _player_team_for_date(provider: ResultsProvider, player: str, posted_at: dat
 
 
 
-def _resolve_player_team(provider: ResultsProvider, player: str, posted_at: datetime | None, include_historical: bool) -> str | None:
+def _resolve_player_team(provider: ResultsProvider, player: str, sport: str, posted_at: datetime | None, include_historical: bool) -> str | None:
     team_from_provider = _player_team_for_date(provider, player, posted_at, include_historical=include_historical)
     if team_from_provider:
         return team_from_provider
-    resolution = resolve_player_resolution(player)
-    if resolution:
-        return resolution.resolved_team
-    return None
+    resolution = resolve_player_identity(player, sport=sport)
+    return resolution.resolved_team
 
 
 def _resolve_anchor(posted_at: datetime | None) -> datetime:
@@ -219,15 +217,20 @@ def resolve_leg_events(
         player_identity_id: str | None = None
         resolved_player_name: str | None = None
         if leg.player:
-            resolution = resolve_player_resolution(leg.player)
-            if resolution and leg.player != resolution.resolved_player_name:
+            resolution = resolve_player_identity(leg.player, sport=leg.sport)
+            if resolution.resolved_player_name and leg.player != resolution.resolved_player_name:
                 updates['player'] = resolution.resolved_player_name
-            if resolution:
+            if resolution.resolved_player_id:
                 player_identity_id = resolution.resolved_player_id
-                updates['resolution_confidence'] = resolution.resolution_confidence
+                updates['resolution_confidence'] = resolution.confidence
+            if resolution.ambiguity_reason:
+                notes.append(resolution.ambiguity_reason)
+                updates['resolution_ambiguity_reason'] = resolution.ambiguity_reason
+                if resolution.candidate_players:
+                    updates['candidate_players'] = list(resolution.candidate_players)
             player_lookup_name = str(updates.get('player', leg.player))
             resolved_player_name = player_lookup_name
-            player_team = _resolve_player_team(provider, player_lookup_name, anchor, include_historical)
+            player_team = _resolve_player_team(provider, player_lookup_name, leg.sport, anchor, include_historical)
             logger.debug(
                 'NBA prop player resolution: parsed_player=%s resolved_player=%s resolved_player_id=%s resolved_team=%s',
                 leg.player,
@@ -321,6 +324,8 @@ def resolve_leg_events(
         updates['resolved_player_id'] = player_identity_id
         updates['resolved_team'] = player_team
         updates['selected_bet_date'] = explicit_slip_date.isoformat() if explicit_slip_date else None
+        updates['resolution_ambiguity_reason'] = updates.get('resolution_ambiguity_reason')
+        updates['candidate_players'] = list(updates.get('candidate_players', []))
         updates['notes'] = notes
 
         if len(candidates) == 1:

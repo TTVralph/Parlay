@@ -182,4 +182,4 @@ def test_zero_team_games_on_selected_date_returns_specific_reason() -> None:
     resolved = resolve_leg_events([leg], provider, posted_at=date(2026, 10, 5), include_historical=True, bet_date=date(2026, 10, 5))
     assert resolved[0].event_id is None
     assert resolved[0].event_candidates == []
-    assert "No game found for player's team on selected date" in resolved[0].notes
+    assert "no game found for resolved team on date" in resolved[0].notes

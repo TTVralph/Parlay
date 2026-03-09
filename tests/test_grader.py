@@ -72,7 +72,7 @@ def test_review_explanation_when_multiple_candidate_games_exist() -> None:
     result = grade_text('Jokic over 24.5 points', posted_at=datetime.fromisoformat('2026-03-01T00:00:00'), include_historical=True)
     leg = result.legs[0]
     assert leg.settlement == 'unmatched'
-    assert leg.explanation_reason == 'multiple valid games remain after filtering'
+    assert leg.explanation_reason == 'multiple games found for resolved team on date'
     assert len(leg.candidate_games) > 1
 
 

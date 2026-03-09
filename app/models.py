@@ -57,6 +57,8 @@ class Leg(BaseModel):
     normalized_stat_type: Optional[str] = None
     resolved_player_id: Optional[str] = None
     resolution_confidence: Optional[float] = None
+    resolution_ambiguity_reason: Optional[str] = None
+    candidate_players: list[str] = Field(default_factory=list)
     parse_confidence: Optional[float] = None
 
 
@@ -96,6 +98,8 @@ class GradedLeg(BaseModel):
     resolved_player_id: Optional[str] = None
     matched_boxscore_player_name: Optional[str] = None
     resolution_confidence: Optional[float] = None
+    resolution_ambiguity_reason: Optional[str] = None
+    candidate_players: list[str] = Field(default_factory=list)
     parse_confidence: Optional[float] = None
 
 
