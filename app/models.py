@@ -112,6 +112,26 @@ class GradedLeg(BaseModel):
     identity_match_confidence: Optional[Literal['HIGH', 'MEDIUM', 'LOW']] = None
     resolved_team_hint: Optional[str] = None
     validation_warnings: list[str] = Field(default_factory=list)
+    settlement_explanation: Optional['SettlementExplanation'] = None
+
+
+class SettlementExplanation(BaseModel):
+    raw_leg_text: str
+    raw_player_text: Optional[str] = None
+    matched_canonical_player: Optional[str] = None
+    matched_team: Optional[str] = None
+    identity_match_method: Optional[str] = None
+    identity_confidence: Optional[float] = None
+    matched_event: Optional[str] = None
+    matched_market: Optional[str] = None
+    normalized_selection: Optional[str] = None
+    line: Optional[float] = None
+    actual_stat_value: Optional[float] = None
+    result: Settlement = 'unmatched'
+    settlement_reason_code: str
+    settlement_reason: str
+    warnings: list[str] = Field(default_factory=list)
+    grading_confidence: float = 0.0
 
 
 class GradeResponse(BaseModel):
