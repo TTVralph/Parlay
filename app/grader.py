@@ -136,6 +136,12 @@ def _base_leg_kwargs(leg: Leg) -> dict:
         'identity_last_refreshed_at': leg.identity_last_refreshed_at,
         'identity_match_method': leg.identity_match_method,
         'identity_match_confidence': leg.identity_match_confidence,
+        'matched_event_date': leg.matched_event_date,
+        'matched_team': leg.matched_team,
+        'event_resolution_confidence': leg.event_resolution_confidence,
+        'event_resolution_warnings': leg.event_resolution_warnings,
+        'slip_default_date': leg.slip_default_date,
+        'mixed_event_dates_detected': leg.mixed_event_dates_detected,
     }
 
 
@@ -486,6 +492,7 @@ def grade_text(
     selected_event_id: str | None = None,
     selected_event_by_leg_id: dict[str, str] | None = None,
     bet_date: date | None = None,
+    screenshot_default_date: date | None = None,
     code_path: str = 'manual_text_slip_grading',
 ) -> GradeResponse:
     provider = provider or get_results_provider()
@@ -498,6 +505,7 @@ def grade_text(
         selected_event_id=selected_event_id,
         selected_event_by_leg_id=selected_event_by_leg_id,
         bet_date=bet_date,
+        screenshot_default_date=screenshot_default_date,
     )
     has_confident_match = any(leg.event_id for leg in resolved_legs)
     if not has_confident_match and not include_historical:
@@ -509,6 +517,7 @@ def grade_text(
             selected_event_id=selected_event_id,
             selected_event_by_leg_id=selected_event_by_leg_id,
             bet_date=bet_date,
+            screenshot_default_date=screenshot_default_date,
         )
     graded = [settle_leg(leg, provider, code_path=code_path) for leg in resolved_legs]
 

@@ -68,6 +68,14 @@ class Leg(BaseModel):
     identity_match_method: Optional[str] = None
     identity_match_confidence: Optional[Literal['HIGH', 'MEDIUM', 'LOW']] = None
     resolved_team_hint: Optional[str] = None
+    matched_event_id: Optional[str] = None
+    matched_event_label: Optional[str] = None
+    matched_event_date: Optional[str] = None
+    matched_team: Optional[str] = None
+    event_resolution_confidence: Optional[Literal['high', 'medium', 'low']] = None
+    event_resolution_warnings: list[str] = Field(default_factory=list)
+    slip_default_date: Optional[str] = None
+    mixed_event_dates_detected: Optional[bool] = None
 
 
 class ParseResponse(BaseModel):
@@ -117,6 +125,12 @@ class GradedLeg(BaseModel):
     validation_warnings: list[str] = Field(default_factory=list)
     settlement_explanation: Optional['SettlementExplanation'] = None
     settlement_diagnostics: dict[str, Any] = Field(default_factory=dict)
+    matched_event_date: Optional[str] = None
+    matched_team: Optional[str] = None
+    event_resolution_confidence: Optional[Literal['high', 'medium', 'low']] = None
+    event_resolution_warnings: list[str] = Field(default_factory=list)
+    slip_default_date: Optional[str] = None
+    mixed_event_dates_detected: Optional[bool] = None
 
 
 class SettlementExplanation(BaseModel):

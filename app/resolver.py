@@ -40,19 +40,19 @@ def _opponent_from_leg(leg: Leg) -> str | None:
     return match.group(1).strip() if match else None
 
 
-def _filter_by_opponent(candidates: list[EventInfo], opponent: str | None) -> list[EventInfo]:
+def _filter_by_opponent(candidates: list[EventInfo], opponent: str | None) -> tuple[list[EventInfo], bool]:
     if not opponent:
-        return candidates
+        return candidates, False
     norm_opp = _norm(opponent)
     if not norm_opp:
-        return candidates
+        return candidates, False
     matched = []
     for event in candidates:
         home = _norm(event.home_team)
         away = _norm(event.away_team)
         if norm_opp in {home, away} or norm_opp in home or norm_opp in away or home in norm_opp or away in norm_opp:
             matched.append(event)
-    return matched or candidates
+    return (matched or candidates), bool(matched)
 
 
 def _event_matches_slip_date(event: EventInfo, slip_value: date | datetime | None) -> bool:
@@ -61,7 +61,6 @@ def _event_matches_slip_date(event: EventInfo, slip_value: date | datetime | Non
     if isinstance(slip_value, date) and not isinstance(slip_value, datetime):
         if event.start_time.date() == slip_value:
             return True
-        # ESPN start times are UTC and can roll to the next day for late US tipoffs.
         if event.start_time.tzinfo is not None:
             return (event.start_time - timedelta(hours=8)).date() == slip_value
         return False
@@ -78,8 +77,6 @@ def _filter_by_slip_date(candidates: list[EventInfo], slip_value: date | datetim
     if slip_value is None:
         return candidates
     return [event for event in candidates if _event_matches_slip_date(event, slip_value)]
-
-
 
 
 def _filter_by_slip_date_with_historical_fallback(
@@ -99,6 +96,7 @@ def _filter_by_slip_date_with_historical_fallback(
     if include_historical:
         return candidates
     return filtered
+
 
 def _event_contains_team(event: EventInfo, team: str | None) -> bool:
     if not team:
@@ -172,15 +170,12 @@ def _player_team_for_date(provider: ResultsProvider, player: str, posted_at: dat
         return resolver(player, posted_at)
 
 
-
 def _resolve_player_team(provider: ResultsProvider, player: str, sport: str, posted_at: datetime | None, include_historical: bool) -> str | None:
     team_from_provider = _player_team_for_date(provider, player, posted_at, include_historical=include_historical)
     if team_from_provider:
         return team_from_provider
     resolution = resolve_player_identity(player, sport=sport)
     return resolution.resolved_team
-
-
 
 
 def _infer_same_game_event(
@@ -211,6 +206,17 @@ def _infer_same_game_event(
     event_id, hits = max(team_event_counts.items(), key=lambda item: item[1])
     return event_id if hits >= 2 else None
 
+
+def _resolution_confidence_for_leg(leg: Leg) -> str:
+    if leg.event_id and not leg.event_resolution_warnings:
+        return 'high'
+    if leg.event_id:
+        return 'medium'
+    if 'ambiguous_event_match' in leg.event_resolution_warnings or 'multiple_candidate_events' in leg.event_resolution_warnings:
+        return 'low'
+    return 'low'
+
+
 def resolve_leg_events(
     legs: list[Leg],
     provider: ResultsProvider,
@@ -220,24 +226,36 @@ def resolve_leg_events(
     selected_event_id: str | None = None,
     selected_event_by_leg_id: dict[str, str] | None = None,
     bet_date: date | None = None,
+    screenshot_default_date: date | None = None,
 ) -> list[Leg]:
-    explicit_slip_date = bet_date or (posted_at if isinstance(posted_at, date) and not isinstance(posted_at, datetime) else None)
-    slip_filter_value: date | datetime | None = explicit_slip_date or posted_at
-    anchor_input: datetime | None
+    explicit_slip_date = bet_date
+    slip_default_date = explicit_slip_date or screenshot_default_date or (posted_at if isinstance(posted_at, date) and not isinstance(posted_at, datetime) else None)
+    slip_filter_value: date | datetime | None = slip_default_date or posted_at
+    default_date_reason = (
+        'explicit_slip_date_used' if explicit_slip_date else (
+            'screenshot_date_used' if screenshot_default_date else (
+                'screenshot_date_used' if isinstance(posted_at, date) and not isinstance(posted_at, datetime) else None
+            )
+        )
+    )
+
     if isinstance(posted_at, datetime):
-        anchor_input = posted_at
-    elif explicit_slip_date is not None:
-        anchor_input = datetime.combine(explicit_slip_date, datetime.min.time())
+        anchor_input: datetime | None = posted_at
+    elif slip_default_date is not None:
+        anchor_input = datetime.combine(slip_default_date, datetime.min.time())
     else:
         anchor_input = None
     anchor = anchor_input
+
     resolved: list[Leg] = []
     resolved_event_ids: set[str] = set()
     resolved_team_event_ids: dict[str, set[str]] = {}
     resolved_team_date_event_ids: dict[tuple[str, date], set[str]] = {}
+
     for index, leg in enumerate(legs):
         updates: dict[str, object | None] = {}
         notes = list(leg.notes)
+        resolution_warnings: list[str] = []
         candidates: list[EventInfo] = []
         opponent = _opponent_from_leg(leg)
         player_team: str | None = None
@@ -248,6 +266,10 @@ def resolve_leg_events(
         resolved_team_hint: str | None = None
         directory_loaded = bool(resolve_player_identity('Nikola Jokic', sport=leg.sport).resolved_player_id) if leg.sport == 'NBA' else True
         normalized_lookup_key = normalize_entity_name(leg.player) if leg.player else None
+
+        if default_date_reason:
+            resolution_warnings.append(default_date_reason)
+
         if leg.player:
             resolution = resolve_player_identity(leg.player, sport=leg.sport)
             if resolution.resolved_player_name and leg.player != resolution.resolved_player_name:
@@ -271,13 +293,6 @@ def resolve_leg_events(
             player_lookup_name = str(updates.get('player', leg.player))
             resolved_player_name = player_lookup_name
             player_team = _resolve_player_team(provider, player_lookup_name, leg.sport, anchor, include_historical)
-            logger.debug(
-                'NBA prop player resolution: parsed_player=%s resolved_player=%s resolved_player_id=%s resolved_team=%s',
-                leg.player,
-                player_lookup_name,
-                player_identity_id,
-                player_team,
-            )
             notes.append(f'diagnostic: parsed_player_name={leg.player}')
             notes.append(f'diagnostic: normalized_player_lookup_key={normalized_lookup_key}')
             notes.append(f'diagnostic: sport_directory_loaded={directory_loaded}')
@@ -297,20 +312,15 @@ def resolve_leg_events(
             if leg.sport == 'NBA' and explicit_slip_date is not None:
                 resolved_game = resolve_player_game(player_lookup_name, explicit_slip_date.isoformat(), provider=provider)
                 if resolved_game is not None:
-                    candidates = [
-                        EventInfo(
-                            event_id=resolved_game.event_id,
-                            sport=resolved_game.sport,
-                            home_team=resolved_game.home_team,
-                            away_team=resolved_game.away_team,
-                            start_time=resolved_game.start_time,
-                        )
-                    ]
+                    candidates = [EventInfo(event_id=resolved_game.event_id, sport=resolved_game.sport, home_team=resolved_game.home_team, away_team=resolved_game.away_team, start_time=resolved_game.start_time)]
                     updates['matched_by'] = 'player_identity_team_schedule_lookup'
+                    resolution_warnings.append('player_team_date_lookup_used')
+
             if not candidates:
                 candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
+
             notes.append(f'diagnostic: candidate_events_before_filtering={len(candidates)}')
-            logger.debug('NBA prop candidate games before team filtering: player=%s candidates=%s', player_lookup_name, _event_ids(candidates))
+
             if leg.sport == 'NBA' and not player_team and PLAYER_TEAM_UNRESOLVED_WARNING not in notes:
                 notes.append(PLAYER_TEAM_UNRESOLVED_WARNING)
 
@@ -327,12 +337,6 @@ def resolve_leg_events(
                     if TEAM_EVENT_MISMATCH_WARNING not in notes:
                         notes.append(TEAM_EVENT_MISMATCH_WARNING)
                     updates['resolution_confidence'] = min(float(updates.get('resolution_confidence') or leg.resolution_confidence or 1.0), 0.3)
-                logger.debug(
-                    'NBA prop candidate games after team filtering: player=%s team=%s candidates=%s',
-                    player_lookup_name,
-                    player_team,
-                    _event_ids(candidates),
-                )
                 context_date = _context_date_for_leg(slip_filter_value)
                 if context_date is not None:
                     team_day_links = resolved_team_date_event_ids.get((_norm(player_team), context_date), set())
@@ -344,7 +348,11 @@ def resolve_leg_events(
                 if explicit_slip_date is not None and not candidates:
                     if NO_TEAM_GAME_ON_SELECTED_DATE_WARNING not in notes:
                         notes.append(NO_TEAM_GAME_ON_SELECTED_DATE_WARNING)
-            candidates = _filter_by_opponent(candidates, opponent)
+                    resolution_warnings.append('no_candidate_events')
+
+            candidates, opponent_used = _filter_by_opponent(candidates, opponent)
+            if opponent_used:
+                resolution_warnings.append('screenshot_matchup_used')
             notes.append(f'diagnostic: candidate_events_after_filtering={len(candidates)}')
             updates['matched_by'] = updates.get('matched_by') or 'player_boxscore_lookup'
 
@@ -354,9 +362,11 @@ def resolve_leg_events(
             explicit_slip_date=explicit_slip_date,
             include_historical=include_historical,
         )
+
         if leg.player and leg.sport == 'NBA' and player_team and explicit_slip_date is not None and not candidates:
             if NO_TEAM_GAME_ON_SELECTED_DATE_WARNING not in notes:
                 notes.append(NO_TEAM_GAME_ON_SELECTED_DATE_WARNING)
+            resolution_warnings.append('no_candidate_events')
 
         selected_for_leg = None
         if selected_event_by_leg_id:
@@ -387,6 +397,7 @@ def resolve_leg_events(
         updates['identity_match_confidence'] = updates.get('identity_match_confidence')
         updates['resolved_team_hint'] = resolved_team_hint
         updates['selected_bet_date'] = explicit_slip_date.isoformat() if explicit_slip_date else None
+        updates['slip_default_date'] = slip_default_date.isoformat() if slip_default_date else None
         updates['resolution_ambiguity_reason'] = updates.get('resolution_ambiguity_reason')
         updates['candidate_players'] = list(updates.get('candidate_players', []))
         updates['notes'] = notes
@@ -404,12 +415,19 @@ def resolve_leg_events(
             updates['event_label'] = event.label
             updates['event_start_time'] = event.start_time
             updates['event_candidates'] = []
-            logger.debug('NBA prop final selected game: player=%s selected=%s', leg.player, event.event_id)
+            updates['matched_event_id'] = event.event_id
+            updates['matched_event_label'] = event.label
+            updates['matched_event_date'] = event.start_time.date().isoformat()
+            updates['matched_team'] = player_team or leg.team
+            updates['event_resolution_warnings'] = list(dict.fromkeys(resolution_warnings))
+            resolved_leg = leg.model_copy(update=updates)
+            updates['event_resolution_confidence'] = _resolution_confidence_for_leg(resolved_leg)
             resolved.append(leg.model_copy(update=updates))
             continue
 
         if len(candidates) > 1:
             updates['event_candidates'] = [_event_candidate_payload(event) for event in candidates[:5]]
+            resolution_warnings.extend(['multiple_candidate_events', 'ambiguous_event_match'])
             if AMBIGUOUS_EVENT_WARNING not in notes:
                 notes.append(AMBIGUOUS_EVENT_WARNING)
             if leg.player and leg.sport == 'NBA':
@@ -421,23 +439,23 @@ def resolve_leg_events(
                     notes.append(MULTIPLE_TEAM_GAMES_WARNING)
             updates['notes'] = notes
             updates['matched_by'] = None
-            logger.debug('NBA prop final selected game: player=%s selected=%s reason=ambiguous candidates=%s', leg.player, None, _event_ids(candidates))
+            updates['event_resolution_warnings'] = list(dict.fromkeys(resolution_warnings))
+            updates['event_resolution_confidence'] = 'low'
             resolved.append(leg.model_copy(update=updates))
             continue
 
+        if not candidates:
+            resolution_warnings.append('no_candidate_events')
+        updates['event_resolution_warnings'] = list(dict.fromkeys(resolution_warnings))
+        unresolved_leg = leg.model_copy(update=updates)
+        updates['event_resolution_confidence'] = _resolution_confidence_for_leg(unresolved_leg)
         resolved.append(leg.model_copy(update=updates))
 
-    # Second pass: infer event for game totals and same-game NBA prop clusters.
     non_total_event_ids = {leg.event_id for leg in resolved if leg.market_type != 'game_total' and leg.event_id}
     inferred_event = next(iter(non_total_event_ids)) if len(non_total_event_ids) == 1 else None
     unresolved_player_legs = [leg for leg in resolved if leg.sport == 'NBA' and leg.player and not leg.event_id]
-    inferred_same_game_event_id = _infer_same_game_event(
-        unresolved_player_legs,
-        provider,
-        anchor,
-        include_historical,
-        slip_filter_value,
-    )
+    inferred_same_game_event_id = _infer_same_game_event(unresolved_player_legs, provider, anchor, include_historical, slip_filter_value)
+
     inferred_same_game_event: EventInfo | None = None
     if inferred_same_game_event_id:
         event_lookup = getattr(provider, 'get_event_info', None)
@@ -453,44 +471,36 @@ def resolve_leg_events(
                         break
                 if inferred_same_game_event is not None:
                     break
+
     final_resolved: list[Leg] = []
     for leg in resolved:
         if leg.market_type == 'game_total' and not leg.event_id and inferred_event:
             donor = next(item for item in resolved if item.event_id == inferred_event)
-            final_resolved.append(
-                leg.model_copy(
-                    update={
-                        'event_id': donor.event_id,
-                        'event_label': donor.event_label,
-                        'event_start_time': donor.event_start_time,
-                        'matched_by': 'ticket_event_inference',
-                        'notes': list(leg.notes),
-                        'event_candidates': [],
-                    }
-                )
-            )
+            final_resolved.append(leg.model_copy(update={'event_id': donor.event_id, 'event_label': donor.event_label, 'event_start_time': donor.event_start_time, 'matched_by': 'ticket_event_inference', 'notes': list(leg.notes), 'event_candidates': [], 'matched_event_id': donor.event_id, 'matched_event_label': donor.event_label, 'matched_event_date': donor.event_start_time.date().isoformat() if donor.event_start_time else None, 'event_resolution_confidence': 'medium'}))
             continue
         if leg.event_id is None and inferred_same_game_event is not None and leg.player and leg.resolved_team:
             teams = {_norm(inferred_same_game_event.home_team), _norm(inferred_same_game_event.away_team)}
             if _norm(leg.resolved_team) in teams:
                 notes = list(leg.notes)
+                warnings = list(leg.event_resolution_warnings)
+                warnings.append('same_game_team_cluster_inference')
                 notes.append(f'diagnostic: shared_event_inference={inferred_same_game_event.event_id}')
-                final_resolved.append(
-                    leg.model_copy(update={
-                        'event_id': inferred_same_game_event.event_id,
-                        'event_label': inferred_same_game_event.label,
-                        'event_start_time': inferred_same_game_event.start_time,
-                        'matched_by': 'same_game_team_cluster_inference',
-                        'event_candidates': [],
-                        'notes': notes,
-                    })
-                )
+                final_resolved.append(leg.model_copy(update={'event_id': inferred_same_game_event.event_id, 'event_label': inferred_same_game_event.label, 'event_start_time': inferred_same_game_event.start_time, 'matched_by': 'same_game_team_cluster_inference', 'event_candidates': [], 'notes': notes, 'matched_event_id': inferred_same_game_event.event_id, 'matched_event_label': inferred_same_game_event.label, 'matched_event_date': inferred_same_game_event.start_time.date().isoformat(), 'matched_team': leg.resolved_team, 'event_resolution_warnings': list(dict.fromkeys(warnings)), 'event_resolution_confidence': 'medium'}))
                 continue
         if leg.event_id is None:
             notes = list(leg.notes)
             if 'Could not confidently resolve event/date for this leg' not in notes:
                 notes.append('Could not confidently resolve event/date for this leg')
-            final_resolved.append(leg.model_copy(update={'notes': notes}))
+            final_resolved.append(leg.model_copy(update={'notes': notes, 'event_resolution_confidence': 'low'}))
             continue
         final_resolved.append(leg)
-    return final_resolved
+
+    event_dates = {leg.matched_event_date for leg in final_resolved if leg.matched_event_date}
+    mixed_dates = len(event_dates) > 1
+    out: list[Leg] = []
+    for leg in final_resolved:
+        warnings = list(leg.event_resolution_warnings)
+        if mixed_dates:
+            warnings.append('mixed_event_dates_detected')
+        out.append(leg.model_copy(update={'mixed_event_dates_detected': mixed_dates, 'event_resolution_warnings': list(dict.fromkeys(warnings))}))
+    return out
