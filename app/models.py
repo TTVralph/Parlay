@@ -60,6 +60,9 @@ class Leg(BaseModel):
     resolution_ambiguity_reason: Optional[str] = None
     candidate_players: list[str] = Field(default_factory=list)
     parse_confidence: Optional[float] = None
+    identity_source: Optional[str] = None
+    identity_last_refreshed_at: Optional[str] = None
+    resolved_team_hint: Optional[str] = None
 
 
 class ParseResponse(BaseModel):
@@ -101,6 +104,9 @@ class GradedLeg(BaseModel):
     resolution_ambiguity_reason: Optional[str] = None
     candidate_players: list[str] = Field(default_factory=list)
     parse_confidence: Optional[float] = None
+    identity_source: Optional[str] = None
+    identity_last_refreshed_at: Optional[str] = None
+    resolved_team_hint: Optional[str] = None
 
 
 class GradeResponse(BaseModel):

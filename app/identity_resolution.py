@@ -12,6 +12,8 @@ from time import monotonic
 from typing import Any, Protocol
 from urllib import error, request
 
+from .sports_reference_identity import NBA_PLAYERS_CACHE_PATH, NBA_TEAMS_CACHE_PATH
+
 SportCode = str
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,8 @@ class PlayerResolutionResult:
     confidence: float
     ambiguity_reason: str | None = None
     candidate_players: tuple[str, ...] = ()
+    identity_source: str | None = None
+    identity_last_refreshed_at: str | None = None
 
 
 class SportIdentityAdapter(Protocol):
@@ -318,10 +322,61 @@ def _maybe_refresh_nba_directory() -> None:
 _maybe_refresh_nba_directory._last_checked = 0.0  # type: ignore[attr-defined]
 
 
+def nba_identity_metadata() -> dict[str, str | None]:
+    if NBA_PLAYERS_CACHE_PATH.exists():
+        try:
+            payload = json.loads(NBA_PLAYERS_CACHE_PATH.read_text())
+        except json.JSONDecodeError:
+            payload = []
+        if isinstance(payload, list) and payload:
+            first = payload[0] if isinstance(payload[0], dict) else {}
+            return {
+                'identity_source': str(first.get('source_site') or 'basketball-reference'),
+                'identity_last_refreshed_at': str(first.get('last_refreshed_at') or '') or None,
+            }
+    if _NBA_DIRECTORY_PATH.exists():
+        try:
+            payload = json.loads(_NBA_DIRECTORY_PATH.read_text())
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            return {
+                'identity_source': 'legacy-nba-directory',
+                'identity_last_refreshed_at': str(payload.get('last_refreshed_at') or payload.get('generated_at') or '') or None,
+            }
+    return {'identity_source': None, 'identity_last_refreshed_at': None}
+
+
 class NBAIdentityAdapter:
     sport = 'NBA'
 
     def load_teams(self) -> tuple[CanonicalTeamIdentity, ...]:
+        if NBA_TEAMS_CACHE_PATH.exists():
+            try:
+                payload = json.loads(NBA_TEAMS_CACHE_PATH.read_text())
+            except json.JSONDecodeError:
+                payload = []
+            parsed: list[CanonicalTeamIdentity] = []
+            for row in payload if isinstance(payload, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                full_name = str(row.get('full_team_name') or '').strip()
+                canonical_team_id = str(row.get('canonical_team_id') or '').strip()
+                if not full_name or not canonical_team_id:
+                    continue
+                parsed.append(
+                    CanonicalTeamIdentity(
+                        sport='NBA',
+                        canonical_team_id=canonical_team_id,
+                        source_team_ids={},
+                        full_team_name=full_name,
+                        normalized_team_name=normalize_entity_name(full_name),
+                        abbreviations=tuple(str(item) for item in row.get('abbreviations', []) if str(item).strip()),
+                        aliases=tuple(str(item) for item in row.get('aliases', []) if str(item).strip()),
+                    )
+                )
+            return tuple(parsed)
+
         players = self.load_players()
         seen: dict[str, CanonicalTeamIdentity] = {}
         for p in players:
@@ -341,6 +396,35 @@ class NBAIdentityAdapter:
         return tuple(seen.values())
 
     def load_players(self) -> tuple[CanonicalPlayerIdentity, ...]:
+        if NBA_PLAYERS_CACHE_PATH.exists():
+            try:
+                payload = json.loads(NBA_PLAYERS_CACHE_PATH.read_text())
+            except json.JSONDecodeError:
+                payload = []
+            parsed: list[CanonicalPlayerIdentity] = []
+            for row in payload if isinstance(payload, list) else []:
+                if not isinstance(row, dict):
+                    continue
+                full_name = str(row.get('full_name') or '').strip()
+                if not full_name:
+                    continue
+                current_team_name = str(row.get('current_team_name') or '').strip()
+                current_team_abbr = str(row.get('current_team_abbr') or '').strip()
+                parsed.append(
+                    CanonicalPlayerIdentity(
+                        sport='NBA',
+                        canonical_player_id=str(row.get('canonical_player_id') or f"nba-{_slugify_player_id(full_name)}"),
+                        source_player_ids={},
+                        full_name=full_name,
+                        normalized_name=normalize_entity_name(str(row.get('normalized_name') or full_name)),
+                        alternate_names=tuple(str(alias).strip() for alias in row.get('alias_keys', []) if str(alias).strip()),
+                        team_id=(f'nba-team-{current_team_abbr.lower()}' if current_team_abbr else None),
+                        team_name=(current_team_name or None),
+                        active_status=str(row.get('active_status') or 'unknown'),
+                    )
+                )
+            return tuple(parsed)
+
         _maybe_refresh_nba_directory()
         if not _NBA_DIRECTORY_PATH.exists():
             logger.warning('NBA directory file missing; identity resolution will be incomplete')
@@ -452,18 +536,28 @@ def _player_directory(sport: SportCode) -> tuple[dict[str, CanonicalPlayerIdenti
 
 
 def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -> PlayerResolutionResult:
+    metadata = nba_identity_metadata() if sport == 'NBA' else {'identity_source': None, 'identity_last_refreshed_at': None}
     if not player_name:
-        return PlayerResolutionResult(sport=sport, resolved_player_name=None, resolved_player_id=None, resolved_team=None, confidence=0.0, ambiguity_reason='player not found in sport directory')
+        return PlayerResolutionResult(
+            sport=sport,
+            resolved_player_name=None,
+            resolved_player_id=None,
+            resolved_team=None,
+            confidence=0.0,
+            ambiguity_reason='player not found in sport directory',
+            identity_source=metadata['identity_source'],
+            identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
+        )
 
     normalized = normalize_entity_name(player_name)
     by_id, by_name = _player_directory(sport)
     direct = by_name.get(normalized, [])
     if len(direct) == 1:
         p = direct[0]
-        return PlayerResolutionResult(sport, p.full_name, p.canonical_player_id, p.team_name, 1.0)
+        return PlayerResolutionResult(sport, p.full_name, p.canonical_player_id, p.team_name, 1.0, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
     if len(direct) > 1:
         names = tuple(sorted(item.full_name for item in direct))
-        return PlayerResolutionResult(sport, None, None, None, 0.5, ambiguity_reason='player identity ambiguous', candidate_players=names)
+        return PlayerResolutionResult(sport, None, None, None, 0.5, ambiguity_reason='player identity ambiguous', candidate_players=names, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
 
     ranked: list[tuple[float, CanonicalPlayerIdentity]] = []
     for p in by_id.values():
@@ -475,15 +569,15 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
             ranked.append((score, p))
     ranked.sort(key=lambda item: item[0], reverse=True)
     if not ranked:
-        return PlayerResolutionResult(sport, None, None, None, 0.0, ambiguity_reason='player not found in sport directory')
+        return PlayerResolutionResult(sport, None, None, None, 0.0, ambiguity_reason='player not found in sport directory', identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
     if ranked[0][0] < 0.86:
         suggestions = tuple(item[1].full_name for item in ranked[:3])
-        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player not found in sport directory', candidate_players=suggestions)
+        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player not found in sport directory', candidate_players=suggestions, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
     if len(ranked) > 1 and (ranked[0][0] - ranked[1][0]) < 0.05:
         names = tuple(item[1].full_name for item in ranked[:3])
-        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player identity ambiguous', candidate_players=names)
+        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player identity ambiguous', candidate_players=names, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
     pick = ranked[0][1]
-    return PlayerResolutionResult(sport, pick.full_name, pick.canonical_player_id, pick.team_name, round(ranked[0][0], 2))
+    return PlayerResolutionResult(sport, pick.full_name, pick.canonical_player_id, pick.team_name, round(ranked[0][0], 2), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'])
 
 
 def resolve_team_name(team_id: str | None, sport: SportCode = 'NBA') -> str | None:
