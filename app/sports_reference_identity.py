@@ -19,12 +19,15 @@ TEAM_ROSTER_URL_TEMPLATE = BASKETBALL_REFERENCE_ROOT + '/teams/{team_abbr}/{seas
 
 NBA_PLAYERS_CACHE_PATH = Path(__file__).resolve().parent.parent / 'data' / 'nba_players.json'
 NBA_TEAMS_CACHE_PATH = Path(__file__).resolve().parent.parent / 'data' / 'nba_teams.json'
+NBA_REFRESH_REPORT_PATH = Path(__file__).resolve().parent.parent / 'data' / 'nba_players.refresh_report.json'
 NBA_TEAM_ABBREVIATIONS = (
     'ATL', 'BOS', 'BRK', 'CHO', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
     'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
     'OKC', 'ORL', 'PHI', 'PHO', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS',
 )
 MINIMUM_REASONABLE_TEAM_ROSTER_SIZE = 8
+MINIMUM_REASONABLE_FINAL_PLAYER_COUNT = 350
+MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT = 700
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +154,25 @@ def _parse_team_roster(html: str) -> list[dict[str, str]]:
     return rows
 
 
+def _load_existing_players() -> dict[str, dict[str, object]]:
+    if not NBA_PLAYERS_CACHE_PATH.exists():
+        return {}
+    try:
+        parsed = json.loads(NBA_PLAYERS_CACHE_PATH.read_text())
+    except Exception:
+        return {}
+    if not isinstance(parsed, list):
+        return {}
+    output: dict[str, dict[str, object]] = {}
+    for row in parsed:
+        if not isinstance(row, dict):
+            continue
+        canonical_id = str(row.get('canonical_player_id') or '').strip()
+        if canonical_id:
+            output[canonical_id] = row
+    return output
+
+
 def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False) -> dict[str, str | int | dict[str, object] | bool]:
     now = datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat()
     current_year = datetime.now(tz=timezone.utc).year
@@ -159,13 +181,20 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
     parsed_teams = _parse_teams(teams_html)
     team_name_by_abbr = {team.abbreviations[0]: team.full_team_name for team in parsed_teams}
 
+    previous_players_by_id = _load_existing_players()
+
     players_by_id: dict[str, dict[str, object]] = {}
+    source_names_by_id: dict[str, set[str]] = {}
+    index_player_count = 0
+    roster_player_count = 0
     active_candidates: list[tuple[str, str, str]] = []
     for letter in 'abcdefghijklmnopqrstuvwxyz':
         html = _fetch_text(PLAYER_INDEX_URL_TEMPLATE.format(letter=letter))
         for row in _parse_player_index(html):
+            index_player_count += 1
             status = 'active' if int(row['year_max']) >= (current_year - 1) else 'inactive'
             canonical_id = _canonical_player_id(row['player_code'])
+            source_names_by_id.setdefault(canonical_id, set()).add(str(row['full_name']))
             players_by_id[canonical_id] = {
                 'canonical_player_id': canonical_id,
                 'sport': 'NBA',
@@ -180,6 +209,8 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
                 'source_site': SPORTS_REFERENCE_SITE,
                 'identity_source': SPORTS_REFERENCE_SITE,
                 'source_url': row['source_url'],
+                'source_contributions': ['index'],
+                'roster_data_applied': False,
                 'last_refreshed_at': now,
                 'identity_last_refreshed_at': now,
             }
@@ -190,6 +221,7 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
     teams_failed: list[str] = []
     roster_counts_by_team: dict[str, int] = {}
     roster_only_players_added = 0
+    roster_player_ids: set[str] = set()
 
     for team_abbr in NBA_TEAM_ABBREVIATIONS:
         team_name = team_name_by_abbr.get(team_abbr, team_abbr)
@@ -207,13 +239,20 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
         logger.info('NBA roster import succeeded for %s players=%s', team_abbr, len(parsed_roster))
 
         for row in parsed_roster:
+            roster_player_count += 1
             canonical_id = _canonical_player_id(row['player_code'])
+            roster_player_ids.add(canonical_id)
+            source_names_by_id.setdefault(canonical_id, set()).add(str(row['full_name']))
             existing = players_by_id.get(canonical_id)
             if existing is not None:
                 existing['current_team_abbr'] = team_abbr
                 existing['current_team_name'] = team_name
                 existing['team_id'] = _canonical_team_id(team_abbr)
                 existing['team_name'] = team_name
+                contributions = set(existing.get('source_contributions') or [])
+                contributions.add('roster')
+                existing['source_contributions'] = sorted(contributions)
+                existing['roster_data_applied'] = True
                 continue
 
             players_by_id[canonical_id] = {
@@ -230,6 +269,8 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
                 'source_site': SPORTS_REFERENCE_SITE,
                 'identity_source': SPORTS_REFERENCE_SITE,
                 'source_url': row['source_url'],
+                'source_contributions': ['roster'],
+                'roster_data_applied': True,
                 'last_refreshed_at': now,
                 'identity_last_refreshed_at': now,
             }
@@ -243,7 +284,8 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
         team_name, team_abbr, status = _extract_current_team_from_player_page(html)
         for row in players:
             if row['canonical_player_id'] == _canonical_player_id(code):
-                if team_abbr and team_name:
+                is_rostered = bool(row.get('roster_data_applied'))
+                if team_abbr and team_name and not is_rostered:
                     row['current_team_name'] = team_name
                     row['current_team_abbr'] = team_abbr
                     row['team_id'] = _canonical_team_id(team_abbr)
@@ -272,45 +314,109 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
     players.sort(key=lambda item: str(item.get('full_name') or ''))
     teams.sort(key=lambda item: str(item.get('full_team_name') or ''))
 
-    NBA_PLAYERS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    NBA_PLAYERS_CACHE_PATH.write_text(json.dumps(players, separators=(',', ':'), ensure_ascii=False) + '\n')
-    NBA_TEAMS_CACHE_PATH.write_text(json.dumps(teams, separators=(',', ':'), ensure_ascii=False) + '\n')
-
-    if gzip_output:
-        import gzip
-
-        with gzip.open(str(NBA_PLAYERS_CACHE_PATH) + '.gz', 'wt', encoding='utf-8') as f:
-            json.dump(players, f, separators=(',', ':'), ensure_ascii=False)
-        with gzip.open(str(NBA_TEAMS_CACHE_PATH) + '.gz', 'wt', encoding='utf-8') as f:
-            json.dump(teams, f, separators=(',', ':'), ensure_ascii=False)
-
+    roster_ids_missing_from_final = sorted(roster_player_ids.difference(str(p.get('canonical_player_id') or '') for p in players))
     missing_team_assignments = sorted(str(p.get('full_name') or '') for p in players if not p.get('team_id') or not p.get('team_name'))
+    active_players_with_null_team_fields = sorted(
+        str(p.get('full_name') or '')
+        for p in players
+        if p.get('active_status') != 'inactive'
+        and (not p.get('current_team_name') or not p.get('current_team_abbr') or not p.get('team_id') or not p.get('team_name'))
+    )
+    roster_players_with_null_team_fields = sorted(
+        str(p.get('full_name') or '')
+        for p in players
+        if str(p.get('canonical_player_id') or '') in roster_player_ids
+        and (not p.get('current_team_name') or not p.get('current_team_abbr') or not p.get('team_id') or not p.get('team_name'))
+    )
     suspiciously_low_roster_counts = [
         {'team_abbr': team_abbr, 'roster_count': roster_counts_by_team.get(team_abbr, 0)}
         for team_abbr in NBA_TEAM_ABBREVIATIONS
         if roster_counts_by_team.get(team_abbr, 0) < MINIMUM_REASONABLE_TEAM_ROSTER_SIZE
     ]
+    duplicate_canonical_ids = [
+        {'canonical_player_id': canonical_id, 'distinct_names_seen': sorted(names)}
+        for canonical_id, names in sorted(source_names_by_id.items())
+        if len(names) > 1
+    ]
+    team_changes_from_previous = []
+    for player in players:
+        canonical_id = str(player.get('canonical_player_id') or '')
+        previous = previous_players_by_id.get(canonical_id)
+        if not previous:
+            continue
+        prev_abbr = str(previous.get('current_team_abbr') or '').strip()
+        new_abbr = str(player.get('current_team_abbr') or '').strip()
+        if prev_abbr and new_abbr and prev_abbr != new_abbr:
+            team_changes_from_previous.append({'canonical_player_id': canonical_id, 'from': prev_abbr, 'to': new_abbr})
+
+    total_teams_with_roster = len([team for team in NBA_TEAM_ABBREVIATIONS if roster_counts_by_team.get(team, 0) > 0])
+    final_player_count = len(players)
+    total_source_records = index_player_count + roster_player_count
+    unique_ids_from_sources = len(source_names_by_id)
+    players_dropped_during_merge = max(total_source_records - unique_ids_from_sources, 0)
+    health_reasons: list[str] = []
+    if final_player_count < MINIMUM_REASONABLE_FINAL_PLAYER_COUNT or final_player_count > MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT:
+        health_reasons.append('final player count outside healthy range')
+    if total_teams_with_roster != len(NBA_TEAM_ABBREVIATIONS):
+        health_reasons.append('not all teams contributed roster players')
+    if suspiciously_low_roster_counts:
+        health_reasons.append('one or more teams have suspiciously low roster counts')
+    if roster_ids_missing_from_final:
+        health_reasons.append('roster-derived players missing from final output')
+    if active_players_with_null_team_fields:
+        health_reasons.append('active players have null team fields')
+    if roster_players_with_null_team_fields:
+        health_reasons.append('rostered players have null team fields')
+    if duplicate_canonical_ids:
+        health_reasons.append('duplicate canonical ids map to multiple distinct names')
+
     healthy = (
-        len(teams_scraped_successfully) == len(NBA_TEAM_ABBREVIATIONS)
-        and not missing_team_assignments
-        and not suspiciously_low_roster_counts
+        not health_reasons
     )
 
     validation_report = {
         'teams_expected': len(NBA_TEAM_ABBREVIATIONS),
         'teams_scraped_successfully': teams_scraped_successfully,
         'teams_failed': teams_failed,
-        'distinct_teams_covered': len([team for team in NBA_TEAM_ABBREVIATIONS if roster_counts_by_team.get(team, 0) > 0]),
+        'players_from_alphabetical_index': index_player_count,
+        'players_from_roster_pages': roster_player_count,
+        'players_dropped_during_merge': players_dropped_during_merge,
+        'distinct_teams_covered': total_teams_with_roster,
         'players_per_team': {team_abbr: roster_counts_by_team.get(team_abbr, 0) for team_abbr in NBA_TEAM_ABBREVIATIONS},
-        'total_active_players_imported': len([p for p in players if p.get('active_status') == 'active']),
-        'total_final_player_count': len(players),
+        'healthy_player_count_range': {'min': MINIMUM_REASONABLE_FINAL_PLAYER_COUNT, 'max': MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT},
+        'total_active_players_imported': len([p for p in players if p.get('active_status') != 'inactive']),
+        'total_final_player_count': final_player_count,
         'players_missing_team': missing_team_assignments,
-        'duplicate_canonical_ids': [],
+        'players_with_null_team_fields': len(missing_team_assignments),
+        'active_players_with_null_team_fields': active_players_with_null_team_fields,
+        'roster_players_with_null_team_fields': roster_players_with_null_team_fields,
+        'roster_ids_missing_from_final': roster_ids_missing_from_final,
+        'duplicate_canonical_ids': duplicate_canonical_ids,
         'suspiciously_low_roster_counts': suspiciously_low_roster_counts,
         'roster_only_players_added': roster_only_players_added,
+        'players_whose_team_changed_during_refresh': team_changes_from_previous,
+        'health_reasons': health_reasons,
         'healthy': healthy,
         'refresh_incomplete': not healthy,
     }
+    NBA_REFRESH_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    NBA_REFRESH_REPORT_PATH.write_text(json.dumps(validation_report, separators=(',', ':'), ensure_ascii=False) + '\n')
+
+    if healthy:
+        NBA_PLAYERS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        NBA_PLAYERS_CACHE_PATH.write_text(json.dumps(players, separators=(',', ':'), ensure_ascii=False) + '\n')
+        NBA_TEAMS_CACHE_PATH.write_text(json.dumps(teams, separators=(',', ':'), ensure_ascii=False) + '\n')
+
+        if gzip_output:
+            import gzip
+
+            with gzip.open(str(NBA_PLAYERS_CACHE_PATH) + '.gz', 'wt', encoding='utf-8') as f:
+                json.dump(players, f, separators=(',', ':'), ensure_ascii=False)
+            with gzip.open(str(NBA_TEAMS_CACHE_PATH) + '.gz', 'wt', encoding='utf-8') as f:
+                json.dump(teams, f, separators=(',', ':'), ensure_ascii=False)
+    else:
+        logger.error('NBA identity refresh unhealthy; refusing to overwrite cache files')
+
     if not healthy:
         logger.warning('NBA identity refresh marked incomplete: %s', json.dumps(validation_report, sort_keys=True))
 
