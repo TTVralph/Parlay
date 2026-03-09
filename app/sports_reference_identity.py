@@ -467,12 +467,15 @@ def _resolve_team_roster(
     fallback_seed_urls = list(dict.fromkeys(roster_ref_urls))
     for endpoint, context in [
         (ESPN_TEAM_URL_WITH_ROSTER_TEMPLATE.format(team_id=team.espn_team_id), f'team details with roster {team.espn_team_id}'),
-        (ESPN_TEAM_URL_TEMPLATE.format(team_id=team.espn_team_id), f'team details {team.espn_team_id}'),
     ]:
         parsed, ref_urls = _attempt_endpoint(endpoint, context=context)
         if parsed:
             return parsed, endpoint, endpoints_tried
         fallback_seed_urls.extend(ref_urls)
+
+    plain_team_endpoint = ESPN_TEAM_URL_TEMPLATE.format(team_id=team.espn_team_id)
+    _, plain_team_refs = _attempt_endpoint(plain_team_endpoint, context=f'team details {team.espn_team_id}')
+    fallback_seed_urls.extend(plain_team_refs)
 
     parsed_from_refs, ref_endpoint = _follow_reference_chain(list(dict.fromkeys(fallback_seed_urls)))
     if parsed_from_refs:
@@ -516,21 +519,22 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
             failed_team_ids.append(team.espn_team_id)
             roster_counts_by_team[team.abbreviation or team.full_team_name] = 0
             logger.info(
-                'Team roster summary team_id=%s team_abbr=%s roster_endpoint=%s success=false endpoint=%s parsed_player_count=0',
+                'Team roster summary team_id=%s team_abbr=%s endpoint_used=%s success=%s players_parsed=%s',
                 team.espn_team_id,
                 team.abbreviation,
-                ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id=team.espn_team_id),
                 tried_endpoints[-1] if tried_endpoints else '-',
+                False,
+                0,
             )
             continue
 
         roster_counts_by_team[team.abbreviation or team.full_team_name] = len(parsed_roster)
         logger.info(
-            'Team roster summary team_id=%s team_abbr=%s roster_endpoint=%s success=true endpoint=%s parsed_player_count=%s',
+            'Team roster summary team_id=%s team_abbr=%s endpoint_used=%s success=%s players_parsed=%s',
             team.espn_team_id,
             team.abbreviation,
-            ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id=team.espn_team_id),
             success_endpoint,
+            True,
             len(parsed_roster),
         )
         for row in parsed_roster:
