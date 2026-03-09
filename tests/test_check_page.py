@@ -76,7 +76,8 @@ def test_check_page_only_renders_manual_override_controls_when_candidates_exist(
     assert page.status_code == 200
     html = page.text
     assert 'if(candidateGames.length>0)' in html
-    assert 'candidateGamesByLegId' not in html
+    assert 'wasManuallySelected:Boolean(selectedGameByLegId[legId])' in html
+    assert 'Manual selection applied' in html
 
 
 def test_check_page_shows_bet_date_input():
@@ -107,3 +108,6 @@ def test_check_page_reset_selection_button_is_clickable() -> None:
     html = page.text
     assert "resetBtn.disabled=false" in html
     assert "resetBtn.addEventListener('click'" in html
+    assert 'if(nextState.wasManuallySelected)' in html
+    assert 'originalCandidateEvents' in html
+    assert 'originalReviewReason' in html
