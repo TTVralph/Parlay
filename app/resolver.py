@@ -7,6 +7,7 @@ import re
 from .models import Leg
 from .identity_resolution import normalize_entity_name, resolve_player_identity
 from .providers.base import EventInfo, ResultsProvider
+from .services.nba_game_resolver import resolve_player_game
 
 AMBIGUOUS_EVENT_WARNING = 'multiple games found for resolved team on date'
 PLAYER_TEAM_UNRESOLVED_WARNING = 'team could not be resolved from player identity'
@@ -258,7 +259,21 @@ def resolve_leg_events(
             updates['matched_by'] = 'team_schedule_lookup'
         elif leg.player:
             player_lookup_name = str(updates.get('player', leg.player))
-            candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
+            if leg.sport == 'NBA' and explicit_slip_date is not None:
+                resolved_game = resolve_player_game(player_lookup_name, explicit_slip_date.isoformat(), provider=provider)
+                if resolved_game is not None:
+                    candidates = [
+                        EventInfo(
+                            event_id=resolved_game.event_id,
+                            sport=resolved_game.sport,
+                            home_team=resolved_game.home_team,
+                            away_team=resolved_game.away_team,
+                            start_time=resolved_game.start_time,
+                        )
+                    ]
+                    updates['matched_by'] = 'player_identity_team_schedule_lookup'
+            if not candidates:
+                candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
             notes.append(f'diagnostic: candidate_events_before_filtering={len(candidates)}')
             logger.debug('NBA prop candidate games before team filtering: player=%s candidates=%s', player_lookup_name, _event_ids(candidates))
             if leg.sport == 'NBA' and not player_team and PLAYER_TEAM_UNRESOLVED_WARNING not in notes:
@@ -291,7 +306,7 @@ def resolve_leg_events(
                         notes.append(NO_TEAM_GAME_ON_SELECTED_DATE_WARNING)
             candidates = _filter_by_opponent(candidates, opponent)
             notes.append(f'diagnostic: candidate_events_after_filtering={len(candidates)}')
-            updates['matched_by'] = 'player_boxscore_lookup'
+            updates['matched_by'] = updates.get('matched_by') or 'player_boxscore_lookup'
 
         candidates = _filter_by_slip_date_with_historical_fallback(
             candidates,
