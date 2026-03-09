@@ -7,6 +7,7 @@ from typing import Protocol
 
 import httpx
 
+from .image_preprocessor import preprocess_screenshot
 from .slip_types import ParsedSlip, ParsedSlipLeg
 
 
@@ -23,7 +24,8 @@ class OpenAIVisionSlipParser:
     def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip:
         if not self._api_key:
             raise RuntimeError('OPENAI_API_KEY is required for vision screenshot parsing.')
-        image_b64 = base64.b64encode(image_bytes).decode('ascii')
+        processed = preprocess_screenshot(image_bytes)
+        image_b64 = base64.b64encode(processed.image_bytes).decode('ascii')
         prompt = (
             'Extract sportsbook slip legs from this screenshot. Return JSON only. '
             'Be robust to crops, odds text, boosts, stake/payout clutter, and multi-leg layouts. '
@@ -76,4 +78,5 @@ class OpenAIVisionSlipParser:
             detected_bet_date=data.get('detected_bet_date'),
             stake_amount=data.get('stake_amount'),
             to_win_amount=data.get('to_win_amount'),
+            preprocessing_metadata=processed.metadata(),
         )

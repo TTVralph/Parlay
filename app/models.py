@@ -271,12 +271,23 @@ class ParsedScreenshotLeg(BaseModel):
     match_confidence: Optional[Literal['HIGH', 'MEDIUM', 'LOW']] = None
 
 
+class ScreenshotPreprocessingMetadata(BaseModel):
+    original_width: int
+    original_height: int
+    processed_width: int
+    processed_height: int
+    crop_applied: bool
+    resize_applied: bool
+    compressed: bool
+
+
 class ParsedScreenshotResponse(BaseModel):
     raw_text: str
     parsed_legs: list[ParsedScreenshotLeg] = Field(default_factory=list)
     detected_bet_date: Optional[str] = None
     parse_warnings: list[str] = Field(default_factory=list)
     confidence: Literal['high', 'medium', 'low', 'NEEDS_REVIEW'] = 'low'
+    preprocessing_metadata: Optional[ScreenshotPreprocessingMetadata] = None
 
 class OCRExtractResponse(BaseModel):
     filename: str

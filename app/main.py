@@ -260,6 +260,7 @@ def _parse_screenshot_with_vision(content: bytes, filename: str | None):
         detected_bet_date=parsed.detected_bet_date,
         parse_warnings=parsed.warnings,
         confidence=parsed.confidence,
+        preprocessing_metadata=parsed.preprocessing_metadata,
     )
 run_lightweight_migrations()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -26,3 +27,4 @@ class ParsedSlip:
     detected_bet_date: str | None = None
     stake_amount: float | None = None
     to_win_amount: float | None = None
+    preprocessing_metadata: dict[str, Any] | None = None
