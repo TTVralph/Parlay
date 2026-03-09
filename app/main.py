@@ -902,8 +902,12 @@ Murray over 2.5 threes'></textarea>
     const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
     const emptyTextMessage='Paste at least one leg first.';
     let selectedGameByLegId={};
+    let candidateGamesByLegId={};
 
-    slip.addEventListener('input',()=>{selectedGameByLegId={};});
+    slip.addEventListener('input',()=>{
+      selectedGameByLegId={};
+      candidateGamesByLegId={};
+    });
     document.querySelectorAll('[data-sample]').forEach((node)=>{
       node.addEventListener('click',()=>{
         const key=node.getAttribute('data-sample');
@@ -922,15 +926,19 @@ Murray over 2.5 threes'></textarea>
         const eventCell=document.createElement('td');
         legCell.textContent=item.leg||'—';
         resultCell.textContent=resultLabel[item.result]||String(item.result||'review');
-        if(item.matched_event){
-          eventCell.textContent=item.matched_event;
-        }else if((item.candidate_games||[]).length){
+        const candidateGames=(item.candidate_games||[]);
+        if(candidateGames.length){
+          candidateGamesByLegId={...candidateGamesByLegId,[legId]:candidateGames};
+        }
+        const selectableGames=candidateGamesByLegId[legId]||candidateGames;
+
+        if(selectableGames.length){
           const select=document.createElement('select');
           const prompt=document.createElement('option');
           prompt.value='';
-          prompt.textContent='Select candidate game';
+          prompt.textContent='Auto-match (clear manual selection)';
           select.appendChild(prompt);
-          for(const game of item.candidate_games){
+          for(const game of selectableGames){
             const opt=document.createElement('option');
             opt.value=game.event_id;
             opt.textContent=game.event_label;
@@ -938,10 +946,41 @@ Murray over 2.5 threes'></textarea>
             select.appendChild(opt);
           }
           select.addEventListener('change',()=>{
-            selectedGameByLegId={...selectedGameByLegId,[legId]:select.value||''};
-            if(selectedGameByLegId[legId]){ submitCheck(); }
+            const nextValue=select.value||'';
+            if(nextValue){
+              selectedGameByLegId={...selectedGameByLegId,[legId]:nextValue};
+            }else{
+              const nextSelection={...selectedGameByLegId};
+              delete nextSelection[legId];
+              selectedGameByLegId=nextSelection;
+            }
+            submitCheck();
           });
           eventCell.appendChild(select);
+          if(item.matched_event){
+            const matched=document.createElement('div');
+            matched.style.marginTop='6px';
+            matched.style.fontSize='12px';
+            matched.style.color='#475569';
+            matched.textContent=`Matched: ${item.matched_event}`;
+            eventCell.appendChild(matched);
+          }
+
+          const resetBtn=document.createElement('button');
+          resetBtn.type='button';
+          resetBtn.className='secondary';
+          resetBtn.style.marginTop='6px';
+          resetBtn.textContent='Reset selection';
+          resetBtn.disabled=!selectedGameByLegId[legId];
+          resetBtn.addEventListener('click',()=>{
+            const nextSelection={...selectedGameByLegId};
+            delete nextSelection[legId];
+            selectedGameByLegId=nextSelection;
+            submitCheck();
+          });
+          eventCell.appendChild(resetBtn);
+        }else if(item.matched_event){
+          eventCell.textContent=item.matched_event;
         }else{
           eventCell.textContent='—';
         }
