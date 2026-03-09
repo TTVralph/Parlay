@@ -15,8 +15,6 @@ from urllib import error, request
 
 SPORTS_REFERENCE_SITE = 'basketball-reference'
 BASKETBALL_REFERENCE_ROOT = 'https://www.basketball-reference.com'
-PLAYER_INDEX_URL_TEMPLATE = BASKETBALL_REFERENCE_ROOT + '/players/{letter}/'
-PLAYER_URL_TEMPLATE = BASKETBALL_REFERENCE_ROOT + '/players/{bucket}/{player_code}.html'
 TEAMS_URL = BASKETBALL_REFERENCE_ROOT + '/teams/'
 TEAM_ROSTER_URL_TEMPLATE = BASKETBALL_REFERENCE_ROOT + '/teams/{team_abbr}/{season_year}.html'
 
@@ -32,8 +30,8 @@ MINIMUM_REASONABLE_TEAM_ROSTER_SIZE = 8
 MINIMUM_REASONABLE_FINAL_PLAYER_COUNT = 350
 MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT = 700
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 15
-DEFAULT_REQUEST_DELAY_SECONDS = 2.0
-DEFAULT_REQUEST_JITTER_SECONDS = 0.6
+DEFAULT_REQUEST_DELAY_SECONDS = 0.1
+DEFAULT_REQUEST_JITTER_SECONDS = 0.05
 DEFAULT_BACKOFF_SECONDS = (2.0, 5.0, 10.0, 20.0)
 DEFAULT_USER_AGENT = (
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
@@ -189,31 +187,6 @@ class SportsReferenceFetcher:
         raise RuntimeError(f'Unable to fetch {url}')
 
 
-def _parse_player_index(html: str) -> list[dict[str, str]]:
-    pattern = re.compile(r'<th[^>]*data-stat="player"[^>]*>\s*<a href="(/players/([a-z])/([a-z0-9]+)\.html)">([^<]+)</a>(.*?)</th>.*?<td[^>]*data-stat="year_max"[^>]*>(\d{4})</td>', re.S | re.I)
-    rows: list[dict[str, str]] = []
-    for href, bucket, code, name, trailing, year_max in pattern.findall(html):
-        rows.append(
-            {
-                'player_code': code,
-                'bucket': bucket,
-                'full_name': unescape(name).strip(),
-                'year_max': year_max,
-                'raw_suffix': unescape(trailing).strip(),
-                'source_url': BASKETBALL_REFERENCE_ROOT + href,
-            }
-        )
-    return rows
-
-
-def _extract_current_team_from_player_page(html: str) -> tuple[str | None, str | None, str]:
-    m = re.search(r'Team:</strong>\s*<a href="/teams/([A-Z]{3})/\d{4}\.html">([^<]+)</a>', html)
-    if not m:
-        active = 'inactive' if 'Pronunciation:' in html or 'Career' in html else 'unknown'
-        return None, None, active
-    return m.group(2).strip(), m.group(1).strip(), 'active'
-
-
 def _canonical_player_id(player_code: str) -> str:
     return f'nba-br-{player_code}'
 
@@ -307,42 +280,6 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
     source_names_by_id: dict[str, set[str]] = {}
     index_player_count = 0
     roster_player_count = 0
-    active_candidates: list[tuple[str, str, str]] = []
-    alphabet = 'abcdefghijklmnopqrstuvwxyz'
-    for idx, letter in enumerate(alphabet, start=1):
-        print(f'Fetching alphabetical player index {idx}/{len(alphabet)} ({letter})...')
-        try:
-            html = fetcher.fetch_text(PLAYER_INDEX_URL_TEMPLATE.format(letter=letter), context=f'player index {letter}')
-        except Exception as exc:
-            failed_index_letters.append(letter)
-            logger.warning('Failed to fetch player index for letter %s: %s', letter, exc)
-            continue
-        for row in _parse_player_index(html):
-            index_player_count += 1
-            status = 'active' if int(row['year_max']) >= (current_year - 1) else 'inactive'
-            canonical_id = _canonical_player_id(row['player_code'])
-            source_names_by_id.setdefault(canonical_id, set()).add(str(row['full_name']))
-            players_by_id[canonical_id] = {
-                'canonical_player_id': canonical_id,
-                'sport': 'NBA',
-                'full_name': row['full_name'],
-                'normalized_name': normalize_name(row['full_name']),
-                'alias_keys': build_alias_keys(row['full_name']),
-                'current_team_name': None,
-                'current_team_abbr': None,
-                'team_id': None,
-                'team_name': None,
-                'active_status': status,
-                'source_site': SPORTS_REFERENCE_SITE,
-                'identity_source': SPORTS_REFERENCE_SITE,
-                'source_url': row['source_url'],
-                'source_contributions': ['index'],
-                'roster_data_applied': False,
-                'last_refreshed_at': now,
-                'identity_last_refreshed_at': now,
-            }
-            if status == 'active':
-                active_candidates.append((row['bucket'], row['player_code'], row['full_name']))
 
     teams_scraped_successfully: list[str] = []
     teams_failed: list[str] = []
@@ -405,34 +342,9 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
                 'last_refreshed_at': now,
                 'identity_last_refreshed_at': now,
             }
-            active_candidates.append((row['bucket'], row['player_code'], row['full_name']))
             roster_only_players_added += 1
 
     players = list(players_by_id.values())
-
-    for idx, (bucket, code, full_name) in enumerate(active_candidates, start=1):
-        if idx == 1 or idx % 50 == 0:
-            print(f'Fetching active player page {idx}/{len(active_candidates)}...')
-        try:
-            html = fetcher.fetch_text(
-                PLAYER_URL_TEMPLATE.format(bucket=bucket, player_code=code),
-                context=f'player page {code}',
-            )
-        except Exception as exc:
-            failed_player_pages.append(code)
-            logger.warning('Failed to fetch player page for %s (%s): %s', full_name, code, exc)
-            continue
-        team_name, team_abbr, status = _extract_current_team_from_player_page(html)
-        for row in players:
-            if row['canonical_player_id'] == _canonical_player_id(code):
-                is_rostered = bool(row.get('roster_data_applied'))
-                if team_abbr and team_name and not is_rostered:
-                    row['current_team_name'] = team_name
-                    row['current_team_abbr'] = team_abbr
-                    row['team_id'] = _canonical_team_id(team_abbr)
-                    row['team_name'] = team_name
-                row['active_status'] = status if row['active_status'] != 'inactive' else 'inactive'
-                break
 
     for row in players:
         if row.get('current_team_abbr') and not row.get('team_id'):
