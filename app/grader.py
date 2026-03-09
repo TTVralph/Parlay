@@ -5,7 +5,7 @@ from datetime import datetime
 from .models import GradeResponse, GradedLeg, Leg
 from .providers.base import ResultsProvider
 from .providers.factory import get_results_provider
-from .resolver import resolve_leg_events
+from .event_matcher import resolve_leg_events
 from .parser import parse_text
 
 

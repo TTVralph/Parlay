@@ -136,6 +136,15 @@ def _player_candidates(provider: ResultsProvider, player: str, posted_at: dateti
     return [event] if event else []
 
 
+def _merge_player_and_team_candidates(
+    player_candidates: list[EventInfo],
+    team_candidates: list[EventInfo],
+) -> list[EventInfo]:
+    if team_candidates:
+        return team_candidates
+    return player_candidates
+
+
 def _player_team_for_date(provider: ResultsProvider, player: str, posted_at: datetime | None, include_historical: bool) -> str | None:
     resolver = getattr(provider, 'resolve_player_team', None)
     if not callable(resolver):
@@ -206,6 +215,8 @@ def resolve_leg_events(
             player_lookup_name = str(updates.get('player', leg.player))
             candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
             if player_team:
+                team_candidates = _team_candidates(provider, player_team, anchor, include_historical=include_historical)
+                candidates = _merge_player_and_team_candidates(candidates, team_candidates)
                 candidates = [event for event in candidates if _event_contains_team(event, player_team)]
                 context_date = _context_date_for_leg(slip_filter_value)
                 if context_date is not None:
