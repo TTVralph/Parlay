@@ -6,9 +6,12 @@ from html import unescape
 import json
 import logging
 from pathlib import Path
+import random
 import re
+import socket
+import time
 import unicodedata
-from urllib import request
+from urllib import error, request
 
 SPORTS_REFERENCE_SITE = 'basketball-reference'
 BASKETBALL_REFERENCE_ROOT = 'https://www.basketball-reference.com'
@@ -28,6 +31,14 @@ NBA_TEAM_ABBREVIATIONS = (
 MINIMUM_REASONABLE_TEAM_ROSTER_SIZE = 8
 MINIMUM_REASONABLE_FINAL_PLAYER_COUNT = 350
 MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT = 700
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 15
+DEFAULT_REQUEST_DELAY_SECONDS = 2.0
+DEFAULT_REQUEST_JITTER_SECONDS = 0.6
+DEFAULT_BACKOFF_SECONDS = (2.0, 5.0, 10.0, 20.0)
+DEFAULT_USER_AGENT = (
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +92,101 @@ def build_alias_keys(name: str) -> list[str]:
     return sorted(normalized)
 
 
-def _fetch_text(url: str, timeout: int = 10) -> str:
-    with request.urlopen(url, timeout=timeout) as response:
-        return response.read().decode('utf-8', errors='ignore')
+class SportsReferenceFetcher:
+    def __init__(
+        self,
+        *,
+        request_timeout_seconds: int = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        request_delay_seconds: float = DEFAULT_REQUEST_DELAY_SECONDS,
+        request_jitter_seconds: float = DEFAULT_REQUEST_JITTER_SECONDS,
+        backoff_seconds: tuple[float, ...] = DEFAULT_BACKOFF_SECONDS,
+        user_agent: str = DEFAULT_USER_AGENT,
+    ) -> None:
+        self.request_timeout_seconds = request_timeout_seconds
+        self.request_delay_seconds = request_delay_seconds
+        self.request_jitter_seconds = request_jitter_seconds
+        self.backoff_seconds = backoff_seconds
+        self.user_agent = user_agent
+        self._response_cache: dict[str, str] = {}
+        self._last_request_started_at: float | None = None
+
+    def _apply_throttle(self) -> None:
+        if self._last_request_started_at is None:
+            return
+        target_delay = self.request_delay_seconds + random.uniform(0, self.request_jitter_seconds)
+        elapsed = time.monotonic() - self._last_request_started_at
+        if elapsed < target_delay:
+            sleep_for = target_delay - elapsed
+            logger.info('Throttling outbound request for %.2fs', sleep_for)
+            time.sleep(sleep_for)
+
+    @staticmethod
+    def _retry_after_seconds(headers: object) -> float | None:
+        retry_after_value = getattr(headers, 'get', lambda _key, _default=None: None)('Retry-After')
+        if not retry_after_value:
+            return None
+        try:
+            return max(float(str(retry_after_value).strip()), 0.0)
+        except ValueError:
+            return None
+
+    def _retry_delay_seconds(self, attempt: int, *, status_code: int | None, retry_after_seconds: float | None) -> float:
+        base_delay = self.backoff_seconds[min(attempt, len(self.backoff_seconds) - 1)]
+        if status_code == 429:
+            base_delay = max(base_delay, 15.0)
+        if retry_after_seconds is not None:
+            base_delay = max(base_delay, retry_after_seconds)
+        jitter = random.uniform(0, min(self.request_jitter_seconds, 1.0))
+        return base_delay + jitter
+
+    def fetch_text(self, url: str, *, context: str, use_cache: bool = True) -> str:
+        if use_cache and url in self._response_cache:
+            logger.info('Cache hit for %s (%s)', url, context)
+            return self._response_cache[url]
+
+        max_attempts = max(len(self.backoff_seconds) + 1, 1)
+        for attempt in range(max_attempts):
+            self._apply_throttle()
+            self._last_request_started_at = time.monotonic()
+            req = request.Request(url, headers={'User-Agent': self.user_agent, 'Accept-Language': 'en-US,en;q=0.9'})
+            try:
+                with request.urlopen(req, timeout=self.request_timeout_seconds) as response:
+                    body = response.read().decode('utf-8', errors='ignore')
+                    if use_cache:
+                        self._response_cache[url] = body
+                    return body
+            except error.HTTPError as exc:
+                is_retryable_status = exc.code == 429 or 500 <= exc.code < 600
+                if not is_retryable_status or attempt >= (max_attempts - 1):
+                    raise
+                retry_after_seconds = self._retry_after_seconds(exc.headers)
+                delay_seconds = self._retry_delay_seconds(attempt, status_code=exc.code, retry_after_seconds=retry_after_seconds)
+                logger.warning(
+                    'Request failed for %s (%s) with HTTP %s; retry %s/%s in %.2fs',
+                    url,
+                    context,
+                    exc.code,
+                    attempt + 1,
+                    max_attempts - 1,
+                    delay_seconds,
+                )
+                time.sleep(delay_seconds)
+            except (error.URLError, TimeoutError, socket.timeout) as exc:
+                if attempt >= (max_attempts - 1):
+                    raise
+                delay_seconds = self._retry_delay_seconds(attempt, status_code=None, retry_after_seconds=None)
+                logger.warning(
+                    'Request failed for %s (%s): %s; retry %s/%s in %.2fs',
+                    url,
+                    context,
+                    exc,
+                    attempt + 1,
+                    max_attempts - 1,
+                    delay_seconds,
+                )
+                time.sleep(delay_seconds)
+
+        raise RuntimeError(f'Unable to fetch {url}')
 
 
 def _parse_player_index(html: str) -> list[dict[str, str]]:
@@ -177,8 +280,25 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
     now = datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat()
     current_year = datetime.now(tz=timezone.utc).year
 
-    teams_html = _fetch_text(TEAMS_URL)
-    parsed_teams = _parse_teams(teams_html)
+    fetcher = SportsReferenceFetcher()
+
+    print('Fetching teams index page...')
+    failed_player_pages: list[str] = []
+    failed_index_letters: list[str] = []
+    try:
+        teams_html = fetcher.fetch_text(TEAMS_URL, context='teams index')
+        parsed_teams = _parse_teams(teams_html)
+    except Exception as exc:
+        logger.warning('NBA teams index fetch failed: %s', exc)
+        parsed_teams = [
+            TeamIdentity(
+                canonical_team_id=_canonical_team_id(team_abbr),
+                full_team_name=team_abbr,
+                abbreviations=[team_abbr],
+                aliases=[normalize_name(team_abbr)],
+            )
+            for team_abbr in NBA_TEAM_ABBREVIATIONS
+        ]
     team_name_by_abbr = {team.abbreviations[0]: team.full_team_name for team in parsed_teams}
 
     previous_players_by_id = _load_existing_players()
@@ -188,8 +308,15 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
     index_player_count = 0
     roster_player_count = 0
     active_candidates: list[tuple[str, str, str]] = []
-    for letter in 'abcdefghijklmnopqrstuvwxyz':
-        html = _fetch_text(PLAYER_INDEX_URL_TEMPLATE.format(letter=letter))
+    alphabet = 'abcdefghijklmnopqrstuvwxyz'
+    for idx, letter in enumerate(alphabet, start=1):
+        print(f'Fetching alphabetical player index {idx}/{len(alphabet)} ({letter})...')
+        try:
+            html = fetcher.fetch_text(PLAYER_INDEX_URL_TEMPLATE.format(letter=letter), context=f'player index {letter}')
+        except Exception as exc:
+            failed_index_letters.append(letter)
+            logger.warning('Failed to fetch player index for letter %s: %s', letter, exc)
+            continue
         for row in _parse_player_index(html):
             index_player_count += 1
             status = 'active' if int(row['year_max']) >= (current_year - 1) else 'inactive'
@@ -223,10 +350,14 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
     roster_only_players_added = 0
     roster_player_ids: set[str] = set()
 
-    for team_abbr in NBA_TEAM_ABBREVIATIONS:
+    for idx, team_abbr in enumerate(NBA_TEAM_ABBREVIATIONS, start=1):
+        print(f'Fetching roster for team {idx}/{len(NBA_TEAM_ABBREVIATIONS)} ({team_abbr})...')
         team_name = team_name_by_abbr.get(team_abbr, team_abbr)
         try:
-            roster_html = _fetch_text(TEAM_ROSTER_URL_TEMPLATE.format(team_abbr=team_abbr, season_year=current_year))
+            roster_html = fetcher.fetch_text(
+                TEAM_ROSTER_URL_TEMPLATE.format(team_abbr=team_abbr, season_year=current_year),
+                context=f'team roster {team_abbr}',
+            )
         except Exception as exc:
             teams_failed.append(team_abbr)
             roster_counts_by_team[team_abbr] = 0
@@ -279,8 +410,18 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
 
     players = list(players_by_id.values())
 
-    for bucket, code, _ in active_candidates:
-        html = _fetch_text(PLAYER_URL_TEMPLATE.format(bucket=bucket, player_code=code))
+    for idx, (bucket, code, full_name) in enumerate(active_candidates, start=1):
+        if idx == 1 or idx % 50 == 0:
+            print(f'Fetching active player page {idx}/{len(active_candidates)}...')
+        try:
+            html = fetcher.fetch_text(
+                PLAYER_URL_TEMPLATE.format(bucket=bucket, player_code=code),
+                context=f'player page {code}',
+            )
+        except Exception as exc:
+            failed_player_pages.append(code)
+            logger.warning('Failed to fetch player page for %s (%s): %s', full_name, code, exc)
+            continue
         team_name, team_abbr, status = _extract_current_team_from_player_page(html)
         for row in players:
             if row['canonical_player_id'] == _canonical_player_id(code):
@@ -393,6 +534,9 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
         'roster_ids_missing_from_final': roster_ids_missing_from_final,
         'duplicate_canonical_ids': duplicate_canonical_ids,
         'suspiciously_low_roster_counts': suspiciously_low_roster_counts,
+        'failed_player_page_count': len(failed_player_pages),
+        'failed_player_pages': failed_player_pages,
+        'failed_alphabetical_index_letters': failed_index_letters,
         'roster_only_players_added': roster_only_players_added,
         'players_whose_team_changed_during_refresh': team_changes_from_previous,
         'health_reasons': health_reasons,
@@ -419,6 +563,13 @@ def refresh_nba_identity_from_basketball_reference(*, gzip_output: bool = False)
 
     if not healthy:
         logger.warning('NBA identity refresh marked incomplete: %s', json.dumps(validation_report, sort_keys=True))
+
+    print(
+        'NBA refresh complete: '
+        f'players={len(players)} teams={len(teams)} '
+        f'failed_indexes={len(failed_index_letters)} failed_player_pages={len(failed_player_pages)} '
+        f'healthy={healthy}'
+    )
 
     return {
         'players': len(players),
