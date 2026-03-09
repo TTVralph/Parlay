@@ -81,13 +81,13 @@ class StubProvider(ESPNNBAResultsProvider):
                     {
                         'statistics': [
                             {
-                                'labels': ['PTS', 'REB', 'AST', '3PT'],
+                                'labels': ['PTS', 'REB', 'AST', '3PT', 'STL', 'BLK', 'TO'],
                                 'athletes': [
-                                    {'athlete': {'id': '15', 'displayName': 'Nikola Jokic'}, 'stats': ['30', '13', '8', '1-3']},
-                                    {'athlete': {'id': '27', 'displayName': 'Jamal Murray'}, 'stats': ['20', '4', '6', '4-9']},
-                                    {'athlete': {'id': '30', 'displayName': 'Draymond Green'}, 'stats': ['9', '7', '5', '1-4']},
-                                    {'athlete': {'id': '31', 'displayName': 'Al Horford'}, 'stats': ['12', '5', '3', '2-5']},
-                                    {'athlete': {'id': '32', 'displayName': 'Gui Santos'}, 'stats': ['20', '6', '2', '3-7']},
+                                    {'athlete': {'id': '15', 'displayName': 'Nikola Jokic'}, 'stats': ['30', '13', '8', '1-3', '2', '1', '4']},
+                                    {'athlete': {'id': '27', 'displayName': 'Jamal Murray'}, 'stats': ['20', '4', '6', '4-9', '1', '0', '2']},
+                                    {'athlete': {'id': '30', 'displayName': 'Draymond Green'}, 'stats': ['9', '7', '5', '1-4', '1', '2', '3']},
+                                    {'athlete': {'id': '31', 'displayName': 'Al Horford'}, 'stats': ['12', '5', '3', '2-5', '0', '1', '1']},
+                                    {'athlete': {'id': '32', 'displayName': 'Gui Santos'}, 'stats': ['20', '6', '2', '3-7', '1', '0', '2']},
                                 ],
                             }
                         ]
@@ -126,9 +126,20 @@ def test_threes_market_mapping_diagnostics_support_synonyms() -> None:
     provider = StubProvider()
     diag = provider.get_market_mapping_diagnostics('player_threes', event_id='evt-1')
     assert diag['normalized_market'] == 'player_threes'
-    assert diag['espn_stat_field'] == '3PT'
+    assert diag['espn_stat_field'] == '3PM'
     assert diag['stat_field_present'] is True
     assert diag['mapping_failed'] is False
     assert 'threes' in diag['aliases']
     assert 'made threes' in diag['aliases']
     assert '3pm' in diag['aliases']
+
+
+def test_registry_mapped_stats_and_combo_markets() -> None:
+    provider = StubProvider()
+    assert provider.get_player_result('Jokic', 'player_steals', event_id='evt-1') == 2.0
+    assert provider.get_player_result('Jokic', 'player_blocks', event_id='evt-1') == 1.0
+    assert provider.get_player_result('Jokic', 'player_turnovers', event_id='evt-1') == 4.0
+    assert provider.get_player_result('Jokic', 'player_pra', event_id='evt-1') == 51.0
+    assert provider.get_player_result('Jokic', 'player_pr', event_id='evt-1') == 43.0
+    assert provider.get_player_result('Jokic', 'player_pa', event_id='evt-1') == 38.0
+    assert provider.get_player_result('Jokic', 'player_ra', event_id='evt-1') == 21.0

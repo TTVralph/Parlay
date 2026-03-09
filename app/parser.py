@@ -5,15 +5,16 @@ import re
 from .alias_runtime import get_alias_map
 from .dictionaries import PLAYER_SPORTS, TEAM_SPORTS
 from .models import Leg, Sport
+from .services.market_registry import canonical_to_player_market, normalize_market
 from .player_identity import resolve_player_resolution
 
 ALT_PATTERN = re.compile(r"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+$", re.I)
 OVER_UNDER_PATTERN = re.compile(
-    r"^(?P<name>[\w .\-'’]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$",
+    r"^(?P<name>[\w .\-'’]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|stl|steals|blk|blocks|tov|turnovers|p\+r\+a|pts\+reb\+ast|points rebounds assists|pts reb ast|p\+r|pts\+reb|points rebounds|p\+a|pts\+ast|points assists|r\+a|reb\+ast|rebounds assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$",
     re.I,
 )
 NAMED_MARKET_PATTERN = re.compile(
-    r"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$",
+    r"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|stl|steals|blk|blocks|tov|turnovers|p\+r\+a|pts\+reb\+ast|points rebounds assists|pts reb ast|p\+r|pts\+reb|points rebounds|p\+a|pts\+ast|points assists|r\+a|reb\+ast|rebounds assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$",
     re.I,
 )
 ML_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+ml$', re.I)
@@ -60,50 +61,14 @@ def _player_lookup(token: str) -> tuple[str | None, float]:
 
 
 def _market_lookup(token: str) -> str | None:
+    canonical = normalize_market(token)
+    if canonical:
+        return canonical_to_player_market(canonical)
+
     normalized = token.lower().strip().replace('-', ' ')
     normalized = re.sub(r'\s*\+\s*', ' + ', normalized)
     normalized = re.sub(r'\s+', ' ', normalized)
     compact = normalized.replace(' ', '')
-
-    direct = {
-        'pts': 'player_points',
-        'points': 'player_points',
-        'ast': 'player_assists',
-        'assists': 'player_assists',
-        'reb': 'player_rebounds',
-        'rebounds': 'player_rebounds',
-        'pra': 'player_pra',
-        'pr': 'player_pr',
-        'pa': 'player_pa',
-        'ra': 'player_ra',
-        'threes': 'player_threes',
-        '3pm': 'player_threes',
-        '3s': 'player_threes',
-        '3 pointers made': 'player_threes',
-        '3 pointers': 'player_threes',
-        '3 pointer made': 'player_threes',
-        '3 pointers made': 'player_threes',
-        '3pt made': 'player_threes',
-        '3 pointers made': 'player_threes',
-        '3-pointers made': 'player_threes',
-        'three pointers made': 'player_threes',
-        'three point field goals made': 'player_threes',
-        '3pointersmade': 'player_threes',
-        'pts + ast': 'player_pa',
-        'points + assists': 'player_pa',
-        'pts + reb': 'player_pr',
-        'points + rebounds': 'player_pr',
-        'reb + ast': 'player_ra',
-        'rebounds + assists': 'player_ra',
-    }
-    if normalized in direct:
-        return direct[normalized]
-    if compact in {'pts+ast', 'points+assists'}:
-        return 'player_pa'
-    if compact in {'pts+reb', 'points+rebounds'}:
-        return 'player_pr'
-    if compact in {'reb+ast', 'rebounds+assists'}:
-        return 'player_ra'
     alias_map = get_alias_map('market')
     return alias_map.get(normalized) or alias_map.get(compact)
 

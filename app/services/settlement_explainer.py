@@ -31,6 +31,9 @@ def build_settlement_explanation(
     warnings: list[str] | None = None,
     grading_confidence: float | None = None,
     settlement_diagnostics: dict | None = None,
+    stat_components: list[str] | None = None,
+    component_values: dict[str, float] | None = None,
+    computed_total: float | None = None,
 ) -> SettlementExplanation:
     resolved_warnings = list(warnings or [])
     selection = _selection_label(leg.direction, leg.line)
@@ -49,6 +52,9 @@ def build_settlement_explanation(
         selection=selection,
         line=leg.line,
         actual_stat_value=actual_stat_value,
+        stat_components=list(stat_components or []),
+        component_values=dict(component_values or {}),
+        computed_total=computed_total,
         result=settlement,  # type: ignore[arg-type]
         settlement_reason_code=reason_code,
         settlement_reason=reason_message,

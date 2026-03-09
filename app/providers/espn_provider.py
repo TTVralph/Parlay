@@ -10,31 +10,21 @@ from urllib.request import urlopen
 
 from .base import EventInfo, ResultsProvider, TeamResult
 from ..player_identity import resolve_player_resolution
+from ..services.market_registry import MARKET_REGISTRY, player_market_to_canonical
 
 
-_SUPPORTED_PLAYER_MARKETS = {
-    'player_points': {'points', 'pts', 'point'},
-    'player_assists': {'assists', 'ast', 'assist'},
-    'player_rebounds': {'rebounds', 'reb', 'total rebounds'},
-    'player_threes': {'3pt made', '3pt field goals made', 'three point field goals made', 'three-point field goals made', 'threes made', 'made threes', 'threes', '3-pointers made', '3 pointers made', '3pt', '3pm'},
+
+_STAT_FIELD_TO_HEADER_ALIASES = {
+    'PTS': {'points', 'pts', 'point'},
+    'REB': {'rebounds', 'reb', 'total rebounds', 'boards'},
+    'AST': {'assists', 'ast', 'assist'},
+    '3PM': {'3pt made', '3pt field goals made', 'three point field goals made', 'three-point field goals made', 'threes made', 'made threes', 'threes', '3-pointers made', '3 pointers made', '3pt', '3pm'},
+    'STL': {'steals', 'stl', 'steal'},
+    'BLK': {'blocks', 'blk', 'block'},
+    'TOV': {'turnovers', 'tov', 'turnover', 'to'},
 }
 
-_COMBO_PLAYER_MARKETS = {
-    'player_pra': ('player_points', 'player_rebounds', 'player_assists'),
-    'player_pr': ('player_points', 'player_rebounds'),
-    'player_pa': ('player_points', 'player_assists'),
-    'player_ra': ('player_rebounds', 'player_assists'),
-}
 
-
-
-
-_STAT_FIELD_BY_MARKET = {
-    'player_points': 'PTS',
-    'player_assists': 'AST',
-    'player_rebounds': 'REB',
-    'player_threes': '3PT',
-}
 class ESPNNBAResultsProvider(ResultsProvider):
     """Conservative NBA-only provider backed by ESPN public endpoints."""
 
@@ -402,7 +392,8 @@ class ESPNNBAResultsProvider(ResultsProvider):
         text = str(raw_value).strip()
         if not text or text == '--':
             return None
-        if market_type == 'player_threes' and '-' in text:
+        canonical_market = player_market_to_canonical(market_type)
+        if canonical_market == 'threes' and '-' in text:
             made, _sep, _attempts = text.partition('-')
             try:
                 return float(int(made))
@@ -414,26 +405,33 @@ class ESPNNBAResultsProvider(ResultsProvider):
             return None
 
     def get_market_mapping_diagnostics(self, market_type: str, event_id: str | None = None) -> dict[str, Any]:
-        aliases = sorted(_SUPPORTED_PLAYER_MARKETS.get(market_type, set()))
-        stat_field = _STAT_FIELD_BY_MARKET.get(market_type)
+        canonical_market = player_market_to_canonical(market_type)
+        entry = MARKET_REGISTRY.get(canonical_market) if canonical_market else None
+        stat_components = list(entry['stat_components']) if entry else []
+        aliases = sorted(entry['aliases']) if entry else []
         diagnostics = {
             'normalized_market': market_type,
-            'espn_stat_field': stat_field,
-            'mapping_failed': stat_field is None,
+            'canonical_market': canonical_market,
+            'espn_stat_field': stat_components[0] if len(stat_components) == 1 else None,
+            'stat_components': stat_components,
+            'mapping_failed': entry is None,
             'stat_field_present': None,
             'aliases': aliases,
         }
-        if not event_id or stat_field is None:
+        if not event_id or entry is None:
             return diagnostics
         summary = self._summary(event_id)
         if not summary:
             return diagnostics
-        alias_set = {self._norm(item) for item in aliases}
+        required = {_norm for _norm in [self._norm(a) for c in stat_components for a in _STAT_FIELD_TO_HEADER_ALIASES.get(c, set())]}
+        if not required:
+            diagnostics['stat_field_present'] = False
+            return diagnostics
         found = False
         for team_block in (summary.get('boxscore') or {}).get('players') or []:
             for stat_block in team_block.get('statistics') or []:
                 labels = [self._norm(str(x).strip().lower()) for x in (stat_block.get('labels') or [])]
-                if any(label in alias_set for label in labels):
+                if any(label in required for label in labels):
                     found = True
                     break
             if found:
@@ -442,44 +440,55 @@ class ESPNNBAResultsProvider(ResultsProvider):
         return diagnostics
 
     def _extract_player_stat(self, event_id: str, player: str, market_type: str) -> float | None:
-        if market_type in _COMBO_PLAYER_MARKETS:
-            values: list[float] = []
-            for component_market in _COMBO_PLAYER_MARKETS[market_type]:
-                component = self._extract_player_stat(event_id, player, component_market)
-                if component is None:
-                    return None
-                values.append(float(component))
-            return float(sum(values))
-
-        aliases = _SUPPORTED_PLAYER_MARKETS.get(market_type)
-        if not aliases:
+        canonical_market = player_market_to_canonical(market_type)
+        entry = MARKET_REGISTRY.get(canonical_market) if canonical_market else None
+        if not entry:
             return None
+
         summary = self._summary(event_id)
         if not summary:
             return None
-        entry = self._resolve_player_entry(summary, player)
-        if not entry:
+        entry_player = self._resolve_player_entry(summary, player)
+        if not entry_player:
             return None
-        target = self._norm(entry['display_name'])
+        target = self._norm(entry_player['display_name'])
 
-        for team_block in (summary.get('boxscore') or {}).get('players') or []:
-            for stat_block in team_block.get('statistics') or []:
-                labels = [self._norm(str(x).strip().lower()) for x in (stat_block.get('labels') or [])]
-                idx = None
-                for i, label in enumerate(labels):
-                    if label in {self._norm(item) for item in aliases}:
-                        idx = i
-                        break
-                if idx is None:
-                    continue
-                for athlete in stat_block.get('athletes') or []:
-                    name = str((athlete.get('athlete') or {}).get('displayName') or '')
-                    if self._norm(name) != target:
+        component_values: dict[str, float] = {}
+        for stat_component in entry['stat_components']:
+            aliases = {self._norm(alias) for alias in _STAT_FIELD_TO_HEADER_ALIASES.get(stat_component, set())}
+            if not aliases:
+                return None
+            found_value: float | None = None
+            for team_block in (summary.get('boxscore') or {}).get('players') or []:
+                for stat_block in team_block.get('statistics') or []:
+                    labels = [self._norm(str(x).strip().lower()) for x in (stat_block.get('labels') or [])]
+                    idx = next((i for i, label in enumerate(labels) if label in aliases), None)
+                    if idx is None:
                         continue
-                    stats = athlete.get('stats') or []
-                    if idx >= len(stats):
-                        return None
-                    return self._parse_stat_value(stats[idx], market_type)
+                    for athlete in stat_block.get('athletes') or []:
+                        name = str((athlete.get('athlete') or {}).get('displayName') or '')
+                        if self._norm(name) != target:
+                            continue
+                        stats = athlete.get('stats') or []
+                        if idx >= len(stats):
+                            return None
+                        parsed = self._parse_stat_value(stats[idx], market_type)
+                        if parsed is None:
+                            return None
+                        found_value = float(parsed)
+                        break
+                    if found_value is not None:
+                        break
+                if found_value is not None:
+                    break
+            if found_value is None:
+                return None
+            component_values[stat_component] = found_value
+
+        if entry['market_type'] == 'combo_stat':
+            return float(sum(component_values.values()))
+        if entry['market_type'] == 'single_stat' and entry['stat_components']:
+            return component_values.get(entry['stat_components'][0])
         return None
 
     def get_player_result_details(self, player: str, market_type: str, event_id: str | None = None) -> dict[str, Any] | None:
