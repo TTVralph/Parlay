@@ -107,4 +107,5 @@ def parse_screenshot_text(raw_text: str, cleaned_text: str) -> ParsedScreenshotR
         parsed_legs=parsed_legs,
         detected_bet_date=_detect_bet_date(raw_text),
         parse_warnings=parse_warnings,
+        confidence='medium' if parsed_legs else 'low',
     )

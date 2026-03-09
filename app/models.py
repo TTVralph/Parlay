@@ -248,6 +248,7 @@ class ParsedScreenshotResponse(BaseModel):
     parsed_legs: list[ParsedScreenshotLeg] = Field(default_factory=list)
     detected_bet_date: Optional[str] = None
     parse_warnings: list[str] = Field(default_factory=list)
+    confidence: Literal['high', 'medium', 'low', 'NEEDS_REVIEW'] = 'low'
 
 class OCRExtractResponse(BaseModel):
     filename: str
@@ -256,6 +257,13 @@ class OCRExtractResponse(BaseModel):
     provider: str
     confidence: float
     notes: list[str] = Field(default_factory=list)
+
+
+class ScreenshotParseResponse(BaseModel):
+    source_ref: str
+    extracted_text: str
+    cleaned_text: str
+    parsed_screenshot: ParsedScreenshotResponse
 
 
 class IngestGradeResponse(BaseModel):
