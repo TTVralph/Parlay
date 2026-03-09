@@ -75,6 +75,7 @@ class NBAIdentityAdapter:
             CanonicalTeamIdentity('NBA', 'nba-uta', {'espn': '26'}, 'Utah Jazz', normalize_entity_name('Utah Jazz'), ('UTA',), ('Jazz',)),
             CanonicalTeamIdentity('NBA', 'nba-hou', {'espn': '10'}, 'Houston Rockets', normalize_entity_name('Houston Rockets'), ('HOU',), ('Rockets',)),
             CanonicalTeamIdentity('NBA', 'nba-mia', {'espn': '14'}, 'Miami Heat', normalize_entity_name('Miami Heat'), ('MIA',), ('Heat',)),
+            CanonicalTeamIdentity('NBA', 'nba-mil', {'espn': '15'}, 'Milwaukee Bucks', normalize_entity_name('Milwaukee Bucks'), ('MIL',), ('Bucks',)),
             CanonicalTeamIdentity('NBA', 'nba-det', {'espn': '8'}, 'Detroit Pistons', normalize_entity_name('Detroit Pistons'), ('DET',), ('Pistons',)),
         )
 
@@ -94,7 +95,9 @@ class NBAIdentityAdapter:
             CanonicalPlayerIdentity('NBA', 'nba-bam-adebayo', {'espn': '4066261'}, 'Bam Adebayo', normalize_entity_name('Bam Adebayo'), ('Bam',), 'nba-mia', 'Miami Heat'),
             CanonicalPlayerIdentity('NBA', 'nba-cade-cunningham', {'espn': '4432166'}, 'Cade Cunningham', normalize_entity_name('Cade Cunningham'), (), 'nba-det', 'Detroit Pistons'),
             CanonicalPlayerIdentity('NBA', 'nba-desmond-bane', {'espn': '4397136'}, 'Desmond Bane', normalize_entity_name('Desmond Bane'), ('Bane',), 'nba-mem', 'Memphis Grizzlies'),
-            CanonicalPlayerIdentity('NBA', 'nba-og-anunoby', {'espn': '3934719'}, 'OG Anunoby', normalize_entity_name('OG Anunoby'), ('O.G. Anunoby',), None, None),
+            CanonicalPlayerIdentity('NBA', 'nba-og-anunoby', {'espn': '3934719'}, 'OG Anunoby', normalize_entity_name('OG Anunoby'), ('O.G. Anunoby', 'O G Anunoby'), None, None),
+            CanonicalPlayerIdentity('NBA', 'nba-aj-green', {'espn': '4397062'}, 'AJ Green', normalize_entity_name('AJ Green'), ('A.J. Green', 'A J Green'), 'nba-mil', 'Milwaukee Bucks'),
+            CanonicalPlayerIdentity('NBA', 'nba-jaren-jackson-jr', {'espn': '4277961'}, 'Jaren Jackson Jr.', normalize_entity_name('Jaren Jackson Jr.'), ('Jaren Jackson Jr',), 'nba-mem', 'Memphis Grizzlies'),
         )
 
     def normalize_stat_label(self, stat_label: str | None) -> str | None:

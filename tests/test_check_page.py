@@ -98,3 +98,12 @@ def test_check_page_form_submit_prevents_navigation_and_submits_in_place():
     assert 'event.preventDefault();' in html
     assert "await submitCheck();" in html
     assert "fetch('/check-slip'" in html
+
+
+def test_check_page_reset_selection_button_is_clickable() -> None:
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "resetBtn.disabled=false" in html
+    assert "resetBtn.addEventListener('click'" in html

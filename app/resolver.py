@@ -5,12 +5,13 @@ import logging
 import re
 
 from .models import Leg
-from .identity_resolution import resolve_player_identity
+from .identity_resolution import normalize_entity_name, resolve_player_identity
 from .providers.base import EventInfo, ResultsProvider
 
 AMBIGUOUS_EVENT_WARNING = 'multiple games found for resolved team on date'
 PLAYER_TEAM_UNRESOLVED_WARNING = 'team could not be resolved from player identity'
 MISSING_BET_DATE_WARNING = 'Missing bet date'
+MULTIPLE_POSSIBLE_GAMES_WARNING = 'Multiple possible games. Add bet date to narrow results.'
 NO_TEAM_GAME_ON_SELECTED_DATE_WARNING = 'no game found for resolved team on date'
 MULTIPLE_TEAM_GAMES_WARNING = 'multiple games found for resolved team on date'
 
@@ -178,12 +179,6 @@ def _resolve_player_team(provider: ResultsProvider, player: str, sport: str, pos
     return resolution.resolved_team
 
 
-def _resolve_anchor(posted_at: datetime | None) -> datetime:
-    if posted_at is not None:
-        return posted_at
-    return datetime.utcnow()
-
-
 def resolve_leg_events(
     legs: list[Leg],
     provider: ResultsProvider,
@@ -203,7 +198,7 @@ def resolve_leg_events(
         anchor_input = datetime.combine(explicit_slip_date, datetime.min.time())
     else:
         anchor_input = None
-    anchor = _resolve_anchor(anchor_input)
+    anchor = anchor_input
     resolved: list[Leg] = []
     resolved_event_ids: set[str] = set()
     resolved_team_event_ids: dict[str, set[str]] = {}
@@ -216,6 +211,8 @@ def resolve_leg_events(
         player_team: str | None = None
         player_identity_id: str | None = None
         resolved_player_name: str | None = None
+        directory_loaded = bool(resolve_player_identity('Nikola Jokic', sport=leg.sport).resolved_player_id) if leg.sport == 'NBA' else True
+        normalized_lookup_key = normalize_entity_name(leg.player) if leg.player else None
         if leg.player:
             resolution = resolve_player_identity(leg.player, sport=leg.sport)
             if resolution.resolved_player_name and leg.player != resolution.resolved_player_name:
@@ -238,6 +235,13 @@ def resolve_leg_events(
                 player_identity_id,
                 player_team,
             )
+            notes.append(f'diagnostic: parsed_player_name={leg.player}')
+            notes.append(f'diagnostic: normalized_player_lookup_key={normalized_lookup_key}')
+            notes.append(f'diagnostic: sport_directory_loaded={directory_loaded}')
+            notes.append(f'diagnostic: directory_candidates={len(resolution.candidate_players) or (1 if resolution.resolved_player_id else 0)}')
+            notes.append(f'diagnostic: resolved_player_name={resolved_player_name}')
+            notes.append(f'diagnostic: resolved_player_id={player_identity_id}')
+            notes.append(f'diagnostic: resolved_team={player_team}')
 
         if leg.market_type in {'moneyline', 'spread'} and leg.team:
             candidates = _team_candidates(provider, leg.team, anchor, include_historical=include_historical)
@@ -245,6 +249,7 @@ def resolve_leg_events(
         elif leg.player:
             player_lookup_name = str(updates.get('player', leg.player))
             candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
+            notes.append(f'diagnostic: candidate_events_before_filtering={len(candidates)}')
             logger.debug('NBA prop candidate games before team filtering: player=%s candidates=%s', player_lookup_name, _event_ids(candidates))
             if leg.sport == 'NBA' and not player_team:
                 if PLAYER_TEAM_UNRESOLVED_WARNING not in notes:
@@ -288,6 +293,7 @@ def resolve_leg_events(
                     if NO_TEAM_GAME_ON_SELECTED_DATE_WARNING not in notes:
                         notes.append(NO_TEAM_GAME_ON_SELECTED_DATE_WARNING)
             candidates = _filter_by_opponent(candidates, opponent)
+            notes.append(f'diagnostic: candidate_events_after_filtering={len(candidates)}')
             updates['matched_by'] = 'player_boxscore_lookup'
 
         candidates = _filter_by_slip_date_with_historical_fallback(
@@ -352,6 +358,8 @@ def resolve_leg_events(
             if leg.player and leg.sport == 'NBA':
                 if slip_filter_value is None and MISSING_BET_DATE_WARNING not in notes:
                     notes.append(MISSING_BET_DATE_WARNING)
+                if slip_filter_value is None and MULTIPLE_POSSIBLE_GAMES_WARNING not in notes:
+                    notes.append(MULTIPLE_POSSIBLE_GAMES_WARNING)
                 if MULTIPLE_TEAM_GAMES_WARNING not in notes:
                     notes.append(MULTIPLE_TEAM_GAMES_WARNING)
             updates['notes'] = notes

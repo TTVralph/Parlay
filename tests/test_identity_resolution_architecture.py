@@ -56,6 +56,20 @@ def test_initials_and_punctuation_alias_resolve() -> None:
     assert og.resolved_player_name == 'OG Anunoby'
 
 
+
+
+def test_initials_player_variant_resolves() -> None:
+    aj = resolve_player_identity('A.J. Green', sport='NBA')
+    assert aj.resolved_player_name == 'AJ Green'
+    assert aj.resolved_team == 'Milwaukee Bucks'
+
+
+def test_nba_directory_contains_expected_active_players() -> None:
+    adapter = get_sport_adapters()['NBA']
+    names = {p.full_name for p in adapter.load_players()}
+    assert 'AJ Green' in names
+    assert 'Jaren Jackson Jr.' in names
+
 def test_unambiguous_nba_player_resolution() -> None:
     jokic = resolve_player_identity('Nikola Jokic', sport='NBA')
     assert jokic.resolved_player_id == 'nba-nikola-jokic'
