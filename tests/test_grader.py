@@ -103,7 +103,12 @@ def test_void_explanation_when_player_did_not_play() -> None:
 def test_missing_bet_date_produces_helpful_review_reason() -> None:
     result = grade_text('Jamal Murray over 2.5 threes')
     assert result.overall == 'needs_review'
-    assert result.legs[0].review_reason in {'missing bet date', 'Multiple possible games. Add bet date to narrow results.'}
+    assert result.legs[0].review_reason == 'Multiple possible games. Add bet date to narrow results.'
+
+
+def test_missing_bet_date_can_still_autosettle_when_single_candidate_exists() -> None:
+    result = grade_text('Jayson Tatum over 25.5 points', posted_at=datetime.fromisoformat('2026-03-08T00:00:00'))
+    assert result.legs[0].leg.event_id == 'nba-2026-03-08-bos-gsw'
 
 
 def test_bet_date_autoselects_single_team_game() -> None:

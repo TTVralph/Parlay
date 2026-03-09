@@ -87,6 +87,8 @@ def _event_status(provider: ResultsProvider, event_id: str | None) -> str | None
 
 def _review_reason_from_notes(leg: Leg) -> str:
     lowered_notes = [note.lower() for note in leg.notes]
+    if any('multiple possible games. add bet date to narrow results.' in note for note in lowered_notes):
+        return 'Multiple possible games. Add bet date to narrow results.'
     if any('missing bet date' in note for note in lowered_notes):
         return 'missing bet date'
     if any('could not parse stat type' in note for note in lowered_notes):
