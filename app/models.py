@@ -107,6 +107,7 @@ class GradedLeg(BaseModel):
     identity_source: Optional[str] = None
     identity_last_refreshed_at: Optional[str] = None
     resolved_team_hint: Optional[str] = None
+    validation_warnings: list[str] = Field(default_factory=list)
 
 
 class GradeResponse(BaseModel):

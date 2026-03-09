@@ -1025,6 +1025,7 @@ Murray over 2.5 threes'></textarea>
           <div>Candidate events: ${(item.candidate_events||[]).map((e)=>e.event_label||e.event_id).join(', ') || '—'}</div>
           <div>Parse confidence: ${item.parse_confidence ?? '—'}</div>
           <div>Review reason: ${item.review_reason||'—'}</div>
+          <div>Warnings: ${(item.validation_warnings||[]).join(' | ') || '—'}</div>
           <div>Diagnostics: ${(item.notes||item.leg?.notes||[]).join(' | ') || '—'}</div>
         `;
         detailsWrap.appendChild(detailsBody);
@@ -1188,6 +1189,7 @@ Murray over 2.5 threes'></textarea>
           selected_bet_date:item.selected_bet_date||item.leg?.selected_bet_date||null,
           player_found_in_boxscore:item.player_found_in_boxscore,
           notes:item.notes||item.leg?.notes||[],
+          validation_warnings:item.validation_warnings||[],
         })),
         parlay_result:(body.result?.overall==='pending'?'still_live':(body.result?.overall||'needs_review')),
       };
@@ -1396,6 +1398,7 @@ def _process_public_check_text(
             'matched_boxscore_player_name': item.matched_boxscore_player_name,
             'selected_bet_date': item.selected_bet_date or item.leg.selected_bet_date,
             'player_found_in_boxscore': item.player_found_in_boxscore,
+            'validation_warnings': item.validation_warnings,
             'notes': item.leg.notes,
         })
 

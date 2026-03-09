@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 
 from .models import GradeResponse, GradedLeg, Leg
@@ -54,6 +55,62 @@ _COMPONENT_LABELS = {
 }
 
 
+@dataclass
+class ValidationResult:
+    is_valid: bool
+    warnings: list[str]
+    confidence: str = 'HIGH'
+
+
+def _event_info_for_leg(leg: Leg, provider: ResultsProvider):
+    if not leg.event_id:
+        return None
+    event_info_fn = getattr(provider, 'get_event_info', None)
+    if callable(event_info_fn):
+        return event_info_fn(leg.event_id)
+    if leg.event_label and ' @ ' in leg.event_label:
+        away, home = leg.event_label.split(' @ ', 1)
+        return {'home_team': home, 'away_team': away}
+    return None
+
+
+def validate_player_event_match(player: str, event: object, resolved_team: str | None, provider: ResultsProvider, event_id: str | None = None) -> ValidationResult:
+    warnings: list[str] = []
+    home_team = getattr(event, 'home_team', None) if event is not None else None
+    away_team = getattr(event, 'away_team', None) if event is not None else None
+    if isinstance(event, dict):
+        home_team = event.get('home_team')
+        away_team = event.get('away_team')
+
+    if resolved_team and home_team and away_team:
+        normalized_event_teams = {home_team.lower(), away_team.lower()}
+        if resolved_team.lower() not in normalized_event_teams:
+            warnings.append('Matched event does not include player team')
+
+    roster_fn = getattr(provider, 'is_player_on_event_roster', None)
+    if callable(roster_fn) and event_id:
+        try:
+            is_on_roster = roster_fn(player, event_id=event_id)
+        except TypeError:
+            is_on_roster = roster_fn(player, event_id)
+        if is_on_roster is False:
+            warnings.append('Player is not on either roster for matched event')
+
+    if warnings:
+        return ValidationResult(is_valid=False, warnings=warnings, confidence='LOW')
+    return ValidationResult(is_valid=True, warnings=[])
+
+
+def _dnp_settlement_mode(provider: ResultsProvider) -> str:
+    rules_fn = getattr(provider, 'get_sportsbook_rules', None)
+    if callable(rules_fn):
+        rules = rules_fn() or {}
+        mode = str(rules.get('dnp_player_prop_settlement', 'VOID')).upper()
+        if mode in {'VOID', 'NEEDS_REVIEW'}:
+            return mode
+    return 'VOID'
+
+
 def _base_leg_kwargs(leg: Leg) -> dict:
     return {
         'matched_event': leg.event_label,
@@ -101,6 +158,8 @@ def _review_reason_from_notes(leg: Leg) -> str:
         return 'team could not be resolved from player identity'
     if any('no game found for resolved team on date' in note for note in lowered_notes):
         return 'no game found for resolved team on date'
+    if any('matched event does not include player team' in note for note in lowered_notes):
+        return 'Matched event does not include player team'
     if any('multiple games found for resolved team on date' in note for note in lowered_notes):
         return 'multiple games found for resolved team on date'
     if len(leg.event_candidates) > 1:
@@ -112,6 +171,7 @@ def _review_reason_from_notes(leg: Leg) -> str:
 
 def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     base_kwargs = _base_leg_kwargs(leg)
+    base_kwargs['validation_warnings'] = []
     if leg.confidence < 0.75:
         return GradedLeg(leg=leg, settlement='unmatched', reason='Could not parse stat type', explanation_reason='Could not parse stat type', review_reason='Could not parse stat type', **base_kwargs)
 
@@ -165,6 +225,21 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     if not leg.player:
         return GradedLeg(leg=leg, settlement='unmatched', reason='No player identified', explanation_reason='player identity ambiguous', **base_kwargs)
 
+    event_info = _event_info_for_leg(leg, provider)
+    validation = validate_player_event_match(leg.player, event_info, leg.resolved_team, provider, event_id=leg.event_id)
+    if validation.confidence == 'LOW':
+        base_kwargs['resolution_confidence'] = min(float(leg.resolution_confidence or 1.0), 0.3)
+        base_kwargs['validation_warnings'] = list(validation.warnings)
+    if not validation.is_valid:
+        return GradedLeg(
+            leg=leg,
+            settlement='unmatched',
+            reason='Impossible player/event match rejected',
+            explanation_reason='Leg marked void/review instead of graded',
+            review_reason='; '.join(validation.warnings),
+            **base_kwargs,
+        )
+
     matched_boxscore_player_name = None
     detail_lookup = getattr(provider, 'get_player_result_details', None)
     actual_value = None
@@ -202,8 +277,13 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
             except Exception:
                 appeared = None
             if appeared is False:
-                return GradedLeg(leg=leg, settlement='void', reason=f'{leg.player} did not appear in box score (DNP)', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name, **base_kwargs)
-        return GradedLeg(leg=leg, settlement='unmatched', reason='Matched event but player not found in box score', explanation_reason='Matched event but player not found in box score', player_found_in_boxscore=appeared, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name, **base_kwargs)
+                dnp_mode = _dnp_settlement_mode(provider)
+                dnp_warnings = ['Player did not appear in box score', 'Leg marked void/review instead of graded']
+                dnp_kwargs = {**base_kwargs, 'validation_warnings': dnp_warnings}
+                if dnp_mode == 'NEEDS_REVIEW':
+                    return GradedLeg(leg=leg, settlement='unmatched', reason=f'{leg.player} did not appear in box score (DNP)', explanation_reason='Leg marked void/review instead of graded', review_reason='Player did not appear in box score', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name, **dnp_kwargs)
+                return GradedLeg(leg=leg, settlement='void', reason=f'{leg.player} did not appear in box score (DNP)', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name, **dnp_kwargs)
+        return GradedLeg(leg=leg, settlement='unmatched', reason='Matched event but no stat result', explanation_reason='Matched event but no stat result', player_found_in_boxscore=appeared, component_values=component_values_dict, matched_boxscore_player_name=matched_boxscore_player_name, **base_kwargs)
 
     if leg.direction == 'over':
         won = actual_value > leg.line
