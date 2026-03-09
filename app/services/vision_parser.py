@@ -12,34 +12,9 @@ import httpx
 
 from .image_preprocessor import preprocess_screenshot
 from .slip_types import ParsedSlip, ParsedSlipLeg
+from .vision_prompt_builder import build_vision_prompts
 
 logger = logging.getLogger(__name__)
-
-_SYSTEM_PROMPT = """You are a sportsbook slip parser.
-
-Extract complete player prop bet legs from the screenshot.
-
-Rules:
-- Return structured JSON only.
-- Ignore odds, payout, balance, promos, buttons, headers, live score bars, and app chrome.
-- Normalize markets into these exact names only:
-  points, rebounds, assists, threes, steals, blocks, pra, pr, pa, ra
-- Normalize selections into:
-  over, under
-- Preserve player_name exactly as shown in the screenshot.
-- Preserve a short raw_text for each leg.
-- Legs may be visually multi-line. You may associate adjacent lines in the same row/card (e.g. player name line, market subtitle line, and selection/line) when layout strongly indicates they belong together.
-- Do not require all useful text for a leg to be present in a single line string.
-- If likely player prop rows are present but line/market association is unclear, omit uncertain legs and add warnings like:
-  - Detected likely player prop rows but line/market association was unclear
-  - Image may contain multi-line leg layout
-- Extract only complete, high-confidence legs.
-- If a leg is incomplete or unclear, omit it and add a warning.
-- If the screenshot shows LIVE, a quarter/period marker, a game clock, or in-progress indicators, set screenshot_state to "live".
-- If unclear, set screenshot_state to "unknown".
-- Do not guess missing values."""
-
-_USER_PROMPT = 'Extract sportsbook player prop bet legs from this screenshot. Return only the structured output matching the schema.'
 
 _JSON_SCHEMA = {
     'type': 'object',
@@ -120,18 +95,22 @@ class OpenAIVisionSlipParser:
         if self._debug_mode:
             debug_artifacts.update(self._save_image_artifacts(image_bytes, processed.image_bytes, filename))
 
+        prompt_strategy = build_vision_prompts(detected_sportsbook)
+
         logger.info(
-            'vision_parser.start model=%s parse_mode=responses_structured preprocessing=%s detected_sportsbook=%s',
+            'vision_parser.start model=%s parse_mode=responses_structured preprocessing=%s detected_sportsbook=%s parser_strategy=%s',
             self._model,
             processed.metadata(),
             detected_sportsbook,
+            prompt_strategy.parser_strategy_used,
         )
 
         try:
-            result = self._call_provider(processed.image_bytes, detected_sportsbook)
+            result = self._call_provider(processed.image_bytes, detected_sportsbook, prompt_strategy)
             data = result.payload
             if self._debug_mode:
                 debug_artifacts.update(self._save_json_artifact(data, filename))
+            debug_artifacts['parser_strategy_used'] = prompt_strategy.parser_strategy_used
         except Exception as exc:
             failure = classify_failure(exc)
             logger.warning('vision_parser.failure class=%s error=%s', failure, str(exc))
@@ -159,15 +138,17 @@ class OpenAIVisionSlipParser:
             primary_confidence=data['confidence'],
             primary_warnings=list(data['warnings']),
             primary_detected_sportsbook=result.detected_sportsbook,
+            primary_parser_strategy_used=prompt_strategy.parser_strategy_used,
             primary_screenshot_state=data['screenshot_state'],
             primary_parsed_leg_count=len(data['parsed_legs']),
             debug_artifacts=debug_artifacts or None,
         )
         logger.info(
-            'vision_parser.success model=%s parse_mode=responses_structured parser_confidence=%s detected_sportsbook=%s',
+            'vision_parser.success model=%s parse_mode=responses_structured parser_confidence=%s detected_sportsbook=%s parser_strategy=%s',
             self._model,
             parsed.confidence,
             detected_sportsbook,
+            prompt_strategy.parser_strategy_used,
         )
         return parsed
 
@@ -190,7 +171,7 @@ class OpenAIVisionSlipParser:
         parsed_path.write_text(json.dumps(parsed_json, indent=2))
         return {'debug_primary_response_path': str(parsed_path)}
 
-    def _call_provider(self, image_bytes: bytes, detected_sportsbook: str) -> VisionCallResult:
+    def _call_provider(self, image_bytes: bytes, detected_sportsbook: str, prompt_strategy) -> VisionCallResult:
         image_b64 = base64.b64encode(image_bytes).decode('ascii')
         payload = {
             'model': self._model,
@@ -198,11 +179,11 @@ class OpenAIVisionSlipParser:
             'max_output_tokens': 500,
             'input': [{
                 'role': 'system',
-                'content': [{'type': 'input_text', 'text': _SYSTEM_PROMPT}],
+                'content': [{'type': 'input_text', 'text': prompt_strategy.system_prompt}],
             }, {
                 'role': 'user',
                 'content': [
-                    {'type': 'input_text', 'text': f'Detected sportsbook layout hint: {detected_sportsbook}.\n{_USER_PROMPT}'},
+                    {'type': 'input_text', 'text': prompt_strategy.user_prompt},
                     {'type': 'input_image', 'image_url': f'data:image/png;base64,{image_b64}'},
                 ],
             }],

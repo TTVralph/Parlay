@@ -201,3 +201,36 @@ def test_vision_low_confidence_triggers_fallback_even_with_leg() -> None:
     assert parsed.fallback_reason == 'vision_low_confidence'
     assert parsed.primary_result is not None
     assert parsed.primary_result.primary_confidence == 'low'
+
+
+def test_parser_strategy_used_in_provider_payload_and_debug(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed(b'bet365'))
+
+    captured: dict = {}
+
+    class _CaptureClient(_Client):
+        def post(self, _url: str, *, headers: dict, json: dict):
+            captured['payload'] = json
+            return super().post(_url, headers=headers, json=json)
+
+    monkeypatch.setattr(
+        'app.services.vision_parser.httpx.Client',
+        lambda timeout: _CaptureClient({'output_text': json.dumps({
+            'sportsbook': 'bet365',
+            'screenshot_state': 'final',
+            'confidence': 'high',
+            'warnings': [],
+            'parsed_legs': [],
+        })}),
+    )
+
+    parsed = OpenAIVisionSlipParser().parse(b'img')
+
+    assert parsed.primary_parser_strategy_used == 'bet365'
+    assert parsed.debug_artifacts is not None
+    assert parsed.debug_artifacts['parser_strategy_used'] == 'bet365'
+    system_text = captured['payload']['input'][0]['content'][0]['text']
+    user_text = captured['payload']['input'][1]['content'][0]['text']
+    assert 'Strategy: bet365 layout.' in system_text
+    assert 'Parser strategy: bet365.' in user_text

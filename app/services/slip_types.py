@@ -48,6 +48,7 @@ class ParsedSlip:
     primary_confidence: str | None = None
     primary_warnings: list[str] = field(default_factory=list)
     primary_detected_sportsbook: str | None = None
+    primary_parser_strategy_used: str | None = None
     primary_screenshot_state: str | None = None
     primary_parsed_leg_count: int = 0
     primary_result: ParsedSlip | None = None

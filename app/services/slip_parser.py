@@ -56,6 +56,7 @@ class SlipParserService:
         fallback.primary_confidence = primary_result.confidence if primary_result else None
         fallback.primary_warnings = list(primary_result.warnings) if primary_result else []
         fallback.primary_detected_sportsbook = primary_result.primary_detected_sportsbook if primary_result else None
+        fallback.primary_parser_strategy_used = primary_result.primary_parser_strategy_used if primary_result else None
         fallback.primary_screenshot_state = primary_result.screenshot_state if primary_result else None
         fallback.primary_parsed_leg_count = len(primary_result.parsed_legs) if primary_result else 0
         fallback.fallback_parser_status = 'success'

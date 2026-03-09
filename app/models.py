@@ -289,6 +289,7 @@ class PrimaryParserDebug(BaseModel):
     primary_confidence: Optional[str] = None
     primary_warnings: list[str] = Field(default_factory=list)
     primary_detected_sportsbook: Optional[str] = None
+    primary_parser_strategy_used: Optional[str] = None
     primary_screenshot_state: Optional[str] = None
     primary_parsed_leg_count: int = 0
 
