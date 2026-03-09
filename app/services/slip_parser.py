@@ -4,7 +4,7 @@ from .ocr_fallback import OCRFallbackParser
 from .slip_confidence import apply_confidence_and_warnings, should_fallback_to_ocr
 from .slip_normalizer import normalize_market, normalize_selection
 from .slip_types import ParsedSlip
-from .vision_parser import OpenAIVisionSlipParser, VisionSlipParser
+from .vision_parser import OpenAIVisionSlipParser, VisionSlipParser, classify_failure
 
 
 class SlipParserService:
@@ -13,7 +13,7 @@ class SlipParserService:
         self._ocr_fallback = ocr_fallback or OCRFallbackParser()
 
     def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip:
-        vision_error: str | None = None
+        fallback_reason: str | None = None
         try:
             parsed = self._vision.parse(image_bytes=image_bytes, filename=filename)
             for leg in parsed.parsed_legs:
@@ -21,12 +21,18 @@ class SlipParserService:
                 leg.selection = normalize_selection(leg.selection)
             apply_confidence_and_warnings(parsed)
             if not should_fallback_to_ocr(parsed):
+                parsed.primary_parser_status = 'success'
+                parsed.fallback_parser_status = 'not_attempted'
                 return parsed
-            vision_error = 'Vision parse quality was too low, using OCR fallback.'
+            fallback_reason = 'low_confidence'
+            parsed.primary_parser_status = 'success_low_confidence'
         except Exception as exc:
-            vision_error = f'Vision parser failed ({exc}); using OCR fallback.'
+            fallback_reason = classify_failure(exc)
 
         fallback = self._ocr_fallback.parse(image_bytes=image_bytes, filename=filename)
-        if vision_error:
-            fallback.warnings.insert(0, vision_error)
+        fallback.primary_parser_status = 'failed'
+        fallback.fallback_parser_status = 'success'
+        fallback.fallback_reason = fallback_reason
+        if fallback_reason:
+            fallback.warnings.insert(0, f'fallback_reason={fallback_reason}')
         return fallback
