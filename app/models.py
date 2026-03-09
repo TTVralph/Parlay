@@ -133,6 +133,11 @@ class SettlementExplanation(BaseModel):
     settlement_reason: str
     warnings: list[str] = Field(default_factory=list)
     grading_confidence: float = 0.0
+    matched_player: Optional[str] = None
+    normalized_market: Optional[str] = None
+    stat_field_used: Optional[str] = None
+    selection: Optional[str] = None
+    settlement_reason_text: Optional[str] = None
 
 
 class GradeResponse(BaseModel):

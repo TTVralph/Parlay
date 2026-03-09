@@ -51,6 +51,9 @@ def test_normal_win_explanation_contains_stat_and_reason_code() -> None:
     assert leg.settlement_explanation is not None
     assert leg.settlement_explanation.actual_stat_value == 27.0
     assert leg.settlement_explanation.settlement_reason_code == 'actual_stat_above_line'
+    assert leg.settlement_explanation.matched_player == 'Nikola Jokic'
+    assert leg.settlement_explanation.selection == 'over 24.5'
+    assert leg.settlement_explanation.settlement_reason_text == '27.0 is above 24.5'
 
 
 def test_normal_loss_explanation_contains_reason_message() -> None:
@@ -59,7 +62,7 @@ def test_normal_loss_explanation_contains_reason_message() -> None:
     assert leg.settlement == 'loss'
     assert leg.settlement_explanation is not None
     assert leg.settlement_explanation.settlement_reason_code == 'actual_stat_below_line'
-    assert 'below' in leg.settlement_explanation.settlement_reason.lower()
+    assert leg.settlement_explanation.settlement_reason_text == '27.0 is below 40.5'
 
 
 def test_dnp_void_explanation() -> None:
@@ -68,6 +71,7 @@ def test_dnp_void_explanation() -> None:
     assert leg.settlement == 'void'
     assert leg.settlement_explanation is not None
     assert leg.settlement_explanation.settlement_reason_code == 'player_did_not_play'
+    assert leg.settlement_explanation.settlement_reason_text == 'Player did not appear in box score'
 
 
 def test_impossible_event_review_explanation() -> None:
@@ -76,6 +80,7 @@ def test_impossible_event_review_explanation() -> None:
     assert leg.settlement == 'unmatched'
     assert leg.settlement_explanation is not None
     assert leg.settlement_explanation.settlement_reason_code == 'matched_event_team_mismatch'
+    assert leg.settlement_explanation.settlement_reason_text == 'Matched event does not include player team'
 
 
 def test_ambiguous_identity_review_explanation() -> None:
@@ -94,3 +99,13 @@ def test_missing_stat_explanation() -> None:
     assert leg.settlement == 'unmatched'
     assert leg.settlement_explanation is not None
     assert leg.settlement_explanation.settlement_reason_code == 'missing_stat_source'
+
+
+def test_threes_explanation_uses_human_readable_reason() -> None:
+    result = grade_text('Jamal Murray over 1.5 threes', posted_at=datetime.fromisoformat('2026-03-07T19:00:00'))
+    leg = result.legs[0]
+    assert leg.settlement == 'loss'
+    assert leg.settlement_explanation is not None
+    assert leg.settlement_explanation.normalized_market == 'player_threes'
+    assert leg.settlement_explanation.actual_stat_value == 1.0
+    assert leg.settlement_explanation.settlement_reason_text == '1.0 is below 1.5'

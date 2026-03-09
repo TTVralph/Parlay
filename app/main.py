@@ -1035,16 +1035,20 @@ Murray over 2.5 threes'></textarea>
         detailsBody.innerHTML=`
           <div>Sport: ${item.leg?.sport||item.sport||'—'}</div>
           <div>Parsed: ${item.parsed_player_name||item.parsed_player_or_team||'—'} / ${item.normalized_stat_type||item.normalized_market||'—'}</div>
-          <div>Matched event: ${item.matched_event||'—'}</div>
-          <div>Stat used: ${item.normalized_market||'—'}</div>
+          <div>Matched player: ${item.matched_player||item.resolved_player_name||'—'}</div>
+          <div>Matched team: ${item.matched_team||item.resolved_team||'—'}</div>
+          <div>Matched event: ${item.matched_event_explained||item.matched_event||'—'}</div>
+          <div>Normalized market: ${item.normalized_market_explained||item.normalized_market||'—'}</div>
+          <div>Stat field used: ${item.stat_field_used||'—'}</div>
           <div>Line: ${item.line ?? '—'}</div>
           <div>Actual: ${item.actual_value ?? '—'}</div>
           ${componentRows}
           <div>Result: ${resultLabel[item.result]||String(item.result||'review')}</div>
           <div>Identity: ${(item.identity_match_method||'—')} (${item.identity_match_confidence||'—'})</div>
-          <div>Selection: ${item.normalized_selection||'—'}</div>
+          <div>Selection: ${item.selection||item.normalized_selection||'—'}</div>
           <div>Reason code: ${item.settlement_reason_code||'—'}</div>
-          <div>Reason: ${item.settlement_reason||item.explanation_reason||'—'}</div>
+          <div>Reason: ${item.settlement_reason_text||item.settlement_reason||item.explanation_reason||'—'}</div>
+          <div>Grading confidence: ${item.grading_confidence ?? '—'}</div>
           <div>Resolved player: ${item.resolved_player_name||'—'} (${item.resolved_player_id||'—'})</div>
           <div>Resolved team: ${item.resolved_team||'—'}</div>
           <div>Player in box score: ${boxscoreText}</div>
@@ -1229,9 +1233,17 @@ Murray over 2.5 threes'></textarea>
           validation_warnings:item.validation_warnings||[],
           identity_match_method:item.identity_match_method||item.leg?.identity_match_method||null,
           identity_match_confidence:item.identity_match_confidence||item.leg?.identity_match_confidence||null,
+          matched_player:item.settlement_explanation?.matched_player||item.resolved_player_name||item.leg?.resolved_player_name||null,
+          matched_team:item.settlement_explanation?.matched_team||item.resolved_team||item.leg?.resolved_team||null,
+          matched_event_explained:item.settlement_explanation?.matched_event||item.matched_event||item.leg?.event_label||null,
+          normalized_market_explained:item.settlement_explanation?.normalized_market||item.normalized_market||null,
+          stat_field_used:item.settlement_explanation?.stat_field_used||null,
+          selection:item.settlement_explanation?.selection||null,
           normalized_selection:item.settlement_explanation?.normalized_selection||null,
           settlement_reason_code:item.settlement_explanation?.settlement_reason_code||null,
+          settlement_reason_text:item.settlement_explanation?.settlement_reason_text||item.settlement_explanation?.settlement_reason||null,
           settlement_reason:item.settlement_explanation?.settlement_reason||null,
+          grading_confidence:item.settlement_explanation?.grading_confidence||null,
         })),
         parlay_result:(body.result?.overall==='pending'?'still_live':(body.result?.overall||'needs_review')),
       };
@@ -1445,9 +1457,17 @@ def _process_public_check_text(
             'identity_match_method': item.identity_match_method or item.leg.identity_match_method,
             'identity_match_confidence': item.identity_match_confidence or item.leg.identity_match_confidence,
             'settlement_explanation': item.settlement_explanation.model_dump() if item.settlement_explanation else None,
+            'matched_player': item.settlement_explanation.matched_player if item.settlement_explanation else None,
+            'matched_team': item.settlement_explanation.matched_team if item.settlement_explanation else None,
+            'matched_event_explained': item.settlement_explanation.matched_event if item.settlement_explanation else None,
+            'normalized_market_explained': item.settlement_explanation.normalized_market if item.settlement_explanation else None,
+            'stat_field_used': item.settlement_explanation.stat_field_used if item.settlement_explanation else None,
+            'selection': item.settlement_explanation.selection if item.settlement_explanation else None,
             'normalized_selection': item.settlement_explanation.normalized_selection if item.settlement_explanation else None,
             'settlement_reason_code': item.settlement_explanation.settlement_reason_code if item.settlement_explanation else None,
+            'settlement_reason_text': item.settlement_explanation.settlement_reason_text if item.settlement_explanation else None,
             'settlement_reason': item.settlement_explanation.settlement_reason if item.settlement_explanation else None,
+            'grading_confidence': item.settlement_explanation.grading_confidence if item.settlement_explanation else None,
             'settlement_diagnostics': item.settlement_diagnostics,
             'unmatched_reason_code': (item.settlement_diagnostics or {}).get('unmatched_reason_code'),
         })
