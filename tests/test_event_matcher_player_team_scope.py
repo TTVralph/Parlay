@@ -183,3 +183,41 @@ def test_zero_team_games_on_selected_date_returns_specific_reason() -> None:
     assert resolved[0].event_id is None
     assert resolved[0].event_candidates == []
     assert "no game found for resolved team on date" in resolved[0].notes
+
+
+def test_player_resolution_falls_back_to_identity_cache_team_aliases() -> None:
+    class AbbrOnlyProvider(TeamScopedPlayerProvider):
+        def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return None
+
+        def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return []
+
+        def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+            if team == 'BOS' and as_of and as_of.date() == date(2026, 3, 6):
+                return [
+                    EventInfo(
+                        event_id='evt-bos-nyk',
+                        sport='NBA',
+                        home_team='Boston Celtics',
+                        away_team='New York Knicks',
+                        start_time=datetime.fromisoformat('2026-03-06T00:30:00+00:00'),
+                    )
+                ]
+            return []
+
+    provider = AbbrOnlyProvider()
+    leg = Leg(
+        raw_text='Jaylen Brown over 0.5 points',
+        sport='NBA',
+        market_type='player_points',
+        player='Jaylen Brown',
+        direction='over',
+        line=0.5,
+        confidence=0.9,
+    )
+
+    resolved = resolve_leg_events([leg], provider, posted_at=date(2026, 3, 6), include_historical=True, bet_date=date(2026, 3, 6))
+
+    assert resolved[0].event_id == 'evt-bos-nyk'
+    assert resolved[0].matched_by == 'player_identity_team_schedule_lookup'
