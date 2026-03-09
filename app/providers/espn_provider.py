@@ -16,7 +16,7 @@ _SUPPORTED_PLAYER_MARKETS = {
     'player_points': {'points', 'pts', 'point'},
     'player_assists': {'assists', 'ast', 'assist'},
     'player_rebounds': {'rebounds', 'reb', 'total rebounds'},
-    'player_threes': {'3pt made', '3pt field goals made', 'three point field goals made', 'three-point field goals made', 'threes made', '3-pointers made', '3 pointers made', '3pt', '3pm'},
+    'player_threes': {'3pt made', '3pt field goals made', 'three point field goals made', 'three-point field goals made', 'threes made', 'made threes', 'threes', '3-pointers made', '3 pointers made', '3pt', '3pm'},
 }
 
 _COMBO_PLAYER_MARKETS = {
@@ -27,6 +27,14 @@ _COMBO_PLAYER_MARKETS = {
 }
 
 
+
+
+_STAT_FIELD_BY_MARKET = {
+    'player_points': 'PTS',
+    'player_assists': 'AST',
+    'player_rebounds': 'REB',
+    'player_threes': '3PT',
+}
 class ESPNNBAResultsProvider(ResultsProvider):
     """Conservative NBA-only provider backed by ESPN public endpoints."""
 
@@ -404,6 +412,34 @@ class ESPNNBAResultsProvider(ResultsProvider):
             return float(text)
         except Exception:
             return None
+
+    def get_market_mapping_diagnostics(self, market_type: str, event_id: str | None = None) -> dict[str, Any]:
+        aliases = sorted(_SUPPORTED_PLAYER_MARKETS.get(market_type, set()))
+        stat_field = _STAT_FIELD_BY_MARKET.get(market_type)
+        diagnostics = {
+            'normalized_market': market_type,
+            'espn_stat_field': stat_field,
+            'mapping_failed': stat_field is None,
+            'stat_field_present': None,
+            'aliases': aliases,
+        }
+        if not event_id or stat_field is None:
+            return diagnostics
+        summary = self._summary(event_id)
+        if not summary:
+            return diagnostics
+        alias_set = {self._norm(item) for item in aliases}
+        found = False
+        for team_block in (summary.get('boxscore') or {}).get('players') or []:
+            for stat_block in team_block.get('statistics') or []:
+                labels = [self._norm(str(x).strip().lower()) for x in (stat_block.get('labels') or [])]
+                if any(label in alias_set for label in labels):
+                    found = True
+                    break
+            if found:
+                break
+        diagnostics['stat_field_present'] = found
+        return diagnostics
 
     def _extract_player_stat(self, event_id: str, player: str, market_type: str) -> float | None:
         if market_type in _COMBO_PLAYER_MARKETS:

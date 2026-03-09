@@ -152,3 +152,56 @@ def test_correct_game_but_no_stat_result_is_review_not_win_loss() -> None:
     leg = result.legs[0]
     assert leg.settlement == 'unmatched'
     assert leg.explanation_reason == 'Matched event but no stat result'
+
+
+def test_unmatched_leg_exposes_settlement_diagnostics_reason_code() -> None:
+    provider = FakeEspnLikeProvider(points=None, status='final', appeared=True)
+    result = grade_text('Jokic over 28.5 points', provider=provider)
+    diag = result.legs[0].settlement_diagnostics
+    assert diag['event_resolution_worked'] is True
+    assert diag['stat_lookup_result'] == 'missing'
+    assert diag['unmatched_reason_code'] == 'stat_not_found'
+
+
+def test_player_not_on_roster_sets_unmatched_reason_code() -> None:
+    provider = FakeEspnLikeProvider(points=30.0, status='final', on_roster=False)
+    result = grade_text('Nikola Jokic over 28.5 points', provider=provider)
+    diag = result.legs[0].settlement_diagnostics
+    assert diag['unmatched_reason_code'] == 'player_not_on_event_roster'
+    assert 'not on either roster' in str(diag['event_match_rejection_reason']).lower()
+
+
+def test_same_game_multi_leg_slip_settles_multiple_legs() -> None:
+    class MultiLegProvider(FakeEspnLikeProvider):
+        def resolve_player_event(self, player: str, as_of: datetime | None):
+            if player in {'Draymond Green', 'Amen Thompson'}:
+                return self._event
+            return None
+
+        def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            event = self.resolve_player_event(player, as_of)
+            return [event] if event else []
+
+        def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            if player == 'Draymond Green':
+                return self._event.away_team
+            if player == 'Amen Thompson':
+                return self._event.home_team
+            return super().resolve_player_team(player, as_of, include_historical=include_historical)
+
+        def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+            if event_id != self._event.event_id:
+                return None
+            if market_type != 'player_threes':
+                return None
+            if player == 'Draymond Green':
+                return 1.0
+            if player == 'Amen Thompson':
+                return 0.0
+            return None
+
+    provider = MultiLegProvider(points=0.0, status='final', event_home_team='Houston Rockets', event_away_team='Golden State Warriors')
+    result = grade_text('Draymond Green under 1.5 threes\nAmen Thompson under 1.5 threes', provider=provider)
+    assert len(result.legs) == 2
+    assert all(item.settlement == 'win' for item in result.legs)
+    assert result.overall == 'cashed'

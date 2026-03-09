@@ -181,6 +181,36 @@ def _resolve_player_team(provider: ResultsProvider, player: str, sport: str, pos
     return resolution.resolved_team
 
 
+
+
+def _infer_same_game_event(
+    unresolved_legs: list[Leg],
+    provider: ResultsProvider,
+    anchor: datetime | None,
+    include_historical: bool,
+    slip_filter_value: date | datetime | None,
+) -> str | None:
+    team_event_counts: dict[str, int] = {}
+    team_set = {(_norm(leg.resolved_team or '')) for leg in unresolved_legs if leg.resolved_team}
+    team_set.discard('')
+    if len(team_set) != 2:
+        return None
+    for leg in unresolved_legs:
+        team = leg.resolved_team
+        if not team:
+            continue
+        candidates = _team_candidates(provider, team, anchor, include_historical=include_historical)
+        candidates = _filter_by_slip_date_with_historical_fallback(candidates, slip_filter_value, explicit_slip_date=None, include_historical=include_historical)
+        for event in candidates:
+            teams = {_norm(event.home_team), _norm(event.away_team)}
+            if not teams.issubset(team_set):
+                continue
+            team_event_counts[event.event_id] = team_event_counts.get(event.event_id, 0) + 1
+    if not team_event_counts:
+        return None
+    event_id, hits = max(team_event_counts.items(), key=lambda item: item[1])
+    return event_id if hits >= 2 else None
+
 def resolve_leg_events(
     legs: list[Leg],
     provider: ResultsProvider,
@@ -397,9 +427,32 @@ def resolve_leg_events(
 
         resolved.append(leg.model_copy(update=updates))
 
-    # Second pass: infer event for game totals from other legs when the ticket appears to target one game.
+    # Second pass: infer event for game totals and same-game NBA prop clusters.
     non_total_event_ids = {leg.event_id for leg in resolved if leg.market_type != 'game_total' and leg.event_id}
     inferred_event = next(iter(non_total_event_ids)) if len(non_total_event_ids) == 1 else None
+    unresolved_player_legs = [leg for leg in resolved if leg.sport == 'NBA' and leg.player and not leg.event_id]
+    inferred_same_game_event_id = _infer_same_game_event(
+        unresolved_player_legs,
+        provider,
+        anchor,
+        include_historical,
+        slip_filter_value,
+    )
+    inferred_same_game_event: EventInfo | None = None
+    if inferred_same_game_event_id:
+        event_lookup = getattr(provider, 'get_event_info', None)
+        if callable(event_lookup):
+            inferred_same_game_event = event_lookup(inferred_same_game_event_id)
+        if inferred_same_game_event is None:
+            for leg in unresolved_player_legs:
+                if not leg.resolved_team:
+                    continue
+                for event in _team_candidates(provider, leg.resolved_team, anchor, include_historical=include_historical):
+                    if event.event_id == inferred_same_game_event_id:
+                        inferred_same_game_event = event
+                        break
+                if inferred_same_game_event is not None:
+                    break
     final_resolved: list[Leg] = []
     for leg in resolved:
         if leg.market_type == 'game_total' and not leg.event_id and inferred_event:
@@ -417,6 +470,22 @@ def resolve_leg_events(
                 )
             )
             continue
+        if leg.event_id is None and inferred_same_game_event is not None and leg.player and leg.resolved_team:
+            teams = {_norm(inferred_same_game_event.home_team), _norm(inferred_same_game_event.away_team)}
+            if _norm(leg.resolved_team) in teams:
+                notes = list(leg.notes)
+                notes.append(f'diagnostic: shared_event_inference={inferred_same_game_event.event_id}')
+                final_resolved.append(
+                    leg.model_copy(update={
+                        'event_id': inferred_same_game_event.event_id,
+                        'event_label': inferred_same_game_event.label,
+                        'event_start_time': inferred_same_game_event.start_time,
+                        'matched_by': 'same_game_team_cluster_inference',
+                        'event_candidates': [],
+                        'notes': notes,
+                    })
+                )
+                continue
         if leg.event_id is None:
             notes = list(leg.notes)
             if 'Could not confidently resolve event/date for this leg' not in notes:
