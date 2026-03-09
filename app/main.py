@@ -1452,6 +1452,10 @@ def _process_public_check_text(
             'parsed_player_name': item.parsed_player_name or item.leg.parsed_player_name,
             'normalized_stat_type': item.normalized_stat_type or item.leg.normalized_stat_type,
             'resolution_confidence': item.resolution_confidence or item.leg.resolution_confidence,
+            'matched_event_date': item.matched_event_date or item.leg.matched_event_date,
+            'matched_team': item.matched_team or item.leg.matched_team,
+            'event_resolution_confidence': item.event_resolution_confidence or item.leg.event_resolution_confidence,
+            'event_resolution_warnings': item.event_resolution_warnings or item.leg.event_resolution_warnings,
             'parse_confidence': item.parse_confidence or item.leg.parse_confidence,
             'matched_boxscore_player_name': item.matched_boxscore_player_name,
             'selected_bet_date': item.selected_bet_date or item.leg.selected_bet_date,
@@ -1462,7 +1466,7 @@ def _process_public_check_text(
             'identity_match_confidence': item.identity_match_confidence or item.leg.identity_match_confidence,
             'settlement_explanation': item.settlement_explanation.model_dump() if item.settlement_explanation else None,
             'matched_player': item.settlement_explanation.matched_player if item.settlement_explanation else None,
-            'matched_team': item.settlement_explanation.matched_team if item.settlement_explanation else None,
+            'matched_team_explained': item.settlement_explanation.matched_team if item.settlement_explanation else None,
             'matched_event_explained': item.settlement_explanation.matched_event if item.settlement_explanation else None,
             'normalized_market_explained': item.settlement_explanation.normalized_market if item.settlement_explanation else None,
             'stat_field_used': item.settlement_explanation.stat_field_used if item.settlement_explanation else None,
@@ -1476,6 +1480,9 @@ def _process_public_check_text(
             'unmatched_reason_code': (item.settlement_diagnostics or {}).get('unmatched_reason_code'),
         })
 
+
+    slip_default_date = next((item.leg.slip_default_date for item in graded.legs if item.leg.slip_default_date), None)
+    mixed_event_dates_detected = any(bool(item.leg.mixed_event_dates_detected) for item in graded.legs)
     parlay_result = 'still_live' if graded.overall == 'pending' else graded.overall
     out = {
         'ok': True,
@@ -1485,6 +1492,8 @@ def _process_public_check_text(
         'parse_warning': None,
         'grading_warning': None,
         'parlay_result': parlay_result,
+        'slip_default_date': slip_default_date,
+        'mixed_event_dates_detected': mixed_event_dates_detected,
     }
     if unmatched_count == len(legs):
         out['message'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
@@ -2442,9 +2451,10 @@ async def ingest_screenshot_grade(
     grading_text = _screenshot_parsed_to_grading_text(parsed_screenshot)
     parsed_slip = parse_slip_text(grading_text, bookmaker_hint=bookmaker_hint)
     financials = extract_financials(parsed_screenshot.raw_text, bookmaker_hint=parsed_slip.bookmaker)
-    parsed_bet_date = date.fromisoformat(bet_date) if bet_date else (date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None)
+    parsed_bet_date = date.fromisoformat(bet_date) if bet_date else None
+    screenshot_default_date = date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None
     grading_text = grading_text or parsed_slip.cleaned_text
-    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date, code_path='screenshot_parse_grading')
+    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date, screenshot_default_date=screenshot_default_date, code_path='screenshot_parse_grading')
     return IngestGradeResponse(
         source_type='screenshot',
         source_ref=file.filename or 'upload',
@@ -2479,9 +2489,10 @@ async def ingest_screenshot_grade_and_save(
     grading_text = _screenshot_parsed_to_grading_text(parsed_screenshot)
     parsed_slip = parse_slip_text(grading_text, bookmaker_hint=bookmaker_hint)
     financials = extract_financials(parsed_screenshot.raw_text, bookmaker_hint=parsed_slip.bookmaker)
-    parsed_bet_date = date.fromisoformat(bet_date) if bet_date else (date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None)
+    parsed_bet_date = date.fromisoformat(bet_date) if bet_date else None
+    screenshot_default_date = date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None
     grading_text = grading_text or parsed_slip.cleaned_text
-    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date, code_path='saved_screenshot_grading')
+    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date, screenshot_default_date=screenshot_default_date, code_path='saved_screenshot_grading')
     ticket = save_graded_ticket(
         db,
         grading_text,

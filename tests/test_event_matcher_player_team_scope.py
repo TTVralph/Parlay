@@ -111,6 +111,7 @@ def test_player_props_auto_select_single_team_game_on_date() -> None:
 
     assert resolved[0].event_id == 'evt-gsw-uta'
     assert resolved[0].event_candidates == []
+    assert 'screenshot_date_used' in resolved[0].event_resolution_warnings
 
 
 def test_player_props_keep_dropdown_when_team_has_multiple_games_on_date() -> None:
@@ -183,6 +184,7 @@ def test_zero_team_games_on_selected_date_returns_specific_reason() -> None:
     assert resolved[0].event_id is None
     assert resolved[0].event_candidates == []
     assert "no game found for resolved team on date" in resolved[0].notes
+    assert 'explicit_slip_date_used' in resolved[0].event_resolution_warnings
 
 
 def test_player_resolution_falls_back_to_identity_cache_team_aliases() -> None:
@@ -261,3 +263,92 @@ def test_same_game_team_cluster_inference_links_multiple_unresolved_player_legs(
 
     assert {leg.event_id for leg in resolved} == {'evt-shared'}
     assert all(leg.matched_by == 'same_game_team_cluster_inference' for leg in resolved)
+
+
+def test_screenshot_default_date_used_when_explicit_bet_date_missing() -> None:
+    provider = TeamScopedPlayerProvider()
+    leg = Leg(
+        raw_text='Draymond Green over 5.5 assists',
+        sport='NBA',
+        market_type='player_assists',
+        player='Draymond Green',
+        direction='over',
+        line=5.5,
+        confidence=0.9,
+    )
+
+    resolved = resolve_leg_events(
+        [leg],
+        provider,
+        posted_at=None,
+        include_historical=True,
+        screenshot_default_date=date(2026, 10, 5),
+    )
+
+    assert resolved[0].event_id == 'evt-gsw-uta'
+    assert resolved[0].slip_default_date == '2026-10-05'
+    assert 'screenshot_date_used' in resolved[0].event_resolution_warnings
+
+
+def test_mixed_date_slip_resolves_legs_separately() -> None:
+    class MixedDateProvider(TeamScopedPlayerProvider):
+        def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+            if team == 'Golden State Warriors':
+                return [
+                    EventInfo(event_id='evt-gsw-day8', sport='NBA', home_team='Utah Jazz', away_team='Golden State Warriors', start_time=datetime.fromisoformat('2026-03-08T20:00:00')),
+                    EventInfo(event_id='evt-gsw-day9', sport='NBA', home_team='Phoenix Suns', away_team='Golden State Warriors', start_time=datetime.fromisoformat('2026-03-09T20:00:00')),
+                ]
+            if team == 'Houston Rockets':
+                return [
+                    EventInfo(event_id='evt-hou-day9', sport='NBA', home_team='Houston Rockets', away_team='Memphis Grizzlies', start_time=datetime.fromisoformat('2026-03-09T19:30:00')),
+                ]
+            return []
+
+        def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return []
+
+    provider = MixedDateProvider()
+    legs = [
+        Leg(raw_text='Draymond Green over 1.5 threes', sport='NBA', market_type='player_threes', player='Draymond Green', direction='over', line=1.5, confidence=0.9),
+        Leg(raw_text='Amen Thompson over 5.5 rebounds', sport='NBA', market_type='player_rebounds', player='Amen Thompson', direction='over', line=5.5, confidence=0.9),
+    ]
+    resolved = resolve_leg_events(legs, provider, posted_at=None, include_historical=True, screenshot_default_date=date(2026, 3, 8))
+
+    assert resolved[0].matched_event_date == '2026-03-08'
+    assert resolved[1].matched_event_date == '2026-03-09'
+    assert all(leg.mixed_event_dates_detected is True for leg in resolved)
+
+
+def test_ambiguous_multi_event_marks_review_warning_codes() -> None:
+    provider = TeamScopedPlayerProvider()
+    leg = Leg(
+        raw_text='Draymond Green over 5.5 assists',
+        sport='NBA',
+        market_type='player_assists',
+        player='Draymond Green',
+        direction='over',
+        line=5.5,
+        confidence=0.9,
+    )
+    resolved = resolve_leg_events([leg], provider, posted_at=date(2026, 10, 6), include_historical=True)
+
+    assert resolved[0].event_id is None
+    assert 'ambiguous_event_match' in resolved[0].event_resolution_warnings
+    assert 'multiple_candidate_events' in resolved[0].event_resolution_warnings
+
+
+def test_no_candidate_events_remains_unmatched_with_reason_code() -> None:
+    provider = TeamScopedPlayerProvider()
+    leg = Leg(
+        raw_text='Cade Cunningham over 24.5 points',
+        sport='NBA',
+        market_type='player_points',
+        player='Cade Cunningham',
+        direction='over',
+        line=24.5,
+        confidence=0.9,
+    )
+    resolved = resolve_leg_events([leg], provider, posted_at=date(2026, 10, 6), include_historical=True)
+
+    assert resolved[0].event_id is None
+    assert 'no_candidate_events' in resolved[0].event_resolution_warnings

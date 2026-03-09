@@ -65,9 +65,10 @@ def test_screenshot_grade_returns_structured_parsed_output_and_autodetected_date
 
     captured = {}
 
-    def _fake_grade_text(text, posted_at=None, bet_date=None, code_path=''):
+    def _fake_grade_text(text, posted_at=None, bet_date=None, screenshot_default_date=None, code_path=''):
         captured['text'] = text
         captured['bet_date'] = bet_date
+        captured['screenshot_default_date'] = screenshot_default_date
         return {'overall': 'needs_review', 'legs': []}
 
     monkeypatch.setattr('app.services.ocr_fallback.get_ocr_provider', lambda: _FakeOCR())
@@ -84,7 +85,8 @@ def test_screenshot_grade_returns_structured_parsed_output_and_autodetected_date
     assert body['parsed_screenshot']['parsed_legs'][0]['player_name'] == 'Draymond Green'
     assert body['parsed_screenshot']['parsed_legs'][0]['direction'] == 'over'
     assert captured['text'].startswith('Draymond Green Over 4.5 Assists')
-    assert str(captured['bet_date']) == '2026-03-06'
+    assert captured['bet_date'] is None
+    assert str(captured['screenshot_default_date']) == '2026-03-06'
 
 
 def test_screenshot_grade_normalizes_pra_without_unsupported_warning(monkeypatch) -> None:
@@ -113,7 +115,7 @@ def test_screenshot_grade_normalizes_pra_without_unsupported_warning(monkeypatch
             return ParsedSlip(raw_text='', parsed_legs=[], confidence='low', warnings=[])
 
     monkeypatch.setattr('app.main.slip_parser_service', SlipParserService(vision_parser=_VisionWithPRA(), ocr_fallback=_UnusedFallback()))
-    monkeypatch.setattr('app.main.grade_text', lambda text, posted_at=None, bet_date=None, code_path='': {'overall': 'needs_review', 'legs': []})
+    monkeypatch.setattr('app.main.grade_text', lambda text, posted_at=None, bet_date=None, screenshot_default_date=None, code_path='': {'overall': 'needs_review', 'legs': []})
 
     fake_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + b'0' * 32
     response = client.post(
