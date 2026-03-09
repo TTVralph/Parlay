@@ -1098,16 +1098,12 @@ Murray over 2.5 threes'></textarea>
     async function submitCheck(){
       const text=slip.value.trim();
       const file=slipImage.files&&slipImage.files[0];
-      wrap.hidden=true;
-      legsBody.innerHTML='';
-      debugOut.innerHTML='';
-      copyBtn.disabled=true;
-      summaryOut.value='';
       if(!text&&!file){msg.textContent='Paste at least one leg first, or upload a screenshot.';return;}
       if(file&&file.type&&!file.type.startsWith('image/')){msg.textContent='Please upload an image file for screenshot grading.';return;}
       if(file&&file.size>8*1024*1024){msg.textContent='Screenshot is too large. Please use an image under 8MB.';return;}
 
       btn.disabled=true;
+      btn.textContent='Checking...';
       msg.textContent='Checking your slip...';
       try{
         let data;
@@ -1120,7 +1116,7 @@ Murray over 2.5 threes'></textarea>
           const body=await res.json();
           if(!res.ok){msg.textContent=body.detail||body.message||'Could not check this screenshot right now.';return;}
           data=normalizeScreenshotPayload(body);
-          if(data.parsed_legs&&data.parsed_legs.length){slip.value=data.parsed_legs.join('\n');}
+          if(data.parsed_legs&&data.parsed_legs.length){slip.value=data.parsed_legs.join('\\n');}
           if(!slipDate.value&&data.detected_bet_date){slipDate.value=data.detected_bet_date;}
         }else{
           const stakeRaw=(stakeAmount.value||'').trim();
@@ -1135,6 +1131,10 @@ Murray over 2.5 threes'></textarea>
 
         if(!res.ok){msg.textContent=data.detail||data.message||'Could not check this slip right now.';return;}
         msg.textContent=data.message||'Done.';
+        legsBody.innerHTML='';
+        debugOut.innerHTML='';
+        summaryOut.value='';
+        copyBtn.disabled=true;
         overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');
         if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){
           payoutOut.textContent=`Estimated payout: $${Number(data.estimated_payout).toFixed(2)} (profit: $${Number(data.estimated_profit).toFixed(2)})`;
@@ -1156,9 +1156,11 @@ Murray over 2.5 threes'></textarea>
         copyBtn.disabled=false;
         wrap.hidden=false;
       }catch(err){
+        console.error('Check Slip request failed:', err);
         msg.textContent='Could not check this slip right now.';
       }finally{
         btn.disabled=false;
+        btn.textContent='Check Slip';
       }
     }
 
@@ -1167,7 +1169,8 @@ Murray over 2.5 threes'></textarea>
       await submitCheck();
     });
 
-    window.addEventListener('error',()=>{
+    window.addEventListener('error',(event)=>{
+      console.error('Check page runtime error:', event.error||event.message||event);
       msg.textContent='Something went wrong in the page. Please refresh and try again.';
     });
 
