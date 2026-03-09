@@ -96,6 +96,14 @@ class VisionSlipParser:
     def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip: ...
 
 
+@dataclass(frozen=True)
+class VisionSanityResult:
+    raw_response_text: str
+    model_used: str
+    input_image_attached: bool
+    preprocessing_metadata: dict[str, Any]
+
+
 class OpenAIVisionSlipParser:
     def __init__(self) -> None:
         self._api_key = os.getenv('OPENAI_API_KEY')
@@ -103,6 +111,24 @@ class OpenAIVisionSlipParser:
         self._url = os.getenv('OPENAI_RESPONSES_URL', 'https://api.openai.com/v1/responses')
         self._debug_mode = os.getenv('SCREENSHOT_DEBUG_MODE', '').lower() in {'1', 'true', 'yes', 'on'}
         self._debug_dir = Path(os.getenv('SCREENSHOT_DEBUG_DIR', 'tmp/screenshot_debug'))
+
+    def run_sanity_check(self, image_bytes: bytes, model_override: str | None = None) -> VisionSanityResult:
+        if not self._api_key:
+            raise RuntimeError('OPENAI_API_KEY is required for vision screenshot parsing.')
+        try:
+            processed = preprocess_screenshot(image_bytes)
+        except Exception as exc:
+            raise RuntimeError(f'vision_preprocessing_error: {exc}') from exc
+
+        selected_model = model_override or self._model
+        body, input_image_attached = self._call_provider_sanity(processed.image_bytes, model=selected_model)
+
+        return VisionSanityResult(
+            raw_response_text=_extract_output_text(body),
+            model_used=selected_model,
+            input_image_attached=input_image_attached,
+            preprocessing_metadata=processed.metadata(),
+        )
 
     def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip:
         if not self._api_key:
@@ -214,6 +240,37 @@ class OpenAIVisionSlipParser:
         diagnostics = {'primary_failure_category': 'vision_schema_error', 'schema_error_path': repaired_errors[0]['path'], 'schema_error_message': repaired_errors[0]['message'], 'raw_primary_output': output_text, 'raw_primary_output_excerpt': _excerpt(output_text), 'parsed_json': parsed_json, 'normalized_json': normalized, 'schema_validation_errors': repaired_errors, 'failed_fields': [err['path'] for err in repaired_errors]}
         raise VisionSchemaValidationError(f"vision_schema_error: {repaired_errors[0]['path']}: {repaired_errors[0]['message']}", diagnostics=diagnostics)
 
+    def _call_provider_sanity(self, image_bytes: bytes, model: str) -> tuple[dict[str, Any], bool]:
+        image_b64 = base64.b64encode(image_bytes).decode('ascii')
+        user_content = [
+            {
+                'type': 'input_text',
+                'text': (
+                    'Answer these exactly, each on its own line, and return only the answers:\n'
+                    '1) Return only yes or no: does this screenshot show a live game?\n'
+                    '2) Return only the number of visible player prop rows.\n'
+                    '3) Return only the top visible player name.'
+                ),
+            },
+            {'type': 'input_image', 'image_url': f'data:image/png;base64,{image_b64}'},
+        ]
+        payload = {
+            'model': model,
+            'temperature': 0,
+            'max_output_tokens': 120,
+            'input': [
+                {'role': 'system', 'content': [{'type': 'input_text', 'text': 'You are a precise vision checker. Keep answers short and literal.'}]},
+                {'role': 'user', 'content': user_content},
+            ],
+        }
+
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(self._url, headers={'Authorization': f'Bearer {self._api_key}', 'Content-Type': 'application/json'}, json=payload)
+            resp.raise_for_status()
+            body = resp.json()
+
+        return body, any(item.get('type') == 'input_image' for item in user_content)
+
 
 def _validate_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
     try:
@@ -234,6 +291,29 @@ def _validate_payload(payload: dict[str, Any]) -> list[dict[str, str]]:
         if leg['selection'] not in _SELECTION_ENUM:
             errors.append({'path': f'parsed_legs.{idx}.selection', 'message': f'value "{leg["selection"]}" not in enum'})
     return errors
+
+
+def _extract_output_text(body: dict[str, Any]) -> str:
+    output_text = body.get('output_text')
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+
+    output = body.get('output', [])
+    chunks: list[str] = []
+    if isinstance(output, list):
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get('content', [])
+            if not isinstance(content, list):
+                continue
+            for content_item in content:
+                if not isinstance(content_item, dict):
+                    continue
+                text_value = content_item.get('text')
+                if isinstance(text_value, str) and text_value.strip():
+                    chunks.append(text_value)
+    return '\n'.join(chunks).strip()
 
 
 def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
