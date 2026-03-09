@@ -45,21 +45,9 @@ INDEX_HTML = '''
 '''
 
 TEAMS_HTML = '''
+<a href="/teams/ATL/">Atlanta Hawks</a>
 <a href="/teams/WAS/">Washington Wizards</a>
-<a href="/teams/CHA/">Charlotte Hornets</a>
-'''
-
-WAS_ROSTER_HTML = '''
-<table id="roster"><tbody>
-<tr><td data-stat="player"><a href="/players/a/alexsar01.html">Alex Sarr</a></td></tr>
-<tr><td data-stat="player"><a href="/players/m/mccaija01.html">Jared McCain</a></td></tr>
-</tbody></table>
-'''
-
-CHA_ROSTER_HTML = '''
-<table id="roster"><tbody>
-<tr><td data-stat="player"><a href="/players/s/salauti01.html">Tidjane Salaun</a></td></tr>
-</tbody></table>
+<a href="/teams/CHO/">Charlotte Hornets</a>
 '''
 
 PLAYER_HTML = '<div>Team:</strong> <a href="/teams/WAS/2026.html">Washington Wizards</a></div>'
@@ -78,41 +66,73 @@ def test_alias_key_generation_handles_suffixes_accents_and_apostrophes() -> None
     assert 'michael porter' in keys
 
 
-def test_refresh_merges_roster_players_not_in_index(monkeypatch, tmp_path) -> None:
+def test_refresh_processes_all_30_teams_and_merges_roster_only_players(monkeypatch, tmp_path) -> None:
     from app import sports_reference_identity as mod
+
+    fetched_rosters: list[str] = []
 
     def _fake_fetch(url: str, timeout: int = 10) -> str:
         if '/players/' in url and url.endswith('/a/'):
             return INDEX_HTML
-        if '/players/' in url and url.endswith('/m/'):
-            return '<table></table>'
-        if '/players/' in url and url.endswith('/s/'):
-            return '<table></table>'
-        if '/players/' in url and re_letter(url):
+        if '/players/' in url and any(url.endswith(f'/{ch}/') for ch in 'bcdefghijklnmopqrstuvwxyz'):
             return '<table></table>'
         if url == mod.TEAMS_URL:
             return TEAMS_HTML
-        if url == mod.TEAM_ROSTER_URL_TEMPLATE.format(team_abbr='WAS', season_year=datetime.now().year):
-            return WAS_ROSTER_HTML
-        if url == mod.TEAM_ROSTER_URL_TEMPLATE.format(team_abbr='CHA', season_year=datetime.now().year):
-            return CHA_ROSTER_HTML
+        for team_abbr in mod.NBA_TEAM_ABBREVIATIONS:
+            roster_url = mod.TEAM_ROSTER_URL_TEMPLATE.format(team_abbr=team_abbr, season_year=datetime.now().year)
+            if url == roster_url:
+                fetched_rosters.append(team_abbr)
+                rows = []
+                for i in range(1, 9):
+                    player_code = f'{team_abbr.lower()}rook{i:02d}'
+                    player_name = f'{team_abbr} RosterOnly {i}'
+                    rows.append(f'<tr><td data-stat="player"><a href="/players/{player_code[0]}/{player_code}.html">{player_name}</a></td></tr>')
+                return '<table id="roster"><tbody>' + ''.join(rows) + '</tbody></table>'
         if '/players/' in url and url.endswith('.html'):
             return PLAYER_HTML
         raise RuntimeError(url)
-
-    def re_letter(url: str) -> bool:
-        return any(url.endswith(f'/{ch}/') for ch in 'bcdefghijklnopqrtuvwxyz')
 
     monkeypatch.setattr(mod, '_fetch_text', _fake_fetch)
     monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
     monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
 
     result = refresh_nba_identity_from_basketball_reference()
-    assert result['players'] >= 3
+    assert set(fetched_rosters) == set(mod.NBA_TEAM_ABBREVIATIONS)
+    assert result['validation_report']['healthy'] is True
+    assert result['validation_report']['roster_only_players_added'] >= 30
 
-    data = (tmp_path / 'nba_players.json').read_text()
-    assert 'Jared McCain' in data
-    assert 'Tidjane Salaun' in data
+    players = (tmp_path / 'nba_players.json').read_text()
+    assert 'WAS RosterOnly 1' in players
+    assert 'team_id' in players
+
+
+def test_refresh_marks_incomplete_when_too_many_team_rosters_fail(monkeypatch, tmp_path) -> None:
+    from app import sports_reference_identity as mod
+
+    def _fake_fetch(url: str, timeout: int = 10) -> str:
+        if '/players/' in url and url.endswith('/a/'):
+            return INDEX_HTML
+        if '/players/' in url and any(url.endswith(f'/{ch}/') for ch in 'bcdefghijklnmopqrstuvwxyz'):
+            return '<table></table>'
+        if url == mod.TEAMS_URL:
+            return TEAMS_HTML
+        roster_ok = mod.TEAM_ROSTER_URL_TEMPLATE.format(team_abbr='ATL', season_year=datetime.now().year)
+        if url == roster_ok:
+            return '<table id="roster"><tbody><tr><td data-stat="player"><a href="/players/a/atlplay01.html">ATL Player</a></td></tr></tbody></table>'
+        if '/teams/' in url and url.endswith('.html'):
+            raise RuntimeError('team roster failed')
+        if '/players/' in url and url.endswith('.html'):
+            return PLAYER_HTML
+        raise RuntimeError(url)
+
+    monkeypatch.setattr(mod, '_fetch_text', _fake_fetch)
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+
+    result = refresh_nba_identity_from_basketball_reference()
+    assert result['healthy'] is False
+    assert len(result['validation_report']['teams_failed']) == 29
+    assert result['validation_report']['refresh_incomplete'] is True
 
 
 def test_resolution_exposes_basketball_reference_metadata() -> None:
