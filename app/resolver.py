@@ -203,7 +203,9 @@ def resolve_leg_events(
             player_lookup_name = str(updates.get('player', leg.player))
             candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
             if player_team:
-                candidates = [event for event in candidates if _event_contains_team(event, player_team)]
+                team_matched_candidates = [event for event in candidates if _event_contains_team(event, player_team)]
+                if team_matched_candidates:
+                    candidates = team_matched_candidates
                 context_date = _context_date_for_leg(slip_filter_value)
                 if context_date is not None:
                     team_day_links = resolved_team_date_event_ids.get((_norm(player_team), context_date), set())

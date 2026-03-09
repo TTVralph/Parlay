@@ -68,3 +68,12 @@ def test_check_page_shows_optional_stake_input():
     html = page.text
     assert "id='stakeAmount'" in html
     assert 'Stake amount (optional)' in html
+
+
+def test_check_page_only_renders_manual_override_controls_when_candidates_exist():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert 'if(candidateGames.length>0)' in html
+    assert 'candidateGamesByLegId' not in html

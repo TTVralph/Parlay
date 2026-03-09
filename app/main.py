@@ -902,11 +902,9 @@ Murray over 2.5 threes'></textarea>
     const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
     const emptyTextMessage='Paste at least one leg first.';
     let selectedGameByLegId={};
-    let candidateGamesByLegId={};
 
     slip.addEventListener('input',()=>{
       selectedGameByLegId={};
-      candidateGamesByLegId={};
     });
     document.querySelectorAll('[data-sample]').forEach((node)=>{
       node.addEventListener('click',()=>{
@@ -927,18 +925,14 @@ Murray over 2.5 threes'></textarea>
         legCell.textContent=item.leg||'—';
         resultCell.textContent=resultLabel[item.result]||String(item.result||'review');
         const candidateGames=(item.candidate_games||[]);
-        if(candidateGames.length){
-          candidateGamesByLegId={...candidateGamesByLegId,[legId]:candidateGames};
-        }
-        const selectableGames=candidateGamesByLegId[legId]||candidateGames;
 
-        if(selectableGames.length){
+        if(candidateGames.length>0){
           const select=document.createElement('select');
           const prompt=document.createElement('option');
           prompt.value='';
           prompt.textContent='Auto-match (clear manual selection)';
           select.appendChild(prompt);
-          for(const game of selectableGames){
+          for(const game of candidateGames){
             const opt=document.createElement('option');
             opt.value=game.event_id;
             opt.textContent=game.event_label;

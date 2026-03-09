@@ -185,3 +185,88 @@ def test_selected_candidate_event_applies_only_to_target_leg(monkeypatch) -> Non
     body = selected.json()
     assert body['legs'][0]['matched_event'] == 'LA Clippers @ Memphis Grizzlies'
     assert body['legs'][1]['matched_event'] == 'Golden State Warriors @ Utah Jazz'
+
+
+class _ExactDateSingleCandidateProvider:
+    def __init__(self) -> None:
+        self._bos_dal = EventInfo(
+            event_id='nba-2026-03-06-bos-dal',
+            sport='NBA',
+            home_team='Boston Celtics',
+            away_team='Dallas Mavericks',
+            start_time=datetime.fromisoformat('2026-03-06T19:30:00'),
+        )
+        self._bos_gsw = EventInfo(
+            event_id='nba-2026-03-08-bos-gsw',
+            sport='NBA',
+            home_team='Boston Celtics',
+            away_team='Golden State Warriors',
+            start_time=datetime.fromisoformat('2026-03-08T19:30:00'),
+        )
+        self._den_nyk = EventInfo(
+            event_id='nba-2026-03-06-den-nyk',
+            sport='NBA',
+            home_team='Denver Nuggets',
+            away_team='New York Knicks',
+            start_time=datetime.fromisoformat('2026-03-06T20:00:00'),
+        )
+        self._den_lal = EventInfo(
+            event_id='nba-2026-03-07-den-lal',
+            sport='NBA',
+            home_team='Denver Nuggets',
+            away_team='Los Angeles Lakers',
+            start_time=datetime.fromisoformat('2026-03-07T20:00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player in {'Jaylen Brown', 'Cooper Flagg'}:
+            return [self._bos_dal, self._bos_gsw]
+        if player == 'Nikola Jokic':
+            return [self._den_nyk, self._den_lal]
+        return []
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return {
+            'Jaylen Brown': 'Boston Celtics',
+            'Cooper Flagg': 'Dallas Mavericks',
+            'Nikola Jokic': 'Denver Nuggets',
+        }.get(player)
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return 25.0
+
+
+def test_single_candidate_on_explicit_slip_date_auto_matches(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, '_public_check_provider', _ExactDateSingleCandidateProvider())
+
+    resp = client.post(
+        '/check-slip',
+        json={
+            'text': ('Jaylen Brown over 0.5 points\n'
+                     'Cooper Flagg over 17.5 points\n'
+                     'Nikola Jokic over 26.5 points'),
+            'date_of_slip': '2026-03-06',
+            'search_historical': True,
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['parlay_result'] != 'needs_review'
+    assert body['legs'][0]['matched_event'] == 'Dallas Mavericks @ Boston Celtics'
+    assert body['legs'][1]['matched_event'] == 'Dallas Mavericks @ Boston Celtics'
+    assert body['legs'][2]['matched_event'] == 'New York Knicks @ Denver Nuggets'
+    assert all(leg['result'] != 'review' for leg in body['legs'])
+    assert all(len(leg['candidate_games']) == 0 for leg in body['legs'])
