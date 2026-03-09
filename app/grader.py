@@ -15,6 +15,17 @@ _SUPPORTED_NBA_MARKETS = {
     'player_assists',
     'player_rebounds',
     'player_threes',
+    'player_pra',
+    'player_pr',
+    'player_pa',
+    'player_ra',
+}
+
+_COMBO_COMPONENTS = {
+    'player_pra': ('player_points', 'player_rebounds', 'player_assists'),
+    'player_pr': ('player_points', 'player_rebounds'),
+    'player_pa': ('player_points', 'player_assists'),
+    'player_ra': ('player_rebounds', 'player_assists'),
 }
 
 
@@ -89,6 +100,16 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
         return GradedLeg(leg=leg, settlement='unmatched', reason='No player identified')
 
     actual_value = provider.get_player_result(leg.player, leg.market_type, event_id=leg.event_id)
+    if actual_value is None and leg.market_type in _COMBO_COMPONENTS:
+        component_values: list[float] = []
+        for component_market in _COMBO_COMPONENTS[leg.market_type]:
+            component_value = provider.get_player_result(leg.player, component_market, event_id=leg.event_id)
+            if component_value is None:
+                component_values = []
+                break
+            component_values.append(float(component_value))
+        if component_values:
+            actual_value = float(sum(component_values))
     if leg.line is None or leg.direction is None:
         return GradedLeg(leg=leg, settlement='unmatched', reason='Missing values required for settlement')
     if actual_value is None:

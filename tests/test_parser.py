@@ -38,3 +38,9 @@ def test_parse_scotty_pippen_alias_to_scotty_pippen_jr() -> None:
     legs = parse_text('Scotty Pippen over 5.5 assists')
     assert len(legs) == 1
     assert legs[0].player == 'Scotty Pippen Jr.'
+
+
+def test_parse_threes_made_alias_maps_to_player_threes() -> None:
+    legs = parse_text('Nikola Jokic over 1.5 3pt made')
+    assert len(legs) == 1
+    assert legs[0].market_type == 'player_threes'

@@ -9,11 +9,11 @@ from .player_identity import resolve_player_identity
 
 ALT_PATTERN = re.compile(r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+$', re.I)
 OVER_UNDER_PATTERN = re.compile(
-    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|three pointers made|3 pointers made|pra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$',
+    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|three-point field goals made|three point field goals made|pra|pr|pa|ra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$',
     re.I,
 )
 NAMED_MARKET_PATTERN = re.compile(
-    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|three pointers made|3 pointers made|pra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$',
+    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|three-point field goals made|three point field goals made|pra|pr|pa|ra|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$',
     re.I,
 )
 ML_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+ml$', re.I)
@@ -56,8 +56,8 @@ def _player_lookup(token: str) -> str | None:
 
 
 def _market_lookup(token: str) -> str:
-    normalized = token.lower().strip()
-    if normalized in {'three pointers made', '3 pointers made'}:
+    normalized = token.lower().strip().replace('-', ' ')
+    if normalized in {'three pointers made', '3 pointers made', 'threes made', '3pt made', 'three point field goals made'}:
         normalized = 'threes'
     return get_alias_map('market').get(normalized, 'player_points')
 
@@ -103,7 +103,19 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             continue
 
         line_without_opponent, opponent_team = _extract_opponent_context(clean_line)
-        normalized_line = line_without_opponent.replace('three pointers made', 'threes').replace('Three pointers made', 'threes').replace('3 pointers made', 'threes')
+        normalized_line = (
+            line_without_opponent
+            .replace('three-point field goals made', 'threes')
+            .replace('Three-point field goals made', 'threes')
+            .replace('three point field goals made', 'threes')
+            .replace('Three point field goals made', 'threes')
+            .replace('three pointers made', 'threes')
+            .replace('Three pointers made', 'threes')
+            .replace('3 pointers made', 'threes')
+            .replace('3pt made', 'threes')
+            .replace('Threes made', 'threes')
+            .replace('threes made', 'threes')
+        )
         normalized_lower = normalized_line.lower()
         opponent_note = [f'Opponent context: {opponent_team}'] if opponent_team else []
 
