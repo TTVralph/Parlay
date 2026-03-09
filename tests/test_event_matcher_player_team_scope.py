@@ -165,4 +165,21 @@ def test_unresolved_player_team_goes_to_review_without_random_games() -> None:
 
     assert resolved[0].event_id is None
     assert resolved[0].event_candidates == []
-    assert 'Could not resolve player team' in resolved[0].notes
+    assert 'Player team could not be resolved' in resolved[0].notes
+
+
+def test_zero_team_games_on_selected_date_returns_specific_reason() -> None:
+    provider = TeamScopedPlayerProvider()
+    leg = Leg(
+        raw_text='Amen Thompson over 6.5 rebounds',
+        sport='NBA',
+        market_type='player_rebounds',
+        player='Amen Thompson',
+        direction='over',
+        line=6.5,
+        confidence=0.9,
+    )
+    resolved = resolve_leg_events([leg], provider, posted_at=date(2026, 10, 5), include_historical=True, bet_date=date(2026, 10, 5))
+    assert resolved[0].event_id is None
+    assert resolved[0].event_candidates == []
+    assert "No game found for player's team on selected date" in resolved[0].notes

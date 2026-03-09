@@ -77,3 +77,13 @@ def test_check_page_only_renders_manual_override_controls_when_candidates_exist(
     html = page.text
     assert 'if(candidateGames.length>0)' in html
     assert 'candidateGamesByLegId' not in html
+
+
+def test_check_page_shows_bet_date_input():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert 'Bet Date' in html
+    assert "id='slipDate'" in html
+    assert 'Optional, but strongly recommended' in html

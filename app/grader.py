@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from .models import GradeResponse, GradedLeg, Leg
 from .providers.base import ResultsProvider
@@ -60,6 +60,10 @@ def _base_leg_kwargs(leg: Leg) -> dict:
         'line': leg.line,
         'normalized_market': _MARKET_LABELS.get(leg.market_type, leg.market_type),
         'candidate_games': leg.event_candidates,
+        'candidate_events': leg.event_candidates,
+        'resolved_player_name': leg.resolved_player_name,
+        'resolved_team': leg.resolved_team,
+        'selected_bet_date': leg.selected_bet_date,
     }
 
 
@@ -76,25 +80,27 @@ def _event_status(provider: ResultsProvider, event_id: str | None) -> str | None
 
 def _review_reason_from_notes(leg: Leg) -> str:
     lowered_notes = [note.lower() for note in leg.notes]
-    if any('could not resolve player team' in note for note in lowered_notes):
-        return 'player team could not be resolved'
-    if any('multiple valid games for player team' in note for note in lowered_notes):
-        return 'multiple valid games for player team'
     if any('missing bet date' in note for note in lowered_notes):
         return 'missing bet date'
+    if any('player team could not be resolved' in note for note in lowered_notes):
+        return 'player team could not be resolved'
+    if any("no game found for player's team on selected date" in note for note in lowered_notes):
+        return "no team game found on selected date"
+    if any('multiple valid games remain after filtering' in note for note in lowered_notes):
+        return 'multiple valid games remain after filtering'
     if len(leg.event_candidates) > 1:
-        return 'multiple candidate games'
+        return 'Multiple possible games. Add bet date to narrow results.'
     return 'event unresolved'
 
 
 def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     base_kwargs = _base_leg_kwargs(leg)
     if leg.confidence < 0.75:
-        return GradedLeg(leg=leg, settlement='unmatched', reason='Low-confidence parse; send to manual review', explanation_reason='Low-confidence parse; send to manual review', **base_kwargs)
+        return GradedLeg(leg=leg, settlement='unmatched', reason='Low-confidence parse; send to manual review', explanation_reason='Low-confidence parse; send to manual review', review_reason='low-confidence parse', **base_kwargs)
 
     if not leg.event_id:
         reason = _review_reason_from_notes(leg)
-        return GradedLeg(leg=leg, settlement='unmatched', reason='No event resolved from post timestamp / schedule lookup', explanation_reason=reason, **base_kwargs)
+        return GradedLeg(leg=leg, settlement='unmatched', reason='No event resolved from post timestamp / schedule lookup', explanation_reason=reason, review_reason=reason, **base_kwargs)
 
     if leg.sport == 'NBA' and leg.market_type not in _SUPPORTED_NBA_MARKETS:
         return GradedLeg(leg=leg, settlement='unmatched', reason='Unsupported NBA bet type for ESPN-backed grading', explanation_reason='stat unavailable', **base_kwargs)
@@ -197,11 +203,12 @@ def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
 def grade_text(
     text: str,
     provider: ResultsProvider | None = None,
-    posted_at: datetime | None = None,
+    posted_at: datetime | date | None = None,
     *,
     include_historical: bool = False,
     selected_event_id: str | None = None,
     selected_event_by_leg_id: dict[str, str] | None = None,
+    bet_date: date | None = None,
 ) -> GradeResponse:
     provider = provider or get_results_provider()
     legs = parse_text(text)
@@ -212,6 +219,7 @@ def grade_text(
         include_historical=include_historical,
         selected_event_id=selected_event_id,
         selected_event_by_leg_id=selected_event_by_leg_id,
+        bet_date=bet_date,
     )
     has_confident_match = any(leg.event_id for leg in resolved_legs)
     if not has_confident_match and not include_historical:
@@ -222,6 +230,7 @@ def grade_text(
             include_historical=True,
             selected_event_id=selected_event_id,
             selected_event_by_leg_id=selected_event_by_leg_id,
+            bet_date=bet_date,
         )
     graded = [settle_leg(leg, provider) for leg in resolved_legs]
 

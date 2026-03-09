@@ -8,10 +8,11 @@ from .models import Leg
 from .player_identity import resolve_player_identity, team_name_from_id
 from .providers.base import EventInfo, ResultsProvider
 
-AMBIGUOUS_EVENT_WARNING = 'This leg matches multiple possible games. Add opponent/date or upload the full slip.'
-PLAYER_TEAM_UNRESOLVED_WARNING = 'Could not resolve player team'
+AMBIGUOUS_EVENT_WARNING = 'Multiple possible games. Add bet date to narrow results.'
+PLAYER_TEAM_UNRESOLVED_WARNING = 'Player team could not be resolved'
 MISSING_BET_DATE_WARNING = 'Missing bet date'
-MULTIPLE_TEAM_GAMES_WARNING = 'Multiple valid games for player team on selected date'
+NO_TEAM_GAME_ON_SELECTED_DATE_WARNING = "No game found for player's team on selected date"
+MULTIPLE_TEAM_GAMES_WARNING = 'Multiple valid games remain after filtering'
 
 logger = logging.getLogger(__name__)
 
@@ -193,8 +194,9 @@ def resolve_leg_events(
     include_historical: bool = False,
     selected_event_id: str | None = None,
     selected_event_by_leg_id: dict[str, str] | None = None,
+    bet_date: date | None = None,
 ) -> list[Leg]:
-    explicit_slip_date = posted_at if isinstance(posted_at, date) and not isinstance(posted_at, datetime) else None
+    explicit_slip_date = bet_date or (posted_at if isinstance(posted_at, date) and not isinstance(posted_at, datetime) else None)
     slip_filter_value: date | datetime | None = explicit_slip_date or posted_at
     anchor_input: datetime | None
     if isinstance(posted_at, datetime):
@@ -215,14 +217,16 @@ def resolve_leg_events(
         opponent = _opponent_from_leg(leg)
         player_team: str | None = None
         player_identity_id: str | None = None
+        resolved_player_name: str | None = None
         if leg.player:
             identity = resolve_player_identity(leg.player)
             if identity and leg.player != identity.canonical_name:
                 updates['player'] = identity.canonical_name
             if identity:
                 player_identity_id = identity.id
-            player_lookup_name = updates.get('player', leg.player)
-            player_team = _resolve_player_team(provider, str(player_lookup_name), anchor, include_historical)
+            player_lookup_name = str(updates.get('player', leg.player))
+            resolved_player_name = player_lookup_name
+            player_team = _resolve_player_team(provider, player_lookup_name, anchor, include_historical)
             logger.debug(
                 'NBA prop player resolution: parsed_player=%s resolved_player=%s resolved_player_id=%s resolved_team=%s',
                 leg.player,
@@ -244,13 +248,20 @@ def resolve_leg_events(
                 updates['notes'] = notes
                 updates['matched_by'] = None
                 updates['event_candidates'] = []
+                updates['resolved_player_name'] = resolved_player_name
+                updates['resolved_team'] = player_team
+                updates['selected_bet_date'] = explicit_slip_date.isoformat() if explicit_slip_date else None
                 resolved.append(leg.model_copy(update=updates))
                 logger.debug('NBA prop final selected game: player=%s selected=%s reason=%s', player_lookup_name, None, PLAYER_TEAM_UNRESOLVED_WARNING)
                 continue
 
             if player_team:
                 team_candidates = _team_candidates(provider, player_team, anchor, include_historical=include_historical)
+                if explicit_slip_date is not None:
+                    team_candidates = _filter_by_slip_date(team_candidates, explicit_slip_date)
                 candidates = _merge_player_and_team_candidates(candidates, team_candidates)
+                if explicit_slip_date is not None:
+                    candidates = _filter_by_slip_date(candidates, explicit_slip_date)
                 candidates = [event for event in candidates if _event_contains_team(event, player_team)]
                 logger.debug(
                     'NBA prop candidate games after team filtering: player=%s team=%s candidates=%s',
@@ -266,6 +277,9 @@ def resolve_leg_events(
                 team_links = resolved_team_event_ids.get(_norm(player_team), set())
                 if len(team_links) == 1:
                     candidates = [event for event in candidates if event.event_id in team_links] or candidates
+                if explicit_slip_date is not None and not candidates:
+                    if NO_TEAM_GAME_ON_SELECTED_DATE_WARNING not in notes:
+                        notes.append(NO_TEAM_GAME_ON_SELECTED_DATE_WARNING)
             candidates = _filter_by_opponent(candidates, opponent)
             updates['matched_by'] = 'player_boxscore_lookup'
 
@@ -275,7 +289,9 @@ def resolve_leg_events(
             explicit_slip_date=explicit_slip_date,
             include_historical=include_historical,
         )
-
+        if leg.player and leg.sport == 'NBA' and player_team and explicit_slip_date is not None and not candidates:
+            if NO_TEAM_GAME_ON_SELECTED_DATE_WARNING not in notes:
+                notes.append(NO_TEAM_GAME_ON_SELECTED_DATE_WARNING)
 
         selected_for_leg = None
         if selected_event_by_leg_id:
@@ -294,6 +310,11 @@ def resolve_leg_events(
                 linked = [event for event in candidates if event.event_id in resolved_event_ids]
                 if linked:
                     candidates = linked
+
+        updates['resolved_player_name'] = resolved_player_name
+        updates['resolved_team'] = player_team
+        updates['selected_bet_date'] = explicit_slip_date.isoformat() if explicit_slip_date else None
+        updates['notes'] = notes
 
         if len(candidates) == 1:
             event = candidates[0]
@@ -327,7 +348,7 @@ def resolve_leg_events(
             resolved.append(leg.model_copy(update=updates))
             continue
 
-        resolved.append(leg)
+        resolved.append(leg.model_copy(update=updates))
 
     # Second pass: infer event for game totals from other legs when the ticket appears to target one game.
     non_total_event_ids = {leg.event_id for leg in resolved if leg.market_type != 'game_total' and leg.event_id}

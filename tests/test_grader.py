@@ -72,7 +72,7 @@ def test_review_explanation_when_multiple_candidate_games_exist() -> None:
     result = grade_text('Jokic over 24.5 points', posted_at=datetime.fromisoformat('2026-03-01T00:00:00'), include_historical=True)
     leg = result.legs[0]
     assert leg.settlement == 'unmatched'
-    assert leg.explanation_reason == 'multiple valid games for player team'
+    assert leg.explanation_reason == 'multiple valid games remain after filtering'
     assert len(leg.candidate_games) > 1
 
 
@@ -98,3 +98,14 @@ def test_void_explanation_when_player_did_not_play() -> None:
     assert leg.settlement == 'void'
     assert leg.player_found_in_boxscore is False
     assert leg.explanation_reason == 'player did not appear in box score / game log'
+
+
+def test_missing_bet_date_produces_helpful_review_reason() -> None:
+    result = grade_text('Jamal Murray over 2.5 threes')
+    assert result.overall == 'needs_review'
+    assert result.legs[0].review_reason in {'missing bet date', 'Multiple possible games. Add bet date to narrow results.'}
+
+
+def test_bet_date_autoselects_single_team_game() -> None:
+    result = grade_text('Jamal Murray over 2.5 threes', posted_at=datetime.fromisoformat('2026-03-09T00:00:00'))
+    assert result.legs[0].leg.event_id == 'nba-2026-03-09-okc-den'

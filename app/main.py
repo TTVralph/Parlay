@@ -851,7 +851,9 @@ def public_check_page() -> HTMLResponse:
 Denver ML
 Murray over 2.5 threes'></textarea>
   <input id='stakeAmount' type='number' min='0.01' step='0.01' placeholder='Stake amount (optional)' style='margin-top:10px;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;box-sizing:border-box;'>
-  <input id='slipDate' type='date' placeholder='Date of slip (optional)' style='margin-top:10px;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;box-sizing:border-box;'>
+  <label for='slipDate' style='display:block;margin-top:10px;font-weight:700;'>Bet Date</label>
+  <input id='slipDate' type='date' placeholder='Bet Date (optional, recommended)' style='margin-top:6px;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;box-sizing:border-box;'>
+  <div style='font-size:12px;color:#64748b;margin-top:4px;'>Optional, but strongly recommended for NBA player props.</div>
   <label style='display:flex;align-items:center;gap:8px;margin-top:10px;'>
     <input id='searchHistorical' type='checkbox' style='width:auto;'>
     <span>Search historical results</span>
@@ -1019,7 +1021,7 @@ Murray over 2.5 threes'></textarea>
         }else if(item.matched_event){
           eventCell.textContent=item.matched_event;
         }else{
-          eventCell.textContent=item.explanation_reason ? `Review: ${item.explanation_reason}` : '—';
+          eventCell.textContent=item.review_reason ? `Review: ${item.review_reason}` : (item.explanation_reason ? `Review: ${item.explanation_reason}` : '—');
         }
         tr.appendChild(legCell);
         tr.appendChild(resultCell);
@@ -1062,6 +1064,11 @@ Murray over 2.5 threes'></textarea>
           actual_value:item.actual_value,
           component_values:item.component_values||null,
           explanation_reason:item.explanation_reason||null,
+          review_reason:item.review_reason||item.explanation_reason||null,
+          candidate_events:item.candidate_events||item.candidate_games||item.leg?.event_candidates||[],
+          resolved_player_name:item.resolved_player_name||item.leg?.resolved_player_name||null,
+          resolved_team:item.resolved_team||item.leg?.resolved_team||null,
+          selected_bet_date:item.selected_bet_date||item.leg?.selected_bet_date||null,
           player_found_in_boxscore:item.player_found_in_boxscore,
         })),
         parlay_result:(body.result?.overall==='pending'?'still_live':(body.result?.overall||'needs_review')),
@@ -1088,6 +1095,7 @@ Murray over 2.5 threes'></textarea>
         if(file){
           const form=new FormData();
           form.append('file',file);
+          if(slipDate.value){form.append('bet_date', slipDate.value);}
           res=await fetch('/ingest/screenshot/grade',{method:'POST',body:form});
           const body=await res.json();
           if(!res.ok){msg.textContent=body.detail||body.message||'Could not check this screenshot right now.';return;}
@@ -1096,7 +1104,7 @@ Murray over 2.5 threes'></textarea>
           const stakeRaw=(stakeAmount.value||'').trim();
           const payload={text};
           if(stakeRaw){payload.stake_amount=stakeRaw;}
-          if(slipDate.value){payload.date_of_slip=slipDate.value;}
+          if(slipDate.value){payload.bet_date=slipDate.value; payload.date_of_slip=slipDate.value;}
           if(searchHistorical.checked){payload.search_historical=true;}
           if(Object.keys(selectedGameByLegId).length){payload.selected_event_by_leg_id=selectedGameByLegId;}
           res=await fetch('/check-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -1169,6 +1177,7 @@ def _process_public_check_text(
     text: str,
     stake_amount: float | None = None,
     date_of_slip: date | datetime | None = None,
+    bet_date: date | None = None,
     search_historical: bool = False,
     selected_event_id: str | None = None,
     selected_event_by_leg_id: dict[str, str] | None = None,
@@ -1212,6 +1221,7 @@ def _process_public_check_text(
             normalized,
             provider=_public_check_provider,
             posted_at=date_of_slip,
+            bet_date=bet_date,
             include_historical=search_historical,
             selected_event_id=selected_event_id,
             selected_event_by_leg_id=selected_event_by_leg_id,
@@ -1249,6 +1259,11 @@ def _process_public_check_text(
             'actual_value': item.actual_value,
             'component_values': item.component_values,
             'explanation_reason': item.explanation_reason,
+            'review_reason': item.review_reason,
+            'candidate_events': item.candidate_events or item.candidate_games or item.leg.event_candidates,
+            'resolved_player_name': item.resolved_player_name or item.leg.resolved_player_name,
+            'resolved_team': item.resolved_team or item.leg.resolved_team,
+            'selected_bet_date': item.selected_bet_date or item.leg.selected_bet_date,
             'player_found_in_boxscore': item.player_found_in_boxscore,
         })
 
@@ -1327,7 +1342,7 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
         except (TypeError, ValueError):
             return {'ok': False, 'message': 'Enter a valid numeric stake amount.', 'legs': [], 'parsed_legs': [], 'parse_warning': None, 'grading_warning': None, 'parlay_result': 'needs_review'}
 
-    raw_date = str(payload.get('date_of_slip') or '').strip()
+    raw_date = str(payload.get('bet_date') or payload.get('date_of_slip') or '').strip()
     parsed_date: date | None = None
     if raw_date:
         try:
@@ -1345,6 +1360,7 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
         str(payload.get('text', '')),
         stake_amount=parsed_stake,
         date_of_slip=parsed_date,
+        bet_date=parsed_date,
         search_historical=bool(payload.get('search_historical', False)),
         selected_event_id=(str(payload.get('selected_event_id') or '').strip() or None),
         selected_event_by_leg_id=selected_event_by_leg_id,
@@ -1936,12 +1952,20 @@ def slip_templates_endpoint() -> list[SlipTemplateResponse]:
 
 @app.post('/grade', response_model=GradeResponse)
 def grade_endpoint(req: GradeRequest) -> GradeResponse:
-    return grade_text(req.text, posted_at=req.posted_at)
+    try:
+        parsed_bet_date = date.fromisoformat(req.bet_date) if req.bet_date else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail='bet_date must be YYYY-MM-DD') from exc
+    return grade_text(req.text, posted_at=req.posted_at, bet_date=parsed_bet_date)
 
 
 @app.post('/tickets/grade-and-save', response_model=TicketDetailResponse)
 def grade_and_save_endpoint(req: GradeRequest, db: Session = Depends(get_db)) -> TicketDetailResponse:
-    result = grade_text(req.text, posted_at=req.posted_at)
+    try:
+        parsed_bet_date = date.fromisoformat(req.bet_date) if req.bet_date else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail='bet_date must be YYYY-MM-DD') from exc
+    result = grade_text(req.text, posted_at=req.posted_at, bet_date=parsed_bet_date)
     ticket = save_graded_ticket(db, req.text, result, posted_at=req.posted_at)
     enqueue_review_if_needed(db, ticket, result)
     ticket = get_ticket(db, ticket.id)
@@ -2151,6 +2175,7 @@ async def ingest_screenshot_grade(
     file: UploadFile = File(...),
     posted_at: str | None = Form(default=None),
     bookmaker_hint: str | None = Form(default=None),
+    bet_date: str | None = Form(default=None),
 ) -> IngestGradeResponse:
     _enforce_public_check_rate_limit(request, response, 'screenshot-grade')
     content = await file.read()
@@ -2163,7 +2188,8 @@ async def ingest_screenshot_grade(
     parsed_posted_at = datetime.fromisoformat(posted_at) if posted_at else None
     parsed_slip = parse_slip_text(ocr_result.cleaned_text, bookmaker_hint=bookmaker_hint)
     financials = extract_financials(ocr_result.raw_text, bookmaker_hint=parsed_slip.bookmaker)
-    result = grade_text(parsed_slip.cleaned_text, posted_at=parsed_posted_at)
+    parsed_bet_date = date.fromisoformat(bet_date) if bet_date else None
+    result = grade_text(parsed_slip.cleaned_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date)
     return IngestGradeResponse(
         source_type='screenshot',
         source_ref=file.filename or 'upload',
@@ -2185,6 +2211,7 @@ async def ingest_screenshot_grade_and_save(
     file: UploadFile = File(...),
     posted_at: str | None = Form(default=None),
     bookmaker_hint: str | None = Form(default=None),
+    bet_date: str | None = Form(default=None),
 ) -> TicketDetailResponse:
     content = await file.read()
     try:
@@ -2196,7 +2223,8 @@ async def ingest_screenshot_grade_and_save(
     parsed_posted_at = datetime.fromisoformat(posted_at) if posted_at else None
     parsed_slip = parse_slip_text(ocr_result.cleaned_text, bookmaker_hint=bookmaker_hint)
     financials = extract_financials(ocr_result.raw_text, bookmaker_hint=parsed_slip.bookmaker)
-    result = grade_text(parsed_slip.cleaned_text, posted_at=parsed_posted_at)
+    parsed_bet_date = date.fromisoformat(bet_date) if bet_date else None
+    result = grade_text(parsed_slip.cleaned_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date)
     ticket = save_graded_ticket(
         db,
         parsed_slip.cleaned_text,
