@@ -74,15 +74,26 @@ def _event_status(provider: ResultsProvider, event_id: str | None) -> str | None
             return None
     return None
 
+def _review_reason_from_notes(leg: Leg) -> str:
+    lowered_notes = [note.lower() for note in leg.notes]
+    if any('could not resolve player team' in note for note in lowered_notes):
+        return 'player team could not be resolved'
+    if any('multiple valid games for player team' in note for note in lowered_notes):
+        return 'multiple valid games for player team'
+    if any('missing bet date' in note for note in lowered_notes):
+        return 'missing bet date'
+    if len(leg.event_candidates) > 1:
+        return 'multiple candidate games'
+    return 'event unresolved'
+
+
 def settle_leg(leg: Leg, provider: ResultsProvider) -> GradedLeg:
     base_kwargs = _base_leg_kwargs(leg)
     if leg.confidence < 0.75:
         return GradedLeg(leg=leg, settlement='unmatched', reason='Low-confidence parse; send to manual review', explanation_reason='Low-confidence parse; send to manual review', **base_kwargs)
 
     if not leg.event_id:
-        reason = 'event unresolved'
-        if len(leg.event_candidates) > 1:
-            reason = 'multiple candidate games'
+        reason = _review_reason_from_notes(leg)
         return GradedLeg(leg=leg, settlement='unmatched', reason='No event resolved from post timestamp / schedule lookup', explanation_reason=reason, **base_kwargs)
 
     if leg.sport == 'NBA' and leg.market_type not in _SUPPORTED_NBA_MARKETS:

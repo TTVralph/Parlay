@@ -986,6 +986,14 @@ Murray over 2.5 threes'></textarea>
             submitCheck();
           });
           eventCell.appendChild(select);
+          if(item.explanation_reason){
+            const reviewNote=document.createElement('div');
+            reviewNote.style.marginTop='6px';
+            reviewNote.style.fontSize='12px';
+            reviewNote.style.color='#475569';
+            reviewNote.textContent=`Review reason: ${item.explanation_reason}`;
+            eventCell.appendChild(reviewNote);
+          }
           if(item.matched_event){
             const matched=document.createElement('div');
             matched.style.marginTop='6px';
@@ -1011,7 +1019,7 @@ Murray over 2.5 threes'></textarea>
         }else if(item.matched_event){
           eventCell.textContent=item.matched_event;
         }else{
-          eventCell.textContent='—';
+          eventCell.textContent=item.explanation_reason ? `Review: ${item.explanation_reason}` : '—';
         }
         tr.appendChild(legCell);
         tr.appendChild(resultCell);

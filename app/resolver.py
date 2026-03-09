@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import logging
 import re
 
 from .models import Leg
@@ -8,6 +9,11 @@ from .player_identity import resolve_player_identity, team_name_from_id
 from .providers.base import EventInfo, ResultsProvider
 
 AMBIGUOUS_EVENT_WARNING = 'This leg matches multiple possible games. Add opponent/date or upload the full slip.'
+PLAYER_TEAM_UNRESOLVED_WARNING = 'Could not resolve player team'
+MISSING_BET_DATE_WARNING = 'Missing bet date'
+MULTIPLE_TEAM_GAMES_WARNING = 'Multiple valid games for player team on selected date'
+
+logger = logging.getLogger(__name__)
 
 
 def _norm(text: str) -> str:
@@ -115,10 +121,13 @@ def _team_candidates(provider: ResultsProvider, team: str, posted_at: datetime |
             return resolver(team, posted_at, include_historical=include_historical)
         except TypeError:
             return resolver(team, posted_at)
+    resolve_single = getattr(provider, 'resolve_team_event', None)
+    if not callable(resolve_single):
+        return []
     try:
-        event = provider.resolve_team_event(team, posted_at, include_historical=include_historical)
+        event = resolve_single(team, posted_at, include_historical=include_historical)
     except TypeError:
-        event = provider.resolve_team_event(team, posted_at)
+        event = resolve_single(team, posted_at)
     return [event] if event else []
 
 
@@ -143,6 +152,10 @@ def _merge_player_and_team_candidates(
     if team_candidates:
         return team_candidates
     return player_candidates
+
+
+def _event_ids(events: list[EventInfo]) -> list[str]:
+    return [event.event_id for event in events]
 
 
 def _player_team_for_date(provider: ResultsProvider, player: str, posted_at: datetime | None, include_historical: bool) -> str | None:
@@ -201,12 +214,22 @@ def resolve_leg_events(
         candidates: list[EventInfo] = []
         opponent = _opponent_from_leg(leg)
         player_team: str | None = None
+        player_identity_id: str | None = None
         if leg.player:
             identity = resolve_player_identity(leg.player)
             if identity and leg.player != identity.canonical_name:
                 updates['player'] = identity.canonical_name
+            if identity:
+                player_identity_id = identity.id
             player_lookup_name = updates.get('player', leg.player)
             player_team = _resolve_player_team(provider, str(player_lookup_name), anchor, include_historical)
+            logger.debug(
+                'NBA prop player resolution: parsed_player=%s resolved_player=%s resolved_player_id=%s resolved_team=%s',
+                leg.player,
+                player_lookup_name,
+                player_identity_id,
+                player_team,
+            )
 
         if leg.market_type in {'moneyline', 'spread'} and leg.team:
             candidates = _team_candidates(provider, leg.team, anchor, include_historical=include_historical)
@@ -214,10 +237,27 @@ def resolve_leg_events(
         elif leg.player:
             player_lookup_name = str(updates.get('player', leg.player))
             candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
+            logger.debug('NBA prop candidate games before team filtering: player=%s candidates=%s', player_lookup_name, _event_ids(candidates))
+            if leg.sport == 'NBA' and not player_team:
+                if PLAYER_TEAM_UNRESOLVED_WARNING not in notes:
+                    notes.append(PLAYER_TEAM_UNRESOLVED_WARNING)
+                updates['notes'] = notes
+                updates['matched_by'] = None
+                updates['event_candidates'] = []
+                resolved.append(leg.model_copy(update=updates))
+                logger.debug('NBA prop final selected game: player=%s selected=%s reason=%s', player_lookup_name, None, PLAYER_TEAM_UNRESOLVED_WARNING)
+                continue
+
             if player_team:
                 team_candidates = _team_candidates(provider, player_team, anchor, include_historical=include_historical)
                 candidates = _merge_player_and_team_candidates(candidates, team_candidates)
                 candidates = [event for event in candidates if _event_contains_team(event, player_team)]
+                logger.debug(
+                    'NBA prop candidate games after team filtering: player=%s team=%s candidates=%s',
+                    player_lookup_name,
+                    player_team,
+                    _event_ids(candidates),
+                )
                 context_date = _context_date_for_leg(slip_filter_value)
                 if context_date is not None:
                     team_day_links = resolved_team_date_event_ids.get((_norm(player_team), context_date), set())
@@ -268,6 +308,7 @@ def resolve_leg_events(
             updates['event_label'] = event.label
             updates['event_start_time'] = event.start_time
             updates['event_candidates'] = []
+            logger.debug('NBA prop final selected game: player=%s selected=%s', leg.player, event.event_id)
             resolved.append(leg.model_copy(update=updates))
             continue
 
@@ -275,8 +316,14 @@ def resolve_leg_events(
             updates['event_candidates'] = [_event_candidate_payload(event) for event in candidates[:5]]
             if AMBIGUOUS_EVENT_WARNING not in notes:
                 notes.append(AMBIGUOUS_EVENT_WARNING)
+            if leg.player and leg.sport == 'NBA':
+                if slip_filter_value is None and MISSING_BET_DATE_WARNING not in notes:
+                    notes.append(MISSING_BET_DATE_WARNING)
+                if MULTIPLE_TEAM_GAMES_WARNING not in notes:
+                    notes.append(MULTIPLE_TEAM_GAMES_WARNING)
             updates['notes'] = notes
             updates['matched_by'] = None
+            logger.debug('NBA prop final selected game: player=%s selected=%s reason=ambiguous candidates=%s', leg.player, None, _event_ids(candidates))
             resolved.append(leg.model_copy(update=updates))
             continue
 
