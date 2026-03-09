@@ -1131,7 +1131,7 @@ Murray over 2.5 threes'></textarea>
             reviewNote.style.marginTop='6px';
             reviewNote.style.fontSize='12px';
             reviewNote.style.color='#475569';
-            reviewNote.textContent=`Review reason: ${item.explanation_reason}`;
+            reviewNote.textContent=`Review reason: ${item.review_reason_text||item.review_reason||item.explanation_reason}`;
             eventCell.appendChild(reviewNote);
           }
           if(item.matched_event){
@@ -1165,7 +1165,7 @@ Murray over 2.5 threes'></textarea>
         }else if(item.matched_event){
           eventCell.textContent=item.matched_event;
         }else{
-          eventCell.textContent=item.review_reason ? `Review: ${item.review_reason}` : (item.explanation_reason ? `Review: ${item.explanation_reason}` : '—');
+          eventCell.textContent=item.review_reason_text || (item.review_reason ? `Review: ${item.review_reason}` : (item.explanation_reason ? `Review: ${item.explanation_reason}` : '—'));
         }
         tr.appendChild(legCell);
         tr.appendChild(resultCell);
@@ -1478,6 +1478,8 @@ def _process_public_check_text(
             'grading_confidence': item.settlement_explanation.grading_confidence if item.settlement_explanation else None,
             'settlement_diagnostics': item.settlement_diagnostics,
             'unmatched_reason_code': (item.settlement_diagnostics or {}).get('unmatched_reason_code'),
+            'review_reason_text': item.review_reason_text,
+            'debug_comparison': item.debug_comparison,
         })
 
 
