@@ -322,6 +322,13 @@ class ScreenshotParseResponse(BaseModel):
     parsed_screenshot: ParsedScreenshotResponse
 
 
+class VisionSanityDebugResponse(BaseModel):
+    raw_response_text: str
+    model_used: str
+    input_image_attached: bool
+    preprocessing_metadata: ScreenshotPreprocessingMetadata
+
+
 class IngestGradeResponse(BaseModel):
     source_type: Literal["tweet", "screenshot"]
     source_ref: Optional[str] = None

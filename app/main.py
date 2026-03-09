@@ -44,6 +44,7 @@ from .models import (
     IngestGradeResponse,
     OCRExtractResponse,
     ScreenshotParseResponse,
+    VisionSanityDebugResponse,
     ParseRequest,
     ParseResponse,
     PollAccountRequest,
@@ -223,10 +224,12 @@ from .services.serializers import (
     watched_account_to_response,
 )
 from .x_client import get_x_client
+from .services.vision_parser import OpenAIVisionSlipParser
 
 app = FastAPI(title='Parlay Cash Checker MVP', version='1.9.0')
 logger = logging.getLogger(__name__)
 slip_parser_service = SlipParserService()
+_VISION_SANITY_MODELS = {'gpt-4o-mini', 'gpt-4.1-mini'}
 
 
 def _screenshot_parsed_to_grading_text(parsed_screenshot) -> str:
@@ -2352,6 +2355,34 @@ async def ingest_screenshot_parse(file: UploadFile = File(...)) -> ScreenshotPar
         extracted_text=parsed_screenshot.raw_text,
         cleaned_text=cleaned_text,
         parsed_screenshot=parsed_screenshot,
+    )
+
+
+@app.post('/debug/vision/sanity', response_model=VisionSanityDebugResponse)
+async def debug_vision_sanity(
+    file: UploadFile = File(...),
+    model: str | None = Form(default=None),
+) -> VisionSanityDebugResponse:
+    content = await file.read()
+    requested_model = (model or '').strip() or None
+    if requested_model and requested_model not in _VISION_SANITY_MODELS:
+        raise HTTPException(status_code=400, detail=f'Unsupported model override. Allowed: {", ".join(sorted(_VISION_SANITY_MODELS))}')
+
+    try:
+        validate_image_upload(file.filename or 'upload', content)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        sanity = OpenAIVisionSlipParser().run_sanity_check(content, model_override=requested_model)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return VisionSanityDebugResponse(
+        raw_response_text=sanity.raw_response_text,
+        model_used=sanity.model_used,
+        input_image_attached=sanity.input_image_attached,
+        preprocessing_metadata=sanity.preprocessing_metadata,
     )
 
 

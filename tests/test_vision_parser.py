@@ -264,6 +264,19 @@ def test_schema_repair_sportsbook_variant_and_extra_fields(monkeypatch: pytest.M
     assert parsed.parsed_legs[0].market == 'points'
 
 
+def test_run_sanity_check_returns_raw_text_model_and_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
+    monkeypatch.setattr('app.services.vision_parser.httpx.Client', lambda timeout: _Client({'output_text': 'no\n5\nNikola Jokic'}))
+
+    result = OpenAIVisionSlipParser().run_sanity_check(b'img', model_override='gpt-4.1-mini')
+
+    assert result.raw_response_text == 'no\n5\nNikola Jokic'
+    assert result.model_used == 'gpt-4.1-mini'
+    assert result.input_image_attached is True
+    assert result.preprocessing_metadata['processed_width'] == 1000
+
+
 def test_unrecoverable_schema_output_raises_vision_schema_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('OPENAI_API_KEY', 'test')
     monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
