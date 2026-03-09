@@ -235,33 +235,49 @@ def _screenshot_parsed_to_grading_text(parsed_screenshot) -> str:
 
 def _parse_screenshot_with_vision(content: bytes, filename: str | None):
     parsed = slip_parser_service.parse(content, filename=filename)
-    from .models import ParsedScreenshotLeg, ParsedScreenshotResponse
+    from .models import ParsedScreenshotLeg, ParsedScreenshotResponse, PrimaryParserDebug
 
-    parsed_legs = []
-    for leg in parsed.parsed_legs:
-        normalized_label = leg.raw_text
-        if leg.player_name and leg.selection and leg.line is not None and leg.market:
-            normalized_label = f'{leg.player_name} {leg.selection.title()} {leg.line:g} {leg.market.title()}'
-        parsed_legs.append(ParsedScreenshotLeg(
-            raw_leg_text=leg.raw_text,
-            raw_player_text=leg.raw_player_text or leg.player_name,
-            player_name=leg.player_name,
-            stat_type=leg.market,
-            line=leg.line,
-            direction=leg.selection,
-            normalized_label=normalized_label,
-            confidence=None,
-            match_method=leg.match_method,
-            match_confidence=leg.match_confidence,
-        ))
-    return ParsedScreenshotResponse(
-        raw_text=parsed.raw_text,
-        parsed_legs=parsed_legs,
-        detected_bet_date=parsed.detected_bet_date,
-        parse_warnings=parsed.warnings,
-        confidence=parsed.confidence,
-        preprocessing_metadata=parsed.preprocessing_metadata,
-    )
+    def _to_response(parsed_obj, *, include_primary: bool = True):
+        parsed_legs = []
+        for leg in parsed_obj.parsed_legs:
+            normalized_label = leg.raw_text
+            if leg.player_name and leg.selection and leg.line is not None and leg.market:
+                normalized_label = f'{leg.player_name} {leg.selection.title()} {leg.line:g} {leg.market.title()}'
+            parsed_legs.append(ParsedScreenshotLeg(
+                raw_leg_text=leg.raw_text,
+                raw_player_text=leg.raw_player_text or leg.player_name,
+                player_name=leg.player_name,
+                stat_type=leg.market,
+                line=leg.line,
+                direction=leg.selection,
+                normalized_label=normalized_label,
+                confidence=None,
+                match_method=leg.match_method,
+                match_confidence=leg.match_confidence,
+            ))
+        return ParsedScreenshotResponse(
+            raw_text=parsed_obj.raw_text,
+            parsed_legs=parsed_legs,
+            detected_bet_date=parsed_obj.detected_bet_date,
+            parse_warnings=parsed_obj.warnings,
+            confidence=parsed_obj.confidence,
+            preprocessing_metadata=parsed_obj.preprocessing_metadata,
+            primary_parser_debug=PrimaryParserDebug(
+                primary_parser_status=parsed_obj.primary_parser_status,
+                primary_failure_category=parsed_obj.primary_failure_category,
+                primary_provider_error=parsed_obj.primary_provider_error,
+                primary_confidence=parsed_obj.primary_confidence,
+                primary_warnings=parsed_obj.primary_warnings,
+                primary_detected_sportsbook=parsed_obj.primary_detected_sportsbook,
+                primary_screenshot_state=parsed_obj.primary_screenshot_state,
+                primary_parsed_leg_count=parsed_obj.primary_parsed_leg_count,
+            ),
+            primary_pre_fallback_result=_to_response(parsed_obj.primary_result, include_primary=False) if include_primary and parsed_obj.primary_result else None,
+            fallback_reason=parsed_obj.fallback_reason,
+            debug_artifacts=parsed_obj.debug_artifacts,
+        )
+
+    return _to_response(parsed)
 run_lightweight_migrations()
 
 

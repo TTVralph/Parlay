@@ -277,8 +277,20 @@ class ScreenshotPreprocessingMetadata(BaseModel):
     processed_width: int
     processed_height: int
     crop_applied: bool
+    crop_box: Optional[list[int]] = None
     resize_applied: bool
     compressed: bool
+
+
+class PrimaryParserDebug(BaseModel):
+    primary_parser_status: str = 'not_attempted'
+    primary_failure_category: Optional[str] = None
+    primary_provider_error: Optional[str] = None
+    primary_confidence: Optional[str] = None
+    primary_warnings: list[str] = Field(default_factory=list)
+    primary_detected_sportsbook: Optional[str] = None
+    primary_screenshot_state: Optional[str] = None
+    primary_parsed_leg_count: int = 0
 
 
 class ParsedScreenshotResponse(BaseModel):
@@ -288,6 +300,10 @@ class ParsedScreenshotResponse(BaseModel):
     parse_warnings: list[str] = Field(default_factory=list)
     confidence: Literal['high', 'medium', 'low', 'NEEDS_REVIEW'] = 'low'
     preprocessing_metadata: Optional[ScreenshotPreprocessingMetadata] = None
+    primary_parser_debug: Optional[PrimaryParserDebug] = None
+    primary_pre_fallback_result: Optional['ParsedScreenshotResponse'] = None
+    fallback_reason: Optional[str] = None
+    debug_artifacts: Optional[dict[str, str]] = None
 
 class OCRExtractResponse(BaseModel):
     filename: str

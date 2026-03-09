@@ -16,6 +16,7 @@ class PreprocessedImage:
     processed_width: int
     processed_height: int
     crop_applied: bool
+    crop_box: tuple[int, int, int, int] | None
     resize_applied: bool
     compressed: bool
 
@@ -26,6 +27,7 @@ class PreprocessedImage:
             'processed_width': self.processed_width,
             'processed_height': self.processed_height,
             'crop_applied': self.crop_applied,
+            'crop_box': list(self.crop_box) if self.crop_box else None,
             'resize_applied': self.resize_applied,
             'compressed': self.compressed,
         }
@@ -110,6 +112,7 @@ def preprocess_screenshot(image_bytes: bytes) -> PreprocessedImage:
         processed_width=image.size[0],
         processed_height=image.size[1],
         crop_applied=crop_applied,
+        crop_box=box if crop_applied else None,
         resize_applied=resize_applied,
         compressed=compressed,
     )
