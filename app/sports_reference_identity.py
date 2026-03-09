@@ -17,6 +17,7 @@ SPORTS_REFERENCE_SITE = 'espn'
 ESPN_TEAMS_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams'
 ESPN_TEAM_ROSTER_URL_TEMPLATE = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{team_id}/roster'
 ESPN_TEAM_URL_TEMPLATE = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{team_id}'
+ESPN_TEAM_URL_WITH_ROSTER_TEMPLATE = f'{ESPN_TEAM_URL_TEMPLATE}?enable=roster'
 
 NBA_PLAYERS_CACHE_PATH = Path(__file__).resolve().parent.parent / 'data' / 'nba_players.json'
 NBA_TEAMS_CACHE_PATH = Path(__file__).resolve().parent.parent / 'data' / 'nba_teams.json'
@@ -354,70 +355,100 @@ def _resolve_team_roster(
 ) -> tuple[list[dict[str, str]], str, list[str]]:
     endpoints_tried: list[str] = []
 
-    def _log_endpoint_attempt(endpoint: str, *, skipped_non_api: bool, success: bool, players_parsed: int) -> None:
+    def _log_endpoint_attempt(
+        endpoint: str,
+        *,
+        skipped_non_api: bool,
+        success: bool,
+        players_parsed: int,
+        status: int | str | None,
+        exception: str | None,
+        top_level_keys: list[str] | None,
+    ) -> None:
         logger.info(
-            'Team roster fetch team_id=%s endpoint=%s skipped_non_api=%s success=%s players=%s',
+            'Team roster fetch team_id=%s endpoint=%s skipped_non_api=%s success=%s status=%s exception=%s top_level_keys=%s players=%s',
             team.espn_team_id,
             endpoint,
             skipped_non_api,
             success,
+            status if status is not None else '-',
+            exception or '-',
+            ','.join(top_level_keys or []),
             players_parsed,
         )
+
+    def _attempt_endpoint(endpoint: str, *, context: str) -> tuple[list[dict[str, str]], list[str]]:
+        endpoints_tried.append(endpoint)
+        try:
+            payload = fetcher.fetch_json(endpoint, context=context)
+        except Exception as exc:
+            _log_endpoint_attempt(
+                endpoint,
+                skipped_non_api=False,
+                success=False,
+                players_parsed=0,
+                status=None,
+                exception=f'{type(exc).__name__}: {exc}',
+                top_level_keys=None,
+            )
+            return [], []
+
+        parsed, ref_urls = _parse_team_roster(payload, team, source_url=endpoint)
+        _log_endpoint_attempt(
+            endpoint,
+            skipped_non_api=False,
+            success=bool(parsed),
+            players_parsed=len(parsed),
+            status='ok',
+            exception=None,
+            top_level_keys=sorted(str(key) for key in payload.keys()) if isinstance(payload, dict) else [],
+        )
+        return parsed, ref_urls
 
     def _follow_reference_chain(seed_urls: list[str]) -> tuple[list[dict[str, str]], str]:
         pending = [url for url in seed_urls if url and url not in endpoints_tried]
         while pending:
             ref_url = pending.pop(0)
-            endpoints_tried.append(ref_url)
             if not is_json_api_url(ref_url):
                 logger.info('Skipping non-API roster link: %s', ref_url)
-                _log_endpoint_attempt(ref_url, skipped_non_api=True, success=False, players_parsed=0)
+                _log_endpoint_attempt(
+                    ref_url,
+                    skipped_non_api=True,
+                    success=False,
+                    players_parsed=0,
+                    status=None,
+                    exception='non-api-url',
+                    top_level_keys=None,
+                )
                 continue
-            try:
-                ref_payload = fetcher.fetch_json(ref_url, context=f'team roster ref {team.espn_team_id}')
-            except Exception:
-                _log_endpoint_attempt(ref_url, skipped_non_api=False, success=False, players_parsed=0)
-                continue
-            parsed_ref, nested_refs = _parse_team_roster(ref_payload, team, source_url=ref_url)
+            parsed_ref, nested_refs = _attempt_endpoint(ref_url, context=f'team roster ref {team.espn_team_id}')
             if parsed_ref:
-                _log_endpoint_attempt(ref_url, skipped_non_api=False, success=True, players_parsed=len(parsed_ref))
                 return parsed_ref, ref_url
-            _log_endpoint_attempt(ref_url, skipped_non_api=False, success=False, players_parsed=0)
             for nested_ref in nested_refs:
                 if nested_ref and nested_ref not in endpoints_tried and nested_ref not in pending:
                     pending.append(nested_ref)
         return [], ''
 
     roster_url = ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id=team.espn_team_id)
-    roster_ref_urls: list[str] = []
-    endpoints_tried.append(roster_url)
-    try:
-        roster_payload = fetcher.fetch_json(roster_url, context=f'team roster {team.espn_team_id}')
-        parsed, ref_urls = _parse_team_roster(roster_payload, team, source_url=roster_url)
-        if parsed:
-            _log_endpoint_attempt(roster_url, skipped_non_api=False, success=True, players_parsed=len(parsed))
-            return parsed, roster_url, endpoints_tried
-        roster_ref_urls = ref_urls
-        _log_endpoint_attempt(roster_url, skipped_non_api=False, success=False, players_parsed=0)
-    except Exception:
-        _log_endpoint_attempt(roster_url, skipped_non_api=False, success=False, players_parsed=0)
-
+    team_url_with_roster = ESPN_TEAM_URL_WITH_ROSTER_TEMPLATE.format(team_id=team.espn_team_id)
     team_url = ESPN_TEAM_URL_TEMPLATE.format(team_id=team.espn_team_id)
-    team_payload: dict[str, object] = {}
-    team_ref_urls: list[str] = []
-    endpoints_tried.append(team_url)
-    try:
-        team_payload = fetcher.fetch_json(team_url, context=f'team details {team.espn_team_id}')
-        parsed, ref_urls = _parse_team_roster(team_payload, team, source_url=team_url)
-        if parsed:
-            _log_endpoint_attempt(team_url, skipped_non_api=False, success=True, players_parsed=len(parsed))
-            return parsed, team_url, endpoints_tried
-        team_ref_urls = ref_urls
-        _log_endpoint_attempt(team_url, skipped_non_api=False, success=False, players_parsed=0)
-    except Exception:
-        _log_endpoint_attempt(team_url, skipped_non_api=False, success=False, players_parsed=0)
 
-    parsed_from_refs, ref_endpoint = _follow_reference_chain(team_ref_urls or _extract_roster_reference_urls(team_payload))
+    roster_ref_urls: list[str] = []
+    team_ref_urls: list[str] = []
+    for endpoint, context, ref_target in [
+        (roster_url, f'team roster {team.espn_team_id}', 'roster'),
+        (team_url_with_roster, f'team details with roster {team.espn_team_id}', 'team'),
+        (team_url, f'team details {team.espn_team_id}', 'team'),
+    ]:
+        parsed, ref_urls = _attempt_endpoint(endpoint, context=context)
+        if parsed:
+            return parsed, endpoint, endpoints_tried
+        if ref_target == 'roster':
+            roster_ref_urls.extend(ref_urls)
+        else:
+            team_ref_urls.extend(ref_urls)
+
+    parsed_from_refs, ref_endpoint = _follow_reference_chain(list(dict.fromkeys(team_ref_urls)))
     if parsed_from_refs:
         return parsed_from_refs, ref_endpoint, endpoints_tried
 

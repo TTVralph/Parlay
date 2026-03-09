@@ -164,6 +164,35 @@ def test_is_json_api_url_filters_website_pages() -> None:
     assert mod.is_json_api_url('/nba/team/roster/_/name/atl/atlanta-hawks') is False
 
 
+
+def test_refresh_uses_team_enable_roster_payload(monkeypatch, tmp_path) -> None:
+    from app import sports_reference_identity as mod
+
+    enable_url = mod.ESPN_TEAM_URL_WITH_ROSTER_TEMPLATE.format(team_id='1')
+
+    def _fake_fetch(url: str) -> dict[str, object]:
+        if url == mod.ESPN_TEAMS_URL:
+            return _teams_payload(['1'])
+        if url == mod.ESPN_TEAM_ROSTER_URL_TEMPLATE.format(team_id='1'):
+            raise RuntimeError('roster endpoint unavailable')
+        if url == enable_url:
+            return _roster_payload('1', 2)
+        if url == mod.ESPN_TEAM_URL_TEMPLATE.format(team_id='1'):
+            raise RuntimeError('should not need plain team endpoint when enable=roster works')
+        raise RuntimeError(url)
+
+    monkeypatch.setattr(mod.SportsReferenceFetcher, 'fetch_json', lambda self, url, *, context, use_cache=True: _fake_fetch(url))
+    monkeypatch.setattr(mod, 'NBA_PLAYERS_CACHE_PATH', tmp_path / 'nba_players.json')
+    monkeypatch.setattr(mod, 'NBA_TEAMS_CACHE_PATH', tmp_path / 'nba_teams.json')
+    monkeypatch.setattr(mod, 'NBA_REFRESH_REPORT_PATH', tmp_path / 'nba_players.refresh_report.json')
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_TEAM_ROSTER_SIZE', 1)
+    monkeypatch.setattr(mod, 'MINIMUM_REASONABLE_FINAL_PLAYER_COUNT', 1)
+    monkeypatch.setattr(mod, 'MAXIMUM_REASONABLE_FINAL_PLAYER_COUNT', 10000)
+
+    result = refresh_nba_identity_from_basketball_reference()
+    assert result['healthy'] is True
+    assert result['validation_report']['players_from_roster_pages'] == 2
+
 def test_refresh_follows_team_and_athlete_reference_links(monkeypatch, tmp_path) -> None:
     from app import sports_reference_identity as mod
 
