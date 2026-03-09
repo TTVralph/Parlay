@@ -234,3 +234,45 @@ def test_parser_strategy_used_in_provider_payload_and_debug(monkeypatch: pytest.
     user_text = captured['payload']['input'][1]['content'][0]['text']
     assert 'Strategy: bet365 layout.' in system_text
     assert 'Parser strategy: bet365.' in user_text
+
+
+def test_schema_repair_market_variant_and_numeric_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
+    monkeypatch.setattr('app.services.vision_parser.httpx.Client', lambda timeout: _Client({'output_text': json.dumps({
+        'sportsbook': 'draftkings', 'screenshot_state': 'final', 'confidence': 'medium', 'warnings': [],
+        'parsed_legs': [{'player_name': 'Stephen Curry', 'market': 'made threes', 'line': '1.5', 'selection': 'over', 'raw_text': 'Stephen Curry made threes over 1.5'}],
+    })}))
+
+    parsed = OpenAIVisionSlipParser().parse(b'img')
+    assert parsed.parsed_legs[0].market == 'threes'
+    assert parsed.parsed_legs[0].line == 1.5
+
+
+def test_schema_repair_sportsbook_variant_and_extra_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
+    monkeypatch.setattr('app.services.vision_parser.httpx.Client', lambda timeout: _Client({'output_text': json.dumps({
+        'sportsbook': 'prizepicks', 'screenshot_state': 'in_progress', 'confidence': 'strong', 'warnings': [], 'extra_root': 'ignored',
+        'parsed_legs': [{'player_name': 'LeBron James', 'market': 'pts', 'line': 24.5, 'selection': 'over', 'raw_text': 'LeBron points over 24.5', 'extra_leg': 'ignored'}],
+    })}))
+
+    parsed = OpenAIVisionSlipParser().parse(b'img')
+    assert parsed.sportsbook == 'prizepicks_like'
+    assert parsed.screenshot_state == 'live'
+    assert parsed.confidence == 'high'
+    assert parsed.parsed_legs[0].market == 'points'
+
+
+def test_unrecoverable_schema_output_raises_vision_schema_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    monkeypatch.setattr('app.services.vision_parser.preprocess_screenshot', lambda _b: _processed())
+    monkeypatch.setattr('app.services.vision_parser.httpx.Client', lambda timeout: _Client({'output_text': json.dumps({
+        'sportsbook': 'bet365_like', 'screenshot_state': 'final', 'confidence': 'medium', 'warnings': [],
+        'parsed_legs': [{'player_name': 'A', 'market': 'unsupported_market', 'line': 'not-a-number', 'selection': 'over', 'raw_text': 'x'}],
+    })}))
+
+    service = SlipParserService(vision_parser=OpenAIVisionSlipParser(), ocr_fallback=_FakeFallback())
+    parsed = service.parse(b'img')
+    assert parsed.fallback_reason == 'vision_schema_error'
+    assert parsed.primary_failure_category == 'vision_schema_error'
