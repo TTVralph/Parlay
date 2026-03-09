@@ -70,6 +70,13 @@ class GradedLeg(BaseModel):
     settlement: Settlement
     actual_value: Optional[float] = None
     reason: str
+    matched_event: Optional[str] = None
+    line: Optional[float] = None
+    normalized_market: Optional[str] = None
+    component_values: Optional[dict[str, float]] = None
+    explanation_reason: Optional[str] = None
+    candidate_games: list[dict[str, Any]] = Field(default_factory=list)
+    player_found_in_boxscore: Optional[bool] = None
 
 
 class GradeResponse(BaseModel):

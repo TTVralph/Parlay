@@ -922,7 +922,42 @@ Murray over 2.5 threes'></textarea>
         const legCell=document.createElement('td');
         const resultCell=document.createElement('td');
         const eventCell=document.createElement('td');
-        legCell.textContent=item.leg||'—';
+        const legText=document.createElement('div');
+        legText.textContent=item.leg||'—';
+        legCell.appendChild(legText);
+
+        const detailsWrap=document.createElement('details');
+        detailsWrap.style.marginTop='6px';
+        const detailsSummary=document.createElement('summary');
+        detailsSummary.textContent='Details';
+        detailsSummary.style.cursor='pointer';
+        detailsSummary.style.color='#475569';
+        detailsSummary.style.fontSize='12px';
+        detailsWrap.appendChild(detailsSummary);
+
+        const detailsBody=document.createElement('div');
+        detailsBody.style.marginTop='6px';
+        detailsBody.style.fontSize='12px';
+        detailsBody.style.color='#334155';
+        const componentValues=item.component_values||{};
+        const componentRows=Object.keys(componentValues).map((key)=>`<div>${key}: ${componentValues[key]}</div>`).join('');
+        const boxscoreText=(item.player_found_in_boxscore===null||item.player_found_in_boxscore===undefined)
+          ? 'Unknown'
+          : (item.player_found_in_boxscore ? 'Yes' : 'No');
+        detailsBody.innerHTML=`
+          <div>Parsed: ${item.parsed_player_or_team||'—'} / ${item.normalized_market||'—'}</div>
+          <div>Matched event: ${item.matched_event||'—'}</div>
+          <div>Stat used: ${item.normalized_market||'—'}</div>
+          <div>Line: ${item.line ?? '—'}</div>
+          <div>Actual: ${item.actual_value ?? '—'}</div>
+          ${componentRows}
+          <div>Result: ${resultLabel[item.result]||String(item.result||'review')}</div>
+          <div>Reason: ${item.explanation_reason||'—'}</div>
+          <div>Player in box score: ${boxscoreText}</div>
+        `;
+        detailsWrap.appendChild(detailsBody);
+        legCell.appendChild(detailsWrap);
+
         resultCell.textContent=resultLabel[item.result]||String(item.result||'review');
         const candidateGames=(item.candidate_games||[]);
 
@@ -985,6 +1020,7 @@ Murray over 2.5 threes'></textarea>
       }
     }
 
+
     function buildSummary(payload){
       const lines=(payload.legs||[]).map((item)=>`${item.leg} ${resultEmoji[item.result]||'🧐'}`);
       lines.push('');
@@ -1010,7 +1046,15 @@ Murray over 2.5 threes'></textarea>
         legs:(body.result?.legs||[]).map((item)=>({
           leg:item.leg?.raw_text||'—',
           result:(item.settlement==='unmatched'?'review':item.settlement),
-          matched_event:item.leg?.event_label||null,
+          matched_event:item.matched_event||item.leg?.event_label||null,
+          candidate_games:item.candidate_games||item.leg?.event_candidates||[],
+          parsed_player_or_team:item.leg?.player||item.leg?.team||null,
+          normalized_market:item.normalized_market||null,
+          line:item.line,
+          actual_value:item.actual_value,
+          component_values:item.component_values||null,
+          explanation_reason:item.explanation_reason||null,
+          player_found_in_boxscore:item.player_found_in_boxscore,
         })),
         parlay_result:(body.result?.overall==='pending'?'still_live':(body.result?.overall||'needs_review')),
       };
@@ -1189,8 +1233,15 @@ def _process_public_check_text(
             'leg_id': str(index),
             'leg': item.leg.raw_text,
             'result': result,
-            'matched_event': item.leg.event_label,
-            'candidate_games': item.leg.event_candidates,
+            'matched_event': item.matched_event or item.leg.event_label,
+            'candidate_games': item.candidate_games or item.leg.event_candidates,
+            'parsed_player_or_team': item.leg.player or item.leg.team,
+            'normalized_market': item.normalized_market,
+            'line': item.line,
+            'actual_value': item.actual_value,
+            'component_values': item.component_values,
+            'explanation_reason': item.explanation_reason,
+            'player_found_in_boxscore': item.player_found_in_boxscore,
         })
 
     parlay_result = 'still_live' if graded.overall == 'pending' else graded.overall

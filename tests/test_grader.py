@@ -41,3 +41,60 @@ def test_cooper_flagg_pra_combo_settles_as_win_on_2026_03_06() -> None:
     assert result.legs[0].leg.event_label == 'Dallas Mavericks @ Boston Celtics'
     assert result.legs[0].actual_value == 30
     assert result.legs[0].settlement == 'win'
+
+
+def test_standard_points_prop_includes_explanation_fields() -> None:
+    result = grade_text('Jokic over 24.5 points', posted_at=datetime.fromisoformat('2026-03-07T19:00:00'))
+    leg = result.legs[0]
+    assert leg.normalized_market == 'Points'
+    assert leg.line == 24.5
+    assert leg.actual_value is not None
+    assert leg.matched_event is not None
+
+
+def test_threes_made_prop_explanation_uses_actual_value() -> None:
+    result = grade_text('Nikola Jokic Over 1.5 Threes Made', posted_at=datetime.fromisoformat('2026-03-06T00:00:00'))
+    leg = result.legs[0]
+    assert leg.normalized_market == 'Threes Made'
+    assert leg.actual_value == 1
+    assert leg.settlement == 'loss'
+
+
+def test_pra_prop_explanation_includes_component_values() -> None:
+    result = grade_text('Cooper Flagg Over 25.5 PRA', posted_at=datetime.fromisoformat('2026-03-06T00:00:00'))
+    leg = result.legs[0]
+    assert leg.component_values == {'Points': 16.0, 'Rebounds': 8.0, 'Assists': 6.0}
+    assert leg.actual_value == 30
+    assert leg.settlement == 'win'
+
+
+def test_review_explanation_when_multiple_candidate_games_exist() -> None:
+    result = grade_text('Jokic over 24.5 points', posted_at=datetime.fromisoformat('2026-03-01T00:00:00'), include_historical=True)
+    leg = result.legs[0]
+    assert leg.settlement == 'unmatched'
+    assert leg.explanation_reason == 'multiple candidate games'
+    assert len(leg.candidate_games) > 1
+
+
+
+class _VoidProvider:
+    def resolve_player_event(self, player: str, as_of):
+        from app.providers.base import EventInfo
+        return EventInfo(event_id='evt-1', sport='NBA', home_team='Denver Nuggets', away_team='Boston Celtics', start_time=datetime.utcnow())
+
+    def get_player_result(self, player: str, market_type: str, event_id=None):
+        return None
+
+    def get_event_status(self, event_id: str):
+        return 'final'
+
+    def did_player_appear(self, player: str, event_id=None):
+        return False
+
+
+def test_void_explanation_when_player_did_not_play() -> None:
+    result = grade_text('Nikola Jokic over 8.5 points', provider=_VoidProvider())
+    leg = result.legs[0]
+    assert leg.settlement == 'void'
+    assert leg.player_found_in_boxscore is False
+    assert leg.explanation_reason == 'player did not appear in box score / game log'
