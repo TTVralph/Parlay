@@ -7,13 +7,13 @@ from .dictionaries import PLAYER_SPORTS, TEAM_SPORTS
 from .models import Leg, Sport
 from .player_identity import resolve_player_resolution
 
-ALT_PATTERN = re.compile(r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+$', re.I)
+ALT_PATTERN = re.compile(r"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+$", re.I)
 OVER_UNDER_PATTERN = re.compile(
-    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$',
+    r"^(?P<name>[\w .\-'’]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$",
     re.I,
 )
 NAMED_MARKET_PATTERN = re.compile(
-    r'^(?P<name>[a-z0-9 .\-]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$',
+    r"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$",
     re.I,
 )
 ML_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+ml$', re.I)
@@ -22,7 +22,7 @@ SPREAD_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+(?P<line>[+\-]\d+(?:\.
 TOTAL_ONLY_PATTERN = re.compile(r'^(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)$', re.I)
 GAME_TOTAL_PATTERN = re.compile(r'^(?:game\s+total\s+)?(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?:total\s*points|points)?$', re.I)
 SPORT_PREFIX_PATTERN = re.compile(r'^(nba|nfl|mlb)\s*[:\-]?\s*', re.I)
-OPPONENT_SUFFIX_PATTERN = re.compile(r'\s+v(?:s|\.|ersus)\s+(?P<opponent>[a-z0-9 .\-]+)$', re.I)
+OPPONENT_SUFFIX_PATTERN = re.compile(r"\s+v(?:s|\.|ersus)\s+(?P<opponent>[\w .\-'’]+)$", re.I)
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -52,6 +52,10 @@ def _player_lookup(token: str) -> tuple[str | None, float]:
     for _, full_name in players.items():
         if token == full_name.lower():
             return full_name, 0.9
+
+    starts_with = sorted({full_name for full_name in players.values() if full_name.lower().startswith(f'{token} ')})
+    if len(starts_with) == 1:
+        return starts_with[0], 0.85
     return None, 0.0
 
 
