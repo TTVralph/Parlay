@@ -1016,6 +1016,7 @@ Murray over 2.5 threes'></textarea>
     const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
     const emptyTextMessage='Paste at least one leg first.';
     let selectedGameByLegId={};
+    let selectedPlayerByLegId={};
     let legUiStateByLegId={};
     let latestPublicUrl='';
     let latestResultPayload=null;
@@ -1040,6 +1041,7 @@ Murray over 2.5 threes'></textarea>
 
     function resetManualSelectionState(){
       selectedGameByLegId={};
+      selectedPlayerByLegId={};
       legUiStateByLegId={};
     }
 
@@ -1171,7 +1173,7 @@ Murray over 2.5 threes'></textarea>
           <div>Player in box score: ${boxscoreText}</div>
           <div>Resolution confidence: ${item.resolution_confidence ?? '—'}</div>
           <div>Resolution ambiguity: ${item.resolution_ambiguity_reason ?? '—'}</div>
-          <div>Candidate players: ${(item.candidate_players||[]).join(', ') || '—'}</div>
+          <div>Candidate players: ${(item.candidate_players||[]).map((c)=>c.player_name||c).join(', ') || '—'}</div>
           <div>Candidate events: ${(item.candidate_events||[]).map((e)=>e.event_label||e.event_id).join(', ') || '—'}</div>
           <div>Parse confidence: ${item.parse_confidence ?? '—'}</div>
           <div>Review reason: ${bestReviewReason(item)||'—'}</div>
@@ -1320,6 +1322,44 @@ Murray over 2.5 threes'></textarea>
             suggestion.style.color='#475569';
             suggestion.textContent=didYouMeanText;
             eventCell.appendChild(suggestion);
+          }
+
+          const candidatePlayers=(item.candidate_players||[]).filter((candidate)=>candidate&&candidate.player_name);
+          const canPickPlayer=details&&(details.player_resolution_status==='ambiguous'||details.player_resolution_status==='unresolved')&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';
+          if(canPickPlayer){
+            const pickerLabel=document.createElement('div');
+            pickerLabel.style.marginTop='8px';
+            pickerLabel.style.fontSize='12px';
+            pickerLabel.style.fontWeight='600';
+            pickerLabel.textContent=candidatePlayers.length===1?`Did you mean ${candidatePlayers[0].player_name}?`:'Pick a player';
+            eventCell.appendChild(pickerLabel);
+
+            const selectedPlayerId=selectedPlayerByLegId[legId]||'';
+            candidatePlayers.forEach((candidate)=>{
+              const pickBtn=document.createElement('button');
+              pickBtn.type='button';
+              pickBtn.className='secondary';
+              pickBtn.style.marginTop='6px';
+              pickBtn.style.marginRight='6px';
+              const teamText=candidate.team_name?` (${candidate.team_name})`:'';
+              pickBtn.textContent=`${candidate.player_name}${teamText}`;
+              if(selectedPlayerId&&selectedPlayerId===candidate.player_id){pickBtn.disabled=true;}
+              pickBtn.addEventListener('click',()=>{
+                if(!candidate.player_id){return;}
+                selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:candidate.player_id};
+                submitCheck();
+              });
+              eventCell.appendChild(pickBtn);
+            });
+
+            if(selectedPlayerId){
+              const manualNote=document.createElement('div');
+              manualNote.style.marginTop='6px';
+              manualNote.style.fontSize='12px';
+              manualNote.style.color='#1d4ed8';
+              manualNote.textContent='Manual player selection applied';
+              eventCell.appendChild(manualNote);
+            }
           }
         }
         tr.appendChild(legCell);
@@ -1558,6 +1598,7 @@ Murray over 2.5 threes'></textarea>
           if(slipDate.value){payload.bet_date=slipDate.value; payload.date_of_slip=slipDate.value;}
           if(searchHistorical.checked){payload.search_historical=true;}
           if(Object.keys(selectedGameByLegId).length){payload.selected_event_by_leg_id=selectedGameByLegId;}
+          if(Object.keys(selectedPlayerByLegId).length){payload.selected_player_by_leg_id=selectedPlayerByLegId;}
           res=await fetch('/check-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
           data=await res.json();
         }
@@ -1868,11 +1909,42 @@ def _review_reason_code(item: GradedLeg, *, did_you_mean: str | None) -> str | N
     return 'PARTIAL_SLIP_REVIEW'
 
 
+def _candidate_players_payload(item: GradedLeg) -> list[dict[str, object | None]]:
+    detail_candidates = item.candidate_player_details or item.leg.candidate_player_details
+    if detail_candidates:
+        return [
+            {
+                'player_name': str(candidate.get('player_name') or ''),
+                'team_name': candidate.get('team_name'),
+                'player_id': candidate.get('player_id'),
+                'match_confidence': candidate.get('match_confidence'),
+                'rank': candidate.get('rank') or (idx + 1),
+                'reason': candidate.get('reason'),
+            }
+            for idx, candidate in enumerate(detail_candidates)
+            if isinstance(candidate, dict) and str(candidate.get('player_name') or '').strip()
+        ]
+
+    names = item.candidate_players or item.leg.candidate_players
+    return [
+        {
+            'player_name': name,
+            'team_name': None,
+            'player_id': None,
+            'match_confidence': None,
+            'rank': idx + 1,
+            'reason': None,
+        }
+        for idx, name in enumerate(names)
+        if str(name).strip()
+    ]
+
+
 def _build_review_details(item: GradedLeg, *, result: str, did_you_mean: str | None) -> dict[str, object] | None:
     if result != 'review':
         return None
     player_resolution_details = _build_player_resolution_details(item, result=result, did_you_mean=did_you_mean)
-    candidate_players = item.candidate_players or item.leg.candidate_players
+    candidate_players = _candidate_players_payload(item)
     matched_event_count = 1 if (item.matched_event or item.leg.event_label) else 0
 
     reason_text = item.review_reason_text or item.review_reason or item.explanation_reason or 'Needs manual review. We could not confidently resolve this leg.'
@@ -1897,6 +1969,7 @@ def _process_public_check_text(
     search_historical: bool = False,
     selected_event_id: str | None = None,
     selected_event_by_leg_id: dict[str, str] | None = None,
+    selected_player_by_leg_id: dict[str, str] | None = None,
 ) -> dict:
     normalized = text.strip()
     if stake_amount is not None and stake_amount <= 0:
@@ -1950,6 +2023,8 @@ def _process_public_check_text(
             grade_kwargs['selected_event_id'] = selected_event_id
         if selected_event_by_leg_id:
             grade_kwargs['selected_event_by_leg_id'] = selected_event_by_leg_id
+        if selected_player_by_leg_id:
+            grade_kwargs['selected_player_by_leg_id'] = selected_player_by_leg_id
         grading_text = '\n'.join(parsed_legs)
         graded = grade_text(grading_text, **grade_kwargs)
     except Exception:
@@ -1975,7 +2050,7 @@ def _process_public_check_text(
             if any('multiple possible games' in note.lower() for note in item.leg.notes):
                 ambiguous_count += 1
         did_you_mean = None
-        suggestion_candidates = item.candidate_players or item.leg.candidate_players
+        suggestion_candidates = [c.get('player_name') for c in _candidate_players_payload(item) if c.get('player_name')]
         if result == 'review' and suggestion_candidates:
             did_you_mean = f"Did you mean: {suggestion_candidates[0]}?"
 
@@ -1996,10 +2071,12 @@ def _process_public_check_text(
             'component_values': item.component_values,
             'explanation_reason': item.explanation_reason,
             'review_reason': item.review_reason,
+            'candidate_players': _candidate_players_payload(item),
             'candidate_events': item.candidate_events or item.candidate_games or item.leg.event_candidates,
             'resolved_player_name': item.resolved_player_name or item.leg.resolved_player_name,
             'resolved_team': item.resolved_team or item.leg.resolved_team,
             'resolved_player_id': item.resolved_player_id or item.leg.resolved_player_id,
+            'player_selection_applied': (item.identity_match_method or item.leg.identity_match_method) == 'manual_selection',
             'parsed_player_name': item.parsed_player_name or item.leg.parsed_player_name,
             'normalized_stat_type': item.normalized_stat_type or item.leg.normalized_stat_type,
             'resolution_confidence': item.resolution_confidence or item.leg.resolution_confidence,
@@ -2138,6 +2215,12 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
     else:
         selected_event_by_leg_id = {}
 
+    selected_player_payload = payload.get('selected_player_by_leg_id')
+    if isinstance(selected_player_payload, dict):
+        selected_player_by_leg_id = {str(key): str(value) for key, value in selected_player_payload.items() if str(value).strip()}
+    else:
+        selected_player_by_leg_id = {}
+
     result = _process_public_check_text(
         str(payload.get('text', '')),
         stake_amount=parsed_stake,
@@ -2146,6 +2229,7 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
         search_historical=bool(payload.get('search_historical', False)),
         selected_event_id=(str(payload.get('selected_event_id') or '').strip() or None),
         selected_event_by_leg_id=selected_event_by_leg_id,
+        selected_player_by_leg_id=selected_player_by_leg_id,
     )
     if _has_persistable_public_result(result):
         bet_dt = datetime.combine(parsed_date, datetime.min.time()) if parsed_date else None

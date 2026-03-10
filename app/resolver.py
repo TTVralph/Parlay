@@ -5,7 +5,7 @@ import logging
 import re
 
 from .models import Leg
-from .identity_resolution import normalize_entity_name, resolve_player_identity
+from .identity_resolution import get_canonical_player_identity, normalize_entity_name, resolve_player_identity
 from .providers.base import EventInfo, ResultsProvider
 from .services.nba_game_resolver import resolve_player_game
 
@@ -265,6 +265,7 @@ def resolve_leg_events(
     include_historical: bool = False,
     selected_event_id: str | None = None,
     selected_event_by_leg_id: dict[str, str] | None = None,
+    selected_player_by_leg_id: dict[str, str] | None = None,
     bet_date: date | None = None,
     screenshot_default_date: date | None = None,
 ) -> list[Leg]:
@@ -311,14 +312,23 @@ def resolve_leg_events(
             resolution_warnings.append(default_date_reason)
 
         if leg.player:
+            selected_player_id = (selected_player_by_leg_id or {}).get(str(index))
+            selected_player = get_canonical_player_identity(selected_player_id, sport=leg.sport)
             resolution = resolve_player_identity(leg.player, sport=leg.sport)
-            if resolution.resolved_player_name and leg.player != resolution.resolved_player_name:
+            if selected_player is not None:
+                resolution = resolve_player_identity(selected_player.full_name, sport=leg.sport)
+                updates['player'] = selected_player.full_name
+                updates['identity_match_method'] = 'manual_selection'
+                updates['identity_match_confidence'] = 'HIGH'
+                updates['resolution_confidence'] = 1.0
+                notes.append('manual player selection applied')
+            elif resolution.resolved_player_name and leg.player != resolution.resolved_player_name:
                 updates['player'] = resolution.resolved_player_name
             if resolution.resolved_player_id:
                 player_identity_id = resolution.resolved_player_id
-                updates['resolution_confidence'] = resolution.confidence
-            updates['identity_match_method'] = resolution.match_method
-            updates['identity_match_confidence'] = resolution.confidence_level
+                updates['resolution_confidence'] = updates.get('resolution_confidence') or resolution.confidence
+            updates['identity_match_method'] = updates.get('identity_match_method') or resolution.match_method
+            updates['identity_match_confidence'] = updates.get('identity_match_confidence') or resolution.confidence_level
             if resolution.confidence_level == 'LOW' and 'low confidence identity match requires review' not in notes:
                 notes.append('low confidence identity match requires review')
             identity_source = resolution.identity_source
@@ -329,6 +339,17 @@ def resolve_leg_events(
                 updates['resolution_ambiguity_reason'] = resolution.ambiguity_reason
                 if resolution.candidate_players:
                     updates['candidate_players'] = list(resolution.candidate_players)
+                    updates['candidate_player_details'] = [
+                        {
+                            'player_name': candidate.player_name,
+                            'team_name': candidate.team_name,
+                            'player_id': candidate.player_id,
+                            'match_confidence': candidate.match_confidence,
+                            'rank': candidate.rank,
+                            'reason': candidate.reason,
+                        }
+                        for candidate in resolution.candidate_player_details
+                    ]
                     notes.append(f"diagnostic: closest_directory_matches={', '.join(resolution.candidate_players)}")
             player_lookup_name = str(updates.get('player', leg.player))
             resolved_player_name = player_lookup_name
@@ -448,6 +469,7 @@ def resolve_leg_events(
         updates['slip_default_date'] = slip_default_date.isoformat() if slip_default_date else None
         updates['resolution_ambiguity_reason'] = updates.get('resolution_ambiguity_reason')
         updates['candidate_players'] = list(updates.get('candidate_players', []))
+        updates['candidate_player_details'] = list(updates.get('candidate_player_details', []))
         updates['notes'] = notes
 
         if len(candidates) == 1:
