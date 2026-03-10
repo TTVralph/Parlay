@@ -947,6 +947,7 @@ Murray over 2.5 threes'></textarea>
   <div id='uploadWrap'>
     <label for='slipImage'><strong>Or upload a slip screenshot</strong></label>
     <input id='slipImage' type='file' accept='image/*'>
+    <button id='removeScreenshotBtn' class='secondary' type='button' style='margin-top:8px;display:none;'>Remove Screenshot</button>
   </div>
   <button id='checkBtn' type='submit'>Check Slip</button>
   </form>
@@ -981,6 +982,7 @@ Murray over 2.5 threes'></textarea>
     const slip=document.getElementById('slip');
     const stakeAmount=document.getElementById('stakeAmount');
     const slipImage=document.getElementById('slipImage');
+    const removeScreenshotBtn=document.getElementById('removeScreenshotBtn');
     const slipDate=document.getElementById('slipDate');
     const searchHistorical=document.getElementById('searchHistorical');
     const btn=document.getElementById('checkBtn');
@@ -1021,6 +1023,25 @@ Murray over 2.5 threes'></textarea>
       selectedGameByLegId={};
       legUiStateByLegId={};
     }
+
+    function clearScreenshotSelection({keepMessage=false}={}){
+      slipImage.value='';
+      removeScreenshotBtn.style.display='none';
+      if(!keepMessage){ msg.textContent=''; }
+      if((debugOut.textContent||'').includes('OCR extracted text:')){ debugOut.innerHTML=''; }
+    }
+
+    slipImage.addEventListener('change',()=>{
+      removeScreenshotBtn.style.display=(slipImage.files&&slipImage.files[0])?'inline-block':'none';
+    });
+
+    removeScreenshotBtn.addEventListener('click',()=>{
+      clearScreenshotSelection({keepMessage:true});
+      if(msg.textContent&&msg.textContent.includes('Screenshot')){
+        msg.textContent='Screenshot removed. You can keep editing the text or upload another screenshot.';
+      }
+      slip.focus();
+    });
 
     slip.addEventListener('input',()=>{
       resetManualSelectionState();
@@ -1328,9 +1349,11 @@ Murray over 2.5 threes'></textarea>
           else if(body.cleaned_text){slip.value=body.cleaned_text;}
           if(!slipDate.value&&parsed.detected_bet_date){slipDate.value=parsed.detected_bet_date;}
           msg.textContent='Screenshot parsed. Review/edit the text, then click Check Slip.';
+          removeScreenshotBtn.style.display='inline-block';
           wrap.hidden=true;
           return;
         }else{
+          clearScreenshotSelection({keepMessage:true});
           const stakeRaw=(stakeAmount.value||'').trim();
           const payload={text};
           if(stakeRaw){payload.stake_amount=stakeRaw;}
