@@ -1619,6 +1619,21 @@ def _estimate_profit_from_american(stake_amount: float, american_odds: int) -> f
     return round(stake_amount * (100.0 / abs(american_odds)), 2)
 
 
+def _american_to_decimal(american_odds: int) -> float:
+    if american_odds > 0:
+        return (american_odds / 100.0) + 1.0
+    return (100.0 / abs(american_odds)) + 1.0
+
+
+def _estimate_parlay_payout_from_leg_odds(stake_amount: float, american_odds_list: list[int]) -> tuple[float, float, float]:
+    decimal_total = 1.0
+    for american_odds in american_odds_list:
+        decimal_total *= _american_to_decimal(american_odds)
+    payout = round(stake_amount * decimal_total, 2)
+    profit = round(payout - stake_amount, 2)
+    return round(decimal_total, 4), payout, profit
+
+
 def _process_public_check_text(
     text: str,
     stake_amount: float | None = None,
@@ -1780,6 +1795,14 @@ def _process_public_check_text(
     if stake_amount is not None:
         financials = extract_financials(normalized)
         out['stake_amount'] = round(stake_amount, 2)
+        leg_odds = [leg.american_odds for leg in valid_parsed if leg.american_odds is not None]
+        if len(leg_odds) == len(valid_parsed) and leg_odds:
+            decimal_total, est_payout, est_profit = _estimate_parlay_payout_from_leg_odds(stake_amount, leg_odds)
+            out['estimated_profit'] = est_profit
+            out['estimated_payout'] = est_payout
+            out['american_odds_used'] = leg_odds
+            out['decimal_odds_used'] = decimal_total
+            return out
         if financials.american_odds is None:
             out['payout_message'] = 'Add odds in your slip text (for example +120) to estimate payout.'
             return out

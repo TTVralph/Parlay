@@ -39,10 +39,29 @@ TOTAL_ONLY_PATTERN = re.compile(r'^(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d
 GAME_TOTAL_PATTERN = re.compile(r'^(?:game\s+total\s+)?(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?:total\s*points|points)?$', re.I)
 SPORT_PREFIX_PATTERN = re.compile(r'^(nba|nfl|mlb)\s*[:\-]?\s*', re.I)
 OPPONENT_SUFFIX_PATTERN = re.compile(r"\s+v(?:s|\.|ersus)\s+(?P<opponent>[\w .\-'’]+)$", re.I)
+AMERICAN_ODDS_TOKEN_PATTERN = re.compile(r'(?<!\w)(?P<odds>[+\-]\d{3,4})(?!\w)')
 
 
 def _normalize_whitespace(text: str) -> str:
     return re.sub(r'\s+', ' ', text.strip())
+
+
+def _american_to_decimal(american_odds: int) -> float:
+    if american_odds > 0:
+        return round((american_odds / 100.0) + 1.0, 4)
+    return round((100.0 / abs(american_odds)) + 1.0, 4)
+
+
+def _extract_line_odds(line: str) -> tuple[str, int | None]:
+    odds_tokens = [int(match.group('odds')) for match in AMERICAN_ODDS_TOKEN_PATTERN.finditer(line)]
+    clean_line = _normalize_whitespace(AMERICAN_ODDS_TOKEN_PATTERN.sub('', line))
+    return clean_line, (odds_tokens[-1] if odds_tokens else None)
+
+
+def _is_odds_only_line(line: str) -> bool:
+    without_odds = AMERICAN_ODDS_TOKEN_PATTERN.sub('', line)
+    normalized = re.sub(r'[^a-z]', '', without_odds.lower())
+    return normalized in {'', 'odds', 'americanodds', 'price'}
 
 
 def _team_lookup(token: str) -> str | None:
@@ -108,10 +127,20 @@ def _infer_sport(team: str | None = None, player: str | None = None, sport_hint:
 
 def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
     lines = [_normalize_whitespace(line) for line in text.splitlines() if line.strip()]
+    normalized_lines: list[tuple[str, int | None]] = []
+    for line in lines:
+        clean_line, line_odds = _extract_line_odds(line)
+        if line_odds is not None and _is_odds_only_line(line) and normalized_lines:
+            previous_line, previous_odds = normalized_lines[-1]
+            normalized_lines[-1] = (previous_line, previous_odds if previous_odds is not None else line_odds)
+            continue
+        if clean_line:
+            normalized_lines.append((clean_line, line_odds))
+
     legs: list[Leg] = []
     current_hint = sport_hint
 
-    for line in lines:
+    for line, line_odds in normalized_lines:
         lower = line.lower()
         prefix_match = SPORT_PREFIX_PATTERN.match(lower)
         clean_line = line
@@ -149,7 +178,7 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
         if ml_match:
             team = _team_lookup(ml_match.group('team'))
             sport = _infer_sport(team=team, sport_hint=line_sport_hint)
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type='moneyline', team=team, confidence=0.95 if team else 0.3, notes=[] if team else ['Unrecognized team alias']))
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type='moneyline', team=team, confidence=0.95 if team else 0.3, notes=[] if team else ['Unrecognized team alias'], american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
         spread_match = SPREAD_PATTERN.match(normalized_lower)
@@ -157,7 +186,7 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             team = _team_lookup(spread_match.group('team'))
             line_value = float(spread_match.group('line'))
             sport = _infer_sport(team=team, sport_hint=line_sport_hint)
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type='spread', team=team, line=line_value, display_line=spread_match.group('line'), confidence=0.93 if team else 0.35, notes=[] if team else ['Unrecognized team alias']))
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type='spread', team=team, line=line_value, display_line=spread_match.group('line'), confidence=0.93 if team else 0.35, notes=[] if team else ['Unrecognized team alias'], american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
         total_match = GAME_TOTAL_PATTERN.match(normalized_lower) or TOTAL_ONLY_PATTERN.match(normalized_lower)
@@ -165,7 +194,7 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             direction_token = total_match.group('dir').lower()
             direction = 'over' if direction_token in {'o', 'over'} else 'under'
             line_value = float(total_match.group('line'))
-            legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='game_total', direction=direction, line=line_value, display_line=str(line_value), confidence=0.82, notes=['Will infer event from other legs in same ticket when possible']))
+            legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='game_total', direction=direction, line=line_value, display_line=str(line_value), confidence=0.82, notes=['Will infer event from other legs in same ticket when possible'], american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
         yes_no_match = YES_NO_PATTERN.match(normalized_line)
@@ -185,7 +214,7 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
                 market_type = 'player_points'
             if confidence < 0.9:
                 notes.append('Parsed player name from raw text; alias not found')
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction=direction, line=1.0, display_line=direction.title(), confidence=confidence, notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player))
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction=direction, line=1.0, display_line=direction.title(), confidence=confidence, notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
         ou_match = OVER_UNDER_PATTERN.match(normalized_line)
@@ -206,7 +235,7 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
                 market_type = 'player_points'
             if confidence < 0.9:
                 notes.append('Parsed player name from raw text; alias not found')
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction=direction, line=line_value, display_line=str(line_value), confidence=confidence, notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player))
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction=direction, line=line_value, display_line=str(line_value), confidence=confidence, notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
         named_market_match = NAMED_MARKET_PATTERN.match(normalized_line)
@@ -226,7 +255,7 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             if not market_type:
                 notes.append('Could not parse stat type')
                 market_type = 'player_points'
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='over', line=standardized, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=max(parse_confidence, resolution_conf if alias_hit else parse_confidence), notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if alias_hit else None, resolved_player_name=resolved_player))
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='over', line=standardized, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=max(parse_confidence, resolution_conf if alias_hit else parse_confidence), notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if alias_hit else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
         alt_match = ALT_PATTERN.match(normalized_line)
@@ -242,10 +271,10 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             if resolved_player is None:
                 notes.append('Parsed player name from raw text; alias not found')
             alt_confidence = 0.78 if resolved_player else 0.66
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=default_market, player=player, direction='over', line=line_value - 0.5, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=alt_confidence, notes=notes, parse_confidence=alt_confidence, parsed_player_name=parsed_name, normalized_stat_type=default_market, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player))
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=default_market, player=player, direction='over', line=line_value - 0.5, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=alt_confidence, notes=notes, parse_confidence=alt_confidence, parsed_player_name=parsed_name, normalized_stat_type=default_market, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
-        legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='player_points', confidence=0.0, notes=['Unmatched leg']))
+        legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='player_points', confidence=0.0, notes=['Unmatched leg'], american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
 
     return legs
 

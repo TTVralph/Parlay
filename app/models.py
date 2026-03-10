@@ -78,6 +78,8 @@ class Leg(BaseModel):
     event_resolution_warnings: list[str] = Field(default_factory=list)
     slip_default_date: Optional[str] = None
     mixed_event_dates_detected: Optional[bool] = None
+    american_odds: Optional[int] = None
+    decimal_odds: Optional[float] = None
 
 
 class ParseResponse(BaseModel):

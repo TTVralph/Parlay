@@ -87,3 +87,34 @@ def test_parse_rejects_nonsense_as_unmatched() -> None:
     assert len(legs) == 3
     assert all(leg.confidence == 0.0 for leg in legs)
     assert all('Unmatched leg' in leg.notes for leg in legs)
+
+
+def test_parse_extracts_odds_without_dropping_legs() -> None:
+    text = 'Draymond Green Over 5.5 Assists +500\nQuentin Grimes Over 22.5 Pts + Ast +250'
+    legs = parse_text(text)
+    assert len(legs) == 2
+    assert legs[0].raw_text == 'Draymond Green Over 5.5 Assists'
+    assert legs[0].market_type == 'player_assists'
+    assert legs[0].american_odds == 500
+    assert legs[0].decimal_odds == 6.0
+    assert legs[1].raw_text == 'Quentin Grimes Over 22.5 Pts + Ast'
+    assert legs[1].market_type == 'player_pa'
+    assert legs[1].american_odds == 250
+    assert legs[1].decimal_odds == 3.5
+
+
+def test_parse_leg_without_odds_keeps_odds_empty() -> None:
+    legs = parse_text('Jalen Brunson Over 25.5 Points')
+    assert len(legs) == 1
+    assert legs[0].american_odds is None
+    assert legs[0].decimal_odds is None
+
+
+def test_parse_odds_on_separate_line_attach_to_previous_leg() -> None:
+    text = 'Jalen Brunson Over 25.5 Points\n+130\nOG Anunoby Under 2.5 Assists\nOdds -120'
+    legs = parse_text(text)
+    assert len(legs) == 2
+    assert legs[0].raw_text == 'Jalen Brunson Over 25.5 Points'
+    assert legs[0].american_odds == 130
+    assert legs[1].raw_text == 'OG Anunoby Under 2.5 Assists'
+    assert legs[1].american_odds == -120
