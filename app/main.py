@@ -42,6 +42,7 @@ from .models import (
     AliasUpsertRequest,
     GradeRequest,
     GradeResponse,
+    GradedLeg,
     CheckJobCreateResponse,
     CheckJobStatusResponse,
     IngestGradeResponse,
@@ -1079,6 +1080,18 @@ Murray over 2.5 threes'></textarea>
       });
     });
 
+    function reviewStatusLabel(details){
+      if(!details||!details.player_resolution_status){return null;}
+      const labels={resolved:'Resolved',ambiguous:'Ambiguous',unresolved:'Unresolved'};
+      return labels[details.player_resolution_status]||'Review';
+    }
+
+    function bestReviewReason(item){
+      const details=item.review_details||item.resolution_details||null;
+      if(details&&details.review_reason_text){return details.review_reason_text;}
+      return item.review_reason_text||item.did_you_mean||item.review_reason||item.explanation_reason||'Needs manual review. We could not confidently resolve this leg.';
+    }
+
     function renderRows(legs){
       legsBody.innerHTML='';
       for(const [index,item] of (legs||[]).entries()){
@@ -1155,7 +1168,7 @@ Murray over 2.5 threes'></textarea>
           <div>Candidate players: ${(item.candidate_players||[]).join(', ') || '—'}</div>
           <div>Candidate events: ${(item.candidate_events||[]).map((e)=>e.event_label||e.event_id).join(', ') || '—'}</div>
           <div>Parse confidence: ${item.parse_confidence ?? '—'}</div>
-          <div>Review reason: ${item.review_reason_text||item.did_you_mean||item.review_reason||'—'}</div>
+          <div>Review reason: ${bestReviewReason(item)||'—'}</div>
           <div>Warnings: ${(item.validation_warnings||[]).join(' | ') || '—'}</div>
           <div>Unmatched reason code: ${item.unmatched_reason_code||'—'}</div>
           <div>Event resolution worked: ${settlementDiag.event_resolution_worked===undefined?'—':String(settlementDiag.event_resolution_worked)}</div>
@@ -1171,6 +1184,17 @@ Murray over 2.5 threes'></textarea>
         legCell.appendChild(detailsWrap);
 
         resultCell.textContent=resultLabel[item.result]||String(item.result||'review');
+        const details=item.review_details||item.resolution_details||null;
+        const statusBadge=reviewStatusLabel(details);
+        if(statusBadge){
+          const badge=document.createElement('div');
+          badge.style.marginTop='4px';
+          badge.style.fontSize='11px';
+          badge.style.color='#475569';
+          badge.style.fontWeight='600';
+          badge.textContent=`${statusBadge}`;
+          resultCell.appendChild(badge);
+        }
         const candidateGames=(item.candidate_games||[]).length
           ?(item.candidate_games||[])
           :(nextState.wasManuallySelected ? (nextState.originalCandidateEvents||[]) : []);
@@ -1229,7 +1253,7 @@ Murray over 2.5 threes'></textarea>
             reviewNote.style.marginTop='6px';
             reviewNote.style.fontSize='12px';
             reviewNote.style.color='#475569';
-            reviewNote.textContent=`Review reason: ${item.review_reason_text||item.did_you_mean||item.review_reason||item.explanation_reason}`;
+            reviewNote.textContent=`Review reason: ${bestReviewReason(item)}`;
             eventCell.appendChild(reviewNote);
           }
           if(item.matched_event){
@@ -1263,7 +1287,19 @@ Murray over 2.5 threes'></textarea>
         }else if(item.matched_event){
           eventCell.textContent=item.matched_event;
         }else{
-          eventCell.textContent=item.review_reason_text || (item.review_reason ? `Review: ${item.review_reason}` : (item.explanation_reason ? `Review: ${item.explanation_reason}` : '—'));
+          const fallbackReason=bestReviewReason(item);
+          const reasonNode=document.createElement('div');
+          reasonNode.textContent=fallbackReason ? `Review: ${fallbackReason}` : 'Review: Needs manual review.';
+          eventCell.appendChild(reasonNode);
+          const didYouMeanText=(details&&details.did_you_mean)||item.did_you_mean;
+          if(didYouMeanText){
+            const suggestion=document.createElement('div');
+            suggestion.style.marginTop='4px';
+            suggestion.style.fontSize='12px';
+            suggestion.style.color='#475569';
+            suggestion.textContent=didYouMeanText;
+            eventCell.appendChild(suggestion);
+          }
         }
         tr.appendChild(legCell);
         tr.appendChild(resultCell);
@@ -1695,6 +1731,86 @@ def _estimate_parlay_payout_from_leg_odds(stake_amount: float, american_odds_lis
     return round(decimal_total, 4), payout, profit
 
 
+def _player_resolution_method(match_method: str | None, result: str) -> str:
+    method = (match_method or '').strip().lower()
+    if method in {'canonical', 'alias', 'normalized'}:
+        return 'exact'
+    if method == 'single_token_shorthand':
+        return 'surname_shorthand'
+    if method in {'single_token_first_name', 'single_token_first_name_heuristic'}:
+        return 'first_name_shorthand'
+    if method in {'fuzzy'}:
+        return 'fuzzy'
+    if method in {'ambiguous'} or result == 'review':
+        return 'manual_review'
+    return 'exact'
+
+
+def _event_resolution_source(item: GradedLeg) -> str:
+    matched_by = (item.leg.matched_by or '').lower()
+    if matched_by.startswith('team_'):
+        return 'team'
+    if matched_by.startswith('player_'):
+        if item.leg.player and item.leg.resolved_team:
+            return 'merged'
+        return 'player'
+    if item.leg.player and item.leg.resolved_team and (item.candidate_games or item.leg.event_candidates):
+        return 'merged'
+    if item.leg.player:
+        return 'player'
+    if item.leg.team:
+        return 'team'
+    return 'none'
+
+
+def _review_reason_code(item: GradedLeg, *, did_you_mean: str | None) -> str | None:
+    if item.settlement not in {'unmatched'}:
+        return None
+    reason_text = ((item.review_reason_text or item.review_reason or item.explanation_reason or '')).lower()
+    notes = ' | '.join(item.leg.notes).lower()
+    identity_method = item.identity_match_method or item.leg.identity_match_method
+    identity_confidence = item.identity_match_confidence or item.leg.identity_match_confidence
+    if identity_method == 'ambiguous' or identity_confidence == 'LOW' or 'identity ambiguous' in reason_text:
+        return 'PLAYER_AMBIGUOUS'
+    if did_you_mean or 'player not found' in reason_text:
+        return 'PLAYER_UNRESOLVED'
+    if len(item.candidate_games or item.candidate_events or item.leg.event_candidates) > 1 or 'multiple possible games' in notes:
+        return 'MULTIPLE_GAMES_MATCHED'
+    if 'no game found for resolved team on date' in notes:
+        return 'TEAM_DATE_MISMATCH'
+    if 'parse stat type' in reason_text or 'parse stat type' in notes:
+        return 'STAT_TYPE_UNCLEAR'
+    if 'event unresolved' in reason_text or 'no candidate events' in reason_text or 'no_candidate_events' in str(item.settlement_diagnostics):
+        return 'EVENT_NOT_FOUND'
+    return 'PARTIAL_SLIP_REVIEW'
+
+
+def _build_review_details(item: GradedLeg, *, result: str, did_you_mean: str | None) -> dict[str, object] | None:
+    if result != 'review':
+        return None
+    candidate_players = item.candidate_players or item.leg.candidate_players
+    matched_event_count = 1 if (item.matched_event or item.leg.event_label) else 0
+    status = 'resolved'
+    if (item.identity_match_method or item.leg.identity_match_method) == 'ambiguous' or (item.identity_match_confidence or item.leg.identity_match_confidence) == 'LOW':
+        status = 'ambiguous'
+    elif item.leg.player and not (item.resolved_player_name or item.leg.resolved_player_name):
+        status = 'unresolved'
+
+    reason_text = item.review_reason_text or item.review_reason or item.explanation_reason or 'Needs manual review. We could not confidently resolve this leg.'
+    details: dict[str, object] = {
+        'player_resolution_status': status,
+        'player_resolution_method': _player_resolution_method(item.identity_match_method or item.leg.identity_match_method, result),
+        'candidate_count': len(candidate_players),
+        'matched_event_count': matched_event_count,
+        'event_resolution_source': _event_resolution_source(item),
+        'review_reason_code': _review_reason_code(item, did_you_mean=did_you_mean) or 'PARTIAL_SLIP_REVIEW',
+        'review_reason_text': reason_text,
+    }
+    if did_you_mean:
+        details['did_you_mean'] = did_you_mean
+    return details
+
+
 def _process_public_check_text(
     text: str,
     stake_amount: float | None = None,
@@ -1785,6 +1901,8 @@ def _process_public_check_text(
         if result == 'review' and suggestion_candidates:
             did_you_mean = f"Did you mean: {suggestion_candidates[0]}?"
 
+        review_details = _build_review_details(item, result=result, did_you_mean=did_you_mean)
+
         legs.append({
             'leg_id': str(index),
             'leg': item.leg.raw_text,
@@ -1834,6 +1952,8 @@ def _process_public_check_text(
             'unmatched_reason_code': (item.settlement_diagnostics or {}).get('unmatched_reason_code'),
             'review_reason_text': item.review_reason_text,
             'did_you_mean': did_you_mean,
+            'review_details': review_details,
+            'resolution_details': review_details,
             'debug_comparison': item.debug_comparison,
         })
 

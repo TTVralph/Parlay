@@ -245,3 +245,14 @@ def test_check_page_renders_metadata_summary_row_when_available():
     assert "Stake: $${Number(payload.stake_amount).toFixed(2)}" in html
     assert "Est. payout: $${Number(payload.estimated_payout).toFixed(2)}" in html
     assert "if(hasStake&&payload.payout_message)" in html
+
+
+def test_check_page_renders_structured_review_reason_fallback_ui():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert 'function bestReviewReason(item)' in html
+    assert 'Needs manual review. We could not confidently resolve this leg.' in html
+    assert "const statusBadge=reviewStatusLabel(details);" in html
+    assert "suggestion.textContent=didYouMeanText;" in html
