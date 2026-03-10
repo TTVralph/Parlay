@@ -28,3 +28,13 @@ def test_check_page_uses_escaped_newline_in_parsed_legs_join() -> None:
 
     assert "parsedLegs.join('\\n')" in script
     assert "parsedLegs.join('\n')" not in script
+
+
+def test_check_page_script_shows_non_blocking_payout_message() -> None:
+    client = TestClient(app)
+    response = client.get('/check')
+    assert response.status_code == 200
+    html = response.text
+
+    assert "else if(data.payout_message)" in html
+    assert "payoutOut.textContent=data.payout_message;" in html
