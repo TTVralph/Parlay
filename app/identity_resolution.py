@@ -57,6 +57,16 @@ class CanonicalTeamIdentity:
 
 
 @dataclass(frozen=True)
+class CandidatePlayerMatch:
+    player_name: str
+    team_name: str | None = None
+    player_id: str | None = None
+    match_confidence: float | None = None
+    rank: int | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
 class PlayerResolutionResult:
     sport: SportCode
     resolved_player_name: str | None
@@ -65,6 +75,7 @@ class PlayerResolutionResult:
     confidence: float
     ambiguity_reason: str | None = None
     candidate_players: tuple[str, ...] = ()
+    candidate_player_details: tuple[CandidatePlayerMatch, ...] = ()
     identity_source: str | None = None
     identity_last_refreshed_at: str | None = None
     match_method: str | None = None
@@ -573,6 +584,24 @@ def _player_directory(sport: SportCode) -> tuple[dict[str, CanonicalPlayerIdenti
     return by_id, by_name
 
 
+def get_canonical_player_identity(player_id: str | None, sport: SportCode = 'NBA') -> CanonicalPlayerIdentity | None:
+    if not player_id:
+        return None
+    by_id, _ = _player_directory(sport)
+    return by_id.get(str(player_id).strip())
+
+
+def _candidate_match(player: CanonicalPlayerIdentity, *, rank: int, score: float | None, reason: str | None) -> CandidatePlayerMatch:
+    return CandidatePlayerMatch(
+        player_name=player.full_name,
+        team_name=player.team_name,
+        player_id=player.canonical_player_id,
+        match_confidence=(round(float(score), 2) if score is not None else None),
+        rank=rank,
+        reason=reason,
+    )
+
+
 def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -> PlayerResolutionResult:
     metadata = nba_identity_metadata() if sport == 'NBA' else {'identity_source': None, 'identity_last_refreshed_at': None}
     if not player_name:
@@ -598,11 +627,11 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
         if player_name in p.aliases:
             return PlayerResolutionResult(sport, p.full_name, p.canonical_player_id, p.team_name, 0.98, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='alias', confidence_level='HIGH')
         if _is_initials_or_surname_form(player_name, p.full_name):
-            return PlayerResolutionResult(sport, None, None, None, 0.65, ambiguity_reason='player identity ambiguous', candidate_players=(p.full_name,), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
+            return PlayerResolutionResult(sport, None, None, None, 0.65, ambiguity_reason='player identity ambiguous', candidate_players=(p.full_name,), candidate_player_details=(_candidate_match(p, rank=1, score=0.65, reason='ambiguous first/last name'),), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
         return PlayerResolutionResult(sport, p.full_name, p.canonical_player_id, p.team_name, 0.9, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='normalized', confidence_level='MEDIUM')
     if len(direct) > 1:
         names = tuple(sorted(item.full_name for item in direct))
-        return PlayerResolutionResult(sport, None, None, None, 0.5, ambiguity_reason='player identity ambiguous', candidate_players=names, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
+        return PlayerResolutionResult(sport, None, None, None, 0.5, ambiguity_reason='player identity ambiguous', candidate_players=names, candidate_player_details=tuple(_candidate_match(player, rank=idx + 1, score=0.5, reason='ambiguous first/last name') for idx, player in enumerate(sorted(direct, key=lambda item: item.full_name))), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
 
     # Safe single-token fallback using directory names.
     # Phase 1: unique surname hit (preferred).
@@ -647,6 +676,7 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
                 0.55,
                 ambiguity_reason='player identity ambiguous',
                 candidate_players=names,
+                candidate_player_details=tuple(_candidate_match(player, rank=idx + 1, score=0.55, reason='ambiguous first/last name') for idx, player in enumerate(sorted(surname_matches, key=lambda item: item.full_name)[:5])),
                 identity_source=metadata['identity_source'],
                 identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
                 match_method='ambiguous',
@@ -725,6 +755,7 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
                 round(max(top_score, strong_single_score), 2),
                 ambiguity_reason=f'player likely refers to {likely_name}, but identity confidence was not high enough to auto-resolve',
                 candidate_players=(likely_name,),
+                candidate_player_details=(_candidate_match(top_player, rank=1, score=max(top_score, strong_single_score), reason='close typo match'),),
                 identity_source=metadata['identity_source'],
                 identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
                 match_method='ambiguous_single_candidate',
@@ -733,10 +764,10 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
 
     if ranked[0][0] < 0.86:
         suggestions = tuple(item[1].full_name for item in ranked[:3])
-        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player not found in sport directory', candidate_players=suggestions, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], confidence_level='LOW')
+        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player not found in sport directory', candidate_players=suggestions, candidate_player_details=tuple(_candidate_match(item[1], rank=idx + 1, score=item[0], reason='close typo match') for idx, item in enumerate(ranked[:3])), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], confidence_level='LOW')
     if len(ranked) > 1 and (ranked[0][0] - ranked[1][0]) < 0.05:
         names = tuple(item[1].full_name for item in ranked[:3])
-        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player identity ambiguous', candidate_players=names, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
+        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player identity ambiguous', candidate_players=names, candidate_player_details=tuple(_candidate_match(item[1], rank=idx + 1, score=item[0], reason='ambiguous first/last name') for idx, item in enumerate(ranked[:3])), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
     pick = ranked[0][1]
     return PlayerResolutionResult(sport, pick.full_name, pick.canonical_player_id, pick.team_name, round(ranked[0][0], 2), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='normalized', confidence_level='MEDIUM')
 

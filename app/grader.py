@@ -132,6 +132,7 @@ def _base_leg_kwargs(leg: Leg, *, input_source_path: str = 'manual_text') -> dic
         'parse_confidence': leg.parse_confidence or leg.confidence,
         'resolution_ambiguity_reason': leg.resolution_ambiguity_reason,
         'candidate_players': leg.candidate_players,
+        'candidate_player_details': leg.candidate_player_details,
         'identity_source': leg.identity_source,
         'identity_last_refreshed_at': leg.identity_last_refreshed_at,
         'identity_match_method': leg.identity_match_method,
@@ -541,6 +542,7 @@ def grade_text(
     include_historical: bool = False,
     selected_event_id: str | None = None,
     selected_event_by_leg_id: dict[str, str] | None = None,
+    selected_player_by_leg_id: dict[str, str] | None = None,
     bet_date: date | None = None,
     screenshot_default_date: date | None = None,
     code_path: str = 'manual_text_slip_grading',
@@ -555,6 +557,7 @@ def grade_text(
         include_historical=include_historical,
         selected_event_id=selected_event_id,
         selected_event_by_leg_id=selected_event_by_leg_id,
+        selected_player_by_leg_id=selected_player_by_leg_id,
         bet_date=bet_date,
         screenshot_default_date=screenshot_default_date,
     )
@@ -567,6 +570,7 @@ def grade_text(
             include_historical=True,
             selected_event_id=selected_event_id,
             selected_event_by_leg_id=selected_event_by_leg_id,
+            selected_player_by_leg_id=selected_player_by_leg_id,
             bet_date=bet_date,
             screenshot_default_date=screenshot_default_date,
         )

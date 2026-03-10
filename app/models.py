@@ -64,6 +64,7 @@ class Leg(BaseModel):
     resolution_confidence: Optional[float] = None
     resolution_ambiguity_reason: Optional[str] = None
     candidate_players: list[str] = Field(default_factory=list)
+    candidate_player_details: list[dict[str, Any]] = Field(default_factory=list)
     parse_confidence: Optional[float] = None
     identity_source: Optional[str] = None
     identity_last_refreshed_at: Optional[str] = None
@@ -120,6 +121,7 @@ class GradedLeg(BaseModel):
     resolution_confidence: Optional[float] = None
     resolution_ambiguity_reason: Optional[str] = None
     candidate_players: list[str] = Field(default_factory=list)
+    candidate_player_details: list[dict[str, Any]] = Field(default_factory=list)
     parse_confidence: Optional[float] = None
     identity_source: Optional[str] = None
     identity_last_refreshed_at: Optional[str] = None

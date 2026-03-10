@@ -430,3 +430,155 @@ def test_check_ambiguous_shorthand_stays_review_without_autocorrect(monkeypatch)
     assert leg['review_details']['player_resolution_status'] == 'ambiguous'
     assert leg['parsed_player_name'] == 'Jalen'
     assert leg['resolved_player_name'] is None
+
+
+def test_check_unresolved_typo_returns_candidate_player_objects(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        leg = Leg(
+            raw_text='Shai Gilly-Alexander O5.5 AST',
+            sport='NBA',
+            market_type='player_assists',
+            player='Shai Gilly-Alexander',
+            direction='over',
+            line=5.5,
+            confidence=0.9,
+            candidate_players=['Shai Gilgeous-Alexander'],
+            candidate_player_details=[
+                {
+                    'player_name': 'Shai Gilgeous-Alexander',
+                    'team_name': 'Oklahoma City Thunder',
+                    'player_id': 'nba-shai-gilgeous-alexander',
+                    'match_confidence': 0.85,
+                    'rank': 1,
+                    'reason': 'close typo match',
+                }
+            ],
+            identity_match_method='ambiguous',
+            identity_match_confidence='LOW',
+        )
+        return GradeResponse(overall='needs_review', legs=[GradedLeg(leg=leg, settlement='unmatched', reason='x', review_reason='player not found in sport directory')])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Shai Gilly-Alexander O5.5 AST'}).json()
+    candidate = body['legs'][0]['candidate_players'][0]
+    assert candidate['player_name'] == 'Shai Gilgeous-Alexander'
+    assert candidate['team_name'] == 'Oklahoma City Thunder'
+    assert candidate['player_id'] == 'nba-shai-gilgeous-alexander'
+    assert candidate['match_confidence'] == 0.85
+    assert candidate['reason'] == 'close typo match'
+
+
+def test_check_ambiguous_name_returns_multiple_candidate_players(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        leg = Leg(
+            raw_text='Jalen over 20.5 points',
+            sport='NBA',
+            market_type='player_points',
+            player='Jalen',
+            direction='over',
+            line=20.5,
+            confidence=0.9,
+            identity_match_method='ambiguous',
+            identity_match_confidence='LOW',
+            candidate_players=['Jalen Brunson', 'Jalen Green'],
+            candidate_player_details=[
+                {'player_name': 'Jalen Brunson', 'team_name': 'New York Knicks', 'player_id': 'nba-jalen-brunson', 'match_confidence': 0.79, 'rank': 1, 'reason': 'ambiguous first/last name'},
+                {'player_name': 'Jalen Green', 'team_name': 'Houston Rockets', 'player_id': 'nba-jalen-green', 'match_confidence': 0.78, 'rank': 2, 'reason': 'ambiguous first/last name'},
+            ],
+        )
+        return GradeResponse(overall='needs_review', legs=[GradedLeg(leg=leg, settlement='unmatched', reason='x', review_reason='player identity ambiguous')])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Jalen over 20.5 points'}).json()
+    candidates = body['legs'][0]['candidate_players']
+    assert len(candidates) == 2
+    assert [item['player_name'] for item in candidates] == ['Jalen Brunson', 'Jalen Green']
+    assert body['legs'][0]['review_details']['player_resolution_status'] == 'ambiguous'
+
+
+def test_check_selected_candidate_reruns_grading_and_preserves_original_leg_text(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    captured_kwargs = {}
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        captured_kwargs.clear()
+        captured_kwargs.update(kwargs)
+        selected = (kwargs.get('selected_player_by_leg_id') or {}).get('0')
+        if selected == 'nba-shai-gilgeous-alexander':
+            leg = Leg(
+                raw_text='Shai Gilly-Alexander O5.5 AST',
+                sport='NBA',
+                market_type='player_assists',
+                player='Shai Gilgeous-Alexander',
+                parsed_player_name='Shai Gilly-Alexander',
+                resolved_player_name='Shai Gilgeous-Alexander',
+                resolved_player_id='nba-shai-gilgeous-alexander',
+                event_id='evt-1',
+                event_label='OKC @ LAL',
+                confidence=0.9,
+                identity_match_method='manual_selection',
+                identity_match_confidence='HIGH',
+            )
+            return GradeResponse(overall='pending', legs=[GradedLeg(leg=leg, settlement='pending', reason='ok')])
+
+        leg = Leg(
+            raw_text='Shai Gilly-Alexander O5.5 AST',
+            sport='NBA',
+            market_type='player_assists',
+            player='Shai Gilly-Alexander',
+            confidence=0.9,
+            identity_match_method='ambiguous',
+            identity_match_confidence='LOW',
+            candidate_players=['Shai Gilgeous-Alexander'],
+            candidate_player_details=[{'player_name': 'Shai Gilgeous-Alexander', 'player_id': 'nba-shai-gilgeous-alexander', 'team_name': 'Oklahoma City Thunder', 'match_confidence': 0.85, 'rank': 1, 'reason': 'close typo match'}],
+        )
+        return GradeResponse(overall='needs_review', legs=[GradedLeg(leg=leg, settlement='unmatched', reason='x', review_reason='player not found in sport directory')])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    first = client.post('/check-slip', json={'text': 'Shai Gilly-Alexander O5.5 AST'}).json()
+    assert first['legs'][0]['result'] == 'review'
+
+    second = client.post('/check-slip', json={'text': 'Shai Gilly-Alexander O5.5 AST', 'selected_player_by_leg_id': {'0': 'nba-shai-gilgeous-alexander'}}).json()
+    assert second['legs'][0]['result'] == 'pending'
+    assert second['legs'][0]['leg'] == 'Shai Gilly-Alexander O5.5 AST'
+    assert second['legs'][0]['resolved_player_name'] == 'Shai Gilgeous-Alexander'
+    assert second['legs'][0]['player_selection_applied'] is True
+    assert captured_kwargs['selected_player_by_leg_id'] == {'0': 'nba-shai-gilgeous-alexander'}
+
+
+def test_check_no_automatic_correction_without_player_selection(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        assert kwargs.get('selected_player_by_leg_id') in (None, {})
+        leg = Leg(
+            raw_text='Jalyen Wiliams over 18.5 points',
+            sport='NBA',
+            market_type='player_points',
+            player='Jalyen Wiliams',
+            confidence=0.9,
+            identity_match_method='ambiguous',
+            identity_match_confidence='LOW',
+            candidate_players=['Jalen Williams'],
+            candidate_player_details=[{'player_name': 'Jalen Williams', 'team_name': 'Oklahoma City Thunder', 'player_id': 'nba-jalen-williams', 'match_confidence': 0.83, 'rank': 1, 'reason': 'close typo match'}],
+        )
+        return GradeResponse(overall='needs_review', legs=[GradedLeg(leg=leg, settlement='unmatched', reason='x', review_reason='player identity ambiguous')])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Jalyen Wiliams over 18.5 points'}).json()
+    assert body['legs'][0]['result'] == 'review'
+    assert body['legs'][0]['resolved_player_name'] is None
+    assert body['legs'][0]['review_details']['player_resolution_status'] == 'ambiguous'
