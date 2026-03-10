@@ -81,6 +81,11 @@ class Leg(BaseModel):
     mixed_event_dates_detected: Optional[bool] = None
     american_odds: Optional[int] = None
     decimal_odds: Optional[float] = None
+    selected_player_name: Optional[str] = None
+    selected_player_id: Optional[str] = None
+    selection_source: Optional[Literal['auto', 'user_selected']] = None
+    selection_explanation: Optional[str] = None
+    canonical_player_name: Optional[str] = None
 
 
 class ParseResponse(BaseModel):
@@ -140,6 +145,11 @@ class GradedLeg(BaseModel):
     input_source_path: Optional[Literal['manual_text', 'screenshot']] = None
     debug_comparison: dict[str, Any] = Field(default_factory=dict)
     review_reason_text: Optional[str] = None
+    selected_player_name: Optional[str] = None
+    selected_player_id: Optional[str] = None
+    selection_source: Optional[Literal['auto', 'user_selected']] = None
+    selection_explanation: Optional[str] = None
+    canonical_player_name: Optional[str] = None
 
 
 class SettlementExplanation(BaseModel):

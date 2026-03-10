@@ -1168,7 +1168,11 @@ Murray over 2.5 threes'></textarea>
           <div>Player resolution confidence: ${details?.player_resolution_confidence??item.player_resolution_confidence??'—'}</div>
           <div>Player resolution mode: ${details?.player_resolution_is_exact?'Exact':(details?.player_resolution_is_conservative?'Conservative':'Review')}</div>
           <div>Player resolution explanation: ${details?.player_resolution_explanation||item.player_resolution_explanation||'—'}</div>
-          <div>Canonical matched player: ${details?.canonical_matched_player_name||item.resolved_player_name||'—'}</div>
+          <div>Canonical matched player: ${details?.canonical_matched_player_name||item.canonical_player_name||item.resolved_player_name||'—'}</div>
+          <div>Original typed player: ${details?.original_typed_player_name||item.parsed_player_name||item.parsed_player_or_team||'—'}</div>
+          <div>Selected player: ${item.selected_player_name||details?.selected_player_name||'—'} (${item.selected_player_id||details?.selected_player_id||'—'})</div>
+          <div>Selection source: ${item.selection_source||details?.selection_source||'—'}</div>
+          <div>Selection note: ${item.selection_explanation||details?.selection_explanation||'—'}</div>
           <div>Resolved team: ${item.resolved_team||'—'}</div>
           <div>Player in box score: ${boxscoreText}</div>
           <div>Resolution confidence: ${item.resolution_confidence ?? '—'}</div>
@@ -1218,6 +1222,9 @@ Murray over 2.5 threes'></textarea>
           badge.textContent=`${statusBadge}`;
           resultCell.appendChild(badge);
         }
+
+        const playerSelectionApplied=Boolean(item.player_selection_applied||item.selection_source==='user_selected');
+        const selectedPlayerLabel=item.selected_player_name||item.canonical_player_name||details?.selected_player_name||details?.canonical_matched_player_name||null;
         const candidateGames=(item.candidate_games||[]).length
           ?(item.candidate_games||[])
           :(nextState.wasManuallySelected ? (nextState.originalCandidateEvents||[]) : []);
@@ -1309,6 +1316,14 @@ Murray over 2.5 threes'></textarea>
           }
         }else if(item.matched_event){
           eventCell.textContent=item.matched_event;
+          if(playerSelectionApplied&&selectedPlayerLabel){
+            const selectionBadge=document.createElement('div');
+            selectionBadge.style.marginTop='4px';
+            selectionBadge.style.fontSize='11px';
+            selectionBadge.style.color='#334155';
+            selectionBadge.textContent=`Using selected player: ${selectedPlayerLabel}`;
+            eventCell.appendChild(selectionBadge);
+          }
         }else{
           const fallbackReason=bestReviewReason(item);
           const reasonNode=document.createElement('div');
@@ -1325,7 +1340,23 @@ Murray over 2.5 threes'></textarea>
           }
 
           const candidatePlayers=(item.candidate_players||[]).filter((candidate)=>candidate&&candidate.player_name);
-          const canPickPlayer=details&&(details.player_resolution_status==='ambiguous'||details.player_resolution_status==='unresolved')&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';
+          if(playerSelectionApplied&&selectedPlayerLabel){
+            const selectionBadge=document.createElement('div');
+            selectionBadge.style.marginTop='6px';
+            selectionBadge.style.fontSize='11px';
+            selectionBadge.style.color='#334155';
+            selectionBadge.textContent=`Using selected player: ${selectedPlayerLabel}`;
+            eventCell.appendChild(selectionBadge);
+            if(item.result==='review'){
+              const pendingAfterSelection=document.createElement('div');
+              pendingAfterSelection.style.marginTop='4px';
+              pendingAfterSelection.style.fontSize='11px';
+              pendingAfterSelection.style.color='#475569';
+              pendingAfterSelection.textContent=`Player selection succeeded, but this leg still needs review: ${bestReviewReason(item)||'additional validation needed'}`;
+              eventCell.appendChild(pendingAfterSelection);
+            }
+          }
+          const canPickPlayer=!playerSelectionApplied&&details&&(details.player_resolution_status==='ambiguous'||details.player_resolution_status==='unresolved')&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';
           if(canPickPlayer){
             const pickerLabel=document.createElement('div');
             pickerLabel.style.marginTop='8px';
@@ -1863,7 +1894,12 @@ def _build_player_resolution_details(item: GradedLeg, *, result: str, did_you_me
         'player_resolution_explanation': _player_resolution_explanation(item, status=status, method=method, did_you_mean=did_you_mean),
         'player_resolution_is_exact': status == 'exact',
         'player_resolution_is_conservative': status == 'fuzzy_resolved',
-        'canonical_matched_player_name': item.resolved_player_name or item.leg.resolved_player_name,
+        'canonical_matched_player_name': item.canonical_player_name or item.leg.canonical_player_name or item.resolved_player_name or item.leg.resolved_player_name,
+        'selected_player_name': item.selected_player_name or item.leg.selected_player_name,
+        'selected_player_id': item.selected_player_id or item.leg.selected_player_id,
+        'selection_source': item.selection_source or item.leg.selection_source,
+        'selection_explanation': item.selection_explanation or item.leg.selection_explanation,
+        'original_typed_player_name': item.leg.parsed_player_name or item.leg.player,
     }
     if did_you_mean and status in {'ambiguous', 'unresolved'}:
         details['did_you_mean'] = did_you_mean
@@ -2077,6 +2113,11 @@ def _process_public_check_text(
             'resolved_team': item.resolved_team or item.leg.resolved_team,
             'resolved_player_id': item.resolved_player_id or item.leg.resolved_player_id,
             'player_selection_applied': (item.identity_match_method or item.leg.identity_match_method) == 'manual_selection',
+            'selected_player_name': item.selected_player_name or item.leg.selected_player_name,
+            'selected_player_id': item.selected_player_id or item.leg.selected_player_id,
+            'selection_source': item.selection_source or item.leg.selection_source,
+            'selection_explanation': item.selection_explanation or item.leg.selection_explanation,
+            'canonical_player_name': item.canonical_player_name or item.leg.canonical_player_name,
             'parsed_player_name': item.parsed_player_name or item.leg.parsed_player_name,
             'normalized_stat_type': item.normalized_stat_type or item.leg.normalized_stat_type,
             'resolution_confidence': item.resolution_confidence or item.leg.resolution_confidence,
@@ -2134,6 +2175,7 @@ def _process_public_check_text(
         'parse_confidence': next((item.get('parse_confidence') for item in legs if item.get('parse_confidence')), 'low'),
         'checked_at': datetime.utcnow().isoformat(),
         'bet_date': bet_date.isoformat() if bet_date is not None else None,
+        'selected_player_by_leg_id': selected_player_by_leg_id or {},
     }
     if unmatched_count == len(legs):
         out['message'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
@@ -2334,6 +2376,9 @@ def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> 
     leg_rows = []
     for leg in legs:
         reason = leg.get('review_reason_text') or leg.get('review_reason') or leg.get('settlement_reason_text') or '—'
+        selected_label = leg.get('selected_player_name') or leg.get('canonical_player_name')
+        if leg.get('selection_source') == 'user_selected' and selected_label:
+            reason = f"{reason} | Using selected player: {selected_label}"
         leg_rows.append(
             "<tr>"
             f"<td>{escape(str(leg.get('leg', '—')))}</td>"

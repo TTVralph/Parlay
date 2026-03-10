@@ -518,10 +518,15 @@ def test_check_selected_candidate_reruns_grading_and_preserves_original_leg_text
                 raw_text='Shai Gilly-Alexander O5.5 AST',
                 sport='NBA',
                 market_type='player_assists',
-                player='Shai Gilgeous-Alexander',
+                player='Shai Gilly-Alexander',
                 parsed_player_name='Shai Gilly-Alexander',
                 resolved_player_name='Shai Gilgeous-Alexander',
                 resolved_player_id='nba-shai-gilgeous-alexander',
+                selected_player_name='Shai Gilgeous-Alexander',
+                selected_player_id='nba-shai-gilgeous-alexander',
+                selection_source='user_selected',
+                selection_explanation='Used user-selected player: Shai Gilgeous-Alexander',
+                canonical_player_name='Shai Gilgeous-Alexander',
                 event_id='evt-1',
                 event_label='OKC @ LAL',
                 confidence=0.9,
@@ -554,6 +559,13 @@ def test_check_selected_candidate_reruns_grading_and_preserves_original_leg_text
     assert second['legs'][0]['leg'] == 'Shai Gilly-Alexander O5.5 AST'
     assert second['legs'][0]['resolved_player_name'] == 'Shai Gilgeous-Alexander'
     assert second['legs'][0]['player_selection_applied'] is True
+    assert second['legs'][0]['selection_source'] == 'user_selected'
+    assert second['legs'][0]['selected_player_name'] == 'Shai Gilgeous-Alexander'
+    assert second['legs'][0]['selected_player_id'] == 'nba-shai-gilgeous-alexander'
+    assert second['legs'][0]['canonical_player_name'] == 'Shai Gilgeous-Alexander'
+    assert second['legs'][0]['selection_explanation'] == 'Used user-selected player: Shai Gilgeous-Alexander'
+    assert second['legs'][0]['candidate_players'] == []
+    assert second['legs'][0]['review_details'] is None
     assert captured_kwargs['selected_player_by_leg_id'] == {'0': 'nba-shai-gilgeous-alexander'}
 
 
@@ -582,3 +594,46 @@ def test_check_no_automatic_correction_without_player_selection(monkeypatch):
     assert body['legs'][0]['result'] == 'review'
     assert body['legs'][0]['resolved_player_name'] is None
     assert body['legs'][0]['review_details']['player_resolution_status'] == 'ambiguous'
+
+
+def test_check_slip_public_page_retains_manual_selection_context(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        selected = (kwargs.get('selected_player_by_leg_id') or {}).get('0')
+        leg = Leg(
+            raw_text='Jalen over 20.5 points',
+            sport='NBA',
+            market_type='player_points',
+            player='Jalen',
+            parsed_player_name='Jalen',
+            resolved_player_name='Jalen Brunson' if selected else None,
+            resolved_player_id='nba-jalen-brunson' if selected else None,
+            selected_player_name='Jalen Brunson' if selected else None,
+            selected_player_id='nba-jalen-brunson' if selected else None,
+            selection_source='user_selected' if selected else None,
+            selection_explanation='Used user-selected player: Jalen Brunson' if selected else None,
+            canonical_player_name='Jalen Brunson' if selected else None,
+            confidence=0.9,
+            identity_match_method='manual_selection' if selected else 'ambiguous',
+            identity_match_confidence='HIGH' if selected else 'LOW',
+            candidate_players=[] if selected else ['Jalen Brunson', 'Jalen Green'],
+            candidate_player_details=[] if selected else [
+                {'player_name': 'Jalen Brunson', 'team_name': 'New York Knicks', 'player_id': 'nba-jalen-brunson', 'match_confidence': 0.8, 'rank': 1, 'reason': 'ambiguous first/last name'},
+                {'player_name': 'Jalen Green', 'team_name': 'Houston Rockets', 'player_id': 'nba-jalen-green', 'match_confidence': 0.79, 'rank': 2, 'reason': 'ambiguous first/last name'},
+            ],
+        )
+        settlement='pending' if selected else 'unmatched'
+        return GradeResponse(overall='pending' if selected else 'needs_review', legs=[GradedLeg(leg=leg, settlement=settlement, reason='ok', review_reason='player identity ambiguous' if not selected else None)])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Jalen over 20.5 points', 'selected_player_by_leg_id': {'0': 'nba-jalen-brunson'}}).json()
+    assert body['legs'][0]['selection_source'] == 'user_selected'
+    assert body['legs'][0]['selected_player_name'] == 'Jalen Brunson'
+    assert body['public_url']
+
+    page = client.get(body['public_url'])
+    assert page.status_code == 200
+    assert 'Using selected player: Jalen Brunson' in page.text
