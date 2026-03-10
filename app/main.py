@@ -1324,7 +1324,7 @@ Murray over 2.5 threes'></textarea>
           if(!res.ok){msg.textContent=body.detail||body.message||'Could not parse this screenshot right now.';return;}
           const parsed=body.parsed_screenshot||{};
           const parsedLegs=(parsed.parsed_legs||[]).map((item)=>item.normalized_label||item.raw_leg_text).filter(Boolean);
-          if(parsedLegs.length){slip.value=parsedLegs.join('\n');}
+          if(parsedLegs.length){slip.value=parsedLegs.join('\\n');}
           else if(body.cleaned_text){slip.value=body.cleaned_text;}
           if(!slipDate.value&&parsed.detected_bet_date){slipDate.value=parsed.detected_bet_date;}
           msg.textContent='Screenshot parsed. Review/edit the text, then click Check Slip.';
