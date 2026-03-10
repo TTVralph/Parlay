@@ -160,7 +160,7 @@ def test_check_page_screenshot_can_be_removed_before_text_only_submit():
     html = page.text
     assert "id='removeScreenshotBtn'" in html
     assert "clearScreenshotSelection({keepMessage:true});" in html
-    assert "if(file){" in html
+    assert "if(shouldParseScreenshot){" in html
     assert "}else{" in html
 
 
@@ -170,7 +170,7 @@ def test_check_page_screenshot_can_be_removed_and_reuploaded():
     assert page.status_code == 200
     html = page.text
     assert "slipImage.addEventListener('change'" in html
-    assert "removeScreenshotBtn.style.display=(slipImage.files&&slipImage.files[0])?'inline-block':'none';" in html
+    assert "removeScreenshotBtn.style.display=file?'inline-block':'none';" in html
     assert "removeScreenshotBtn.addEventListener('click'" in html
     assert "slipImage.value='';" in html
 
@@ -184,3 +184,38 @@ def test_check_page_keeps_ocr_text_in_textarea_when_screenshot_removed():
     assert "else if(body.cleaned_text){slip.value=body.cleaned_text;}" in html
     assert "clearScreenshotSelection({keepMessage:true});" in html
     assert "slip.focus();" in html
+
+
+def test_check_page_screenshot_second_submit_grades_text_instead_of_reparsing():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "let screenshotNeedsParse=false;" in html
+    assert "screenshotNeedsParse=Boolean(file)&&nextSignature!==parsedScreenshotSignature;" in html
+    assert "const shouldParseScreenshot=Boolean(file)&&screenshotNeedsParse;" in html
+    assert "if(shouldParseScreenshot){" in html
+    assert "}else{" in html
+    assert "screenshotNeedsParse=false;" in html
+    assert "parsedScreenshotSignature=screenshotSignature;" in html
+
+
+def test_check_page_screenshot_remove_then_submit_uses_text_grading_path():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "clearScreenshotSelection({keepMessage:true});" in html
+    assert "screenshotNeedsParse=false;" in html
+    assert "parsedScreenshotSignature=null;" in html
+    assert "res=await fetch('/check-slip'" in html
+
+
+def test_check_page_uploading_different_screenshot_triggers_new_parse():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "function getScreenshotSignature(file){" in html
+    assert "const nextSignature=getScreenshotSignature(file);" in html
+    assert "screenshotNeedsParse=Boolean(file)&&nextSignature!==parsedScreenshotSignature;" in html
