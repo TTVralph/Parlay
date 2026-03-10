@@ -43,7 +43,11 @@ def test_check_page_has_copy_summary_controls_and_format():
     assert page.status_code == 200
     html = page.text
     assert 'Copy Summary' in html
+    assert 'Copy Public Link' in html
+    assert 'Open Public Result' in html
+    assert 'Download Share Card' in html
     assert 'buildSummary' in html
+    assert 'Checked on ParlayBot' in html
     assert 'Parlay:' in html
     assert "resultEmoji={win:'✅',loss:'❌'" in html
 
@@ -55,10 +59,8 @@ def test_check_page_supports_screenshot_upload_flow():
     html = page.text
     assert "id='slipImage'" in html
     assert "accept='image/*'" in html
-    assert "const screenshotGradeEndpoint='/ingest/screenshot/grade'" in html
-    assert 'normalizeScreenshotPayload' in html
-    assert 'grading_warning' in html
-    assert 'parse_warning' in html
+    assert "fetch('/ingest/screenshot/parse'" in html
+    assert 'Review/edit the text, then click Check Slip.' in html
 
 
 def test_check_page_shows_optional_stake_input():

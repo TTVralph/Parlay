@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import json
 import logging
 import os
 import threading
@@ -214,6 +215,8 @@ from .services.repository import (
     upsert_affiliate_link,
     resolve_affiliate_url,
     set_capper_verification,
+    save_public_slip_result,
+    get_public_slip_result,
 )
 from .providers.factory import get_results_provider
 from .services.serializers import (
@@ -933,8 +936,14 @@ Murray over 2.5 threes'></textarea>
       <tbody id='legsBody'></tbody>
     </table>
     <div id='summaryWrap'>
-      <button id='copyBtn' class='secondary' type='button' disabled>Copy Summary</button>
+      <div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;'>
+        <button id='copyBtn' class='secondary' type='button' disabled>Copy Summary</button>
+        <button id='copyLinkBtn' class='secondary' type='button' disabled>Copy Public Link</button>
+        <button id='openLinkBtn' class='secondary' type='button' disabled>Open Public Result</button>
+        <button id='downloadCardBtn' class='secondary' type='button' disabled>Download Share Card</button>
+      </div>
       <textarea id='summaryOut' readonly placeholder='Summary will appear here after checking a slip.'></textarea>
+      <canvas id='shareCardCanvas' width='1080' height='1350' style='display:none;'></canvas>
     </div>
   </div>
   <script>
@@ -952,6 +961,10 @@ Murray over 2.5 threes'></textarea>
     const btn=document.getElementById('checkBtn');
     const copyBtn=document.getElementById('copyBtn');
     const summaryOut=document.getElementById('summaryOut');
+    const copyLinkBtn=document.getElementById('copyLinkBtn');
+    const openLinkBtn=document.getElementById('openLinkBtn');
+    const downloadCardBtn=document.getElementById('downloadCardBtn');
+    const shareCardCanvas=document.getElementById('shareCardCanvas');
     const msg=document.getElementById('message');
     const wrap=document.getElementById('resultWrap');
     const overall=document.getElementById('overall');
@@ -965,6 +978,8 @@ Murray over 2.5 threes'></textarea>
     const emptyTextMessage='Paste at least one leg first.';
     let selectedGameByLegId={};
     let legUiStateByLegId={};
+    let latestPublicUrl='';
+    let latestResultPayload=null;
 
     function resetManualSelectionState(){
       selectedGameByLegId={};
@@ -1177,7 +1192,8 @@ Murray over 2.5 threes'></textarea>
 
 
     function buildSummary(payload){
-      const lines=(payload.legs||[]).map((item)=>`${item.leg} ${resultEmoji[item.result]||'🧐'}`);
+      const lines=['Checked on ParlayBot',''];
+      (payload.legs||[]).forEach((item)=>lines.push(`${item.leg} ${resultEmoji[item.result]||'🧐'}`));
       lines.push('');
       lines.push(`Parlay: ${overallLabel[payload.parlay_result]||'NEEDS REVIEW'}`);
       return lines.join('\\n');
@@ -1267,13 +1283,17 @@ Murray over 2.5 threes'></textarea>
           resetManualSelectionState();
           const form=new FormData();
           form.append('file',file);
-          if(slipDate.value){form.append('bet_date', slipDate.value);}
           res=await fetch('/ingest/screenshot/parse',{method:'POST',body:form});
           const body=await res.json();
-          if(!res.ok){msg.textContent=body.detail||body.message||'Could not check this screenshot right now.';return;}
-          data=normalizeScreenshotPayload(body);
-          if(data.parsed_legs&&data.parsed_legs.length){slip.value=data.parsed_legs.join('\\n');}
-          if(!slipDate.value&&data.detected_bet_date){slipDate.value=data.detected_bet_date;}
+          if(!res.ok){msg.textContent=body.detail||body.message||'Could not parse this screenshot right now.';return;}
+          const parsed=body.parsed_screenshot||{};
+          const parsedLegs=(parsed.parsed_legs||[]).map((item)=>item.normalized_label||item.raw_leg_text).filter(Boolean);
+          if(parsedLegs.length){slip.value=parsedLegs.join('\n');}
+          else if(body.cleaned_text){slip.value=body.cleaned_text;}
+          if(!slipDate.value&&parsed.detected_bet_date){slipDate.value=parsed.detected_bet_date;}
+          msg.textContent='Screenshot parsed. Review/edit the text, then click Check Slip.';
+          wrap.hidden=true;
+          return;
         }else{
           const stakeRaw=(stakeAmount.value||'').trim();
           const payload={text};
@@ -1291,6 +1311,11 @@ Murray over 2.5 threes'></textarea>
         debugOut.innerHTML='';
         summaryOut.value='';
         copyBtn.disabled=true;
+        copyLinkBtn.disabled=true;
+        openLinkBtn.disabled=true;
+        downloadCardBtn.disabled=true;
+        latestPublicUrl='';
+        latestResultPayload=null;
         overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');
         if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){
           payoutOut.textContent=`Estimated payout: $${Number(data.estimated_payout).toFixed(2)} (profit: $${Number(data.estimated_profit).toFixed(2)})`;
@@ -1310,7 +1335,12 @@ Murray over 2.5 threes'></textarea>
           ${gradingWarning}
         `;
         summaryOut.value=buildSummary(data);
+        latestPublicUrl=data.public_url||'';
+        latestResultPayload=data;
         copyBtn.disabled=false;
+        copyLinkBtn.disabled=!latestPublicUrl;
+        openLinkBtn.disabled=!latestPublicUrl;
+        downloadCardBtn.disabled=false;
         wrap.hidden=false;
       }catch(err){
         console.error('Check Slip request failed:', err);
@@ -1329,6 +1359,41 @@ Murray over 2.5 threes'></textarea>
     window.addEventListener('error',(event)=>{
       console.error('Check page runtime error:', event.error||event.message||event);
       msg.textContent='Something went wrong in the page. Please refresh and try again.';
+    });
+
+
+    function drawShareCard(payload){
+      const ctx=shareCardCanvas.getContext('2d');
+      ctx.fillStyle='#f8fafc'; ctx.fillRect(0,0,shareCardCanvas.width,shareCardCanvas.height);
+      ctx.fillStyle='#0f172a'; ctx.font='bold 52px Arial'; ctx.fillText('ParlayBot Check',60,90);
+      ctx.font='bold 44px Arial'; ctx.fillText('Parlay: '+(overallLabel[payload.parlay_result]||'NEEDS REVIEW'),60,160);
+      ctx.font='32px Arial';
+      let y=230;
+      for(const leg of (payload.legs||[]).slice(0,10)){
+        const line=`${leg.leg} ${resultEmoji[leg.result]||'🧐'}`;
+        ctx.fillText(line.slice(0,64),60,y);
+        y+=54;
+      }
+      ctx.font='24px Arial';
+      ctx.fillText(`Checked: ${new Date().toLocaleString()}`,60,shareCardCanvas.height-50);
+    }
+
+    copyLinkBtn.addEventListener('click',async()=>{
+      if(!latestPublicUrl){return;}
+      const full=window.location.origin+latestPublicUrl;
+      try{await navigator.clipboard.writeText(full); msg.textContent='Public link copied.';}catch(err){msg.textContent=full;}
+    });
+    openLinkBtn.addEventListener('click',()=>{
+      if(!latestPublicUrl){return;}
+      window.open(latestPublicUrl,'_blank','noopener');
+    });
+    downloadCardBtn.addEventListener('click',()=>{
+      if(!latestResultPayload){return;}
+      drawShareCard(latestResultPayload);
+      const a=document.createElement('a');
+      a.href=shareCardCanvas.toDataURL('image/png');
+      a.download='parlaybot-share-card.png';
+      a.click();
     });
 
     copyBtn.addEventListener('click',async()=>{
@@ -1500,6 +1565,8 @@ def _process_public_check_text(
         'parlay_result': parlay_result,
         'slip_default_date': slip_default_date,
         'mixed_event_dates_detected': mixed_event_dates_detected,
+        'parse_confidence': next((item.get('parse_confidence') for item in legs if item.get('parse_confidence')), 'low'),
+        'checked_at': datetime.utcnow().isoformat(),
     }
     if unmatched_count == len(legs):
         out['message'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
@@ -1555,7 +1622,7 @@ def _run_public_check_job(job_id: str, text: str, stake_amount: float | None = N
 
 @app.post('/check')
 @app.post('/check-slip')
-def public_check_slip(request: Request, response: Response, payload: dict = Body(...)):
+def public_check_slip(request: Request, response: Response, payload: dict = Body(...), db: Session = Depends(get_db)):
     _enforce_public_check_rate_limit(request, response, 'check-slip')
     stake = payload.get('stake_amount')
     if stake is None or stake == '':
@@ -1580,7 +1647,7 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
     else:
         selected_event_by_leg_id = {}
 
-    return _process_public_check_text(
+    result = _process_public_check_text(
         str(payload.get('text', '')),
         stake_amount=parsed_stake,
         date_of_slip=parsed_date,
@@ -1589,6 +1656,21 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
         selected_event_id=(str(payload.get('selected_event_id') or '').strip() or None),
         selected_event_by_leg_id=selected_event_by_leg_id,
     )
+    if result.get('ok'):
+        bet_dt = datetime.combine(parsed_date, datetime.min.time()) if parsed_date else None
+        saved = save_public_slip_result(
+            db,
+            raw_slip_text=str(payload.get('text', '')).strip(),
+            parsed_legs=[str(item) for item in result.get('parsed_legs', [])],
+            legs=result.get('legs', []),
+            overall_result=str(result.get('parlay_result', 'needs_review')),
+            parser_confidence=result.get('parse_confidence'),
+            bet_date=bet_dt,
+            stake_amount=parsed_stake,
+        )
+        result['public_id'] = saved.public_id
+        result['public_url'] = f"/parlay/{saved.public_id}"
+    return result
 
 
 @app.post('/check/jobs', response_model=CheckJobCreateResponse)
@@ -1635,6 +1717,43 @@ def get_public_check_job(job_id: str) -> CheckJobStatusResponse:
     if status_value == 'failed':
         return CheckJobStatusResponse(job_id=job_id, status='failed', error=(row.get('error') or 'Slip processing failed'))
     return CheckJobStatusResponse(job_id=job_id, status='pending')
+
+
+@app.get('/parlay/{public_id}', response_class=HTMLResponse)
+def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> HTMLResponse:
+    row = get_public_slip_result(db, public_id)
+    if not row:
+        raise HTTPException(status_code=404, detail='Parlay result not found')
+    legs = json.loads(row.legs_json or '[]')
+    matched_events = json.loads(row.matched_events_json or '[]')
+    checked_at = row.created_at.isoformat() if row.created_at else 'Unknown'
+    result_label = {'cashed': 'CASHED', 'lost': 'LOST', 'still_live': 'STILL LIVE', 'needs_review': 'NEEDS REVIEW'}.get(row.overall_result, row.overall_result.upper())
+    emoji = {'win': '✅', 'loss': '❌', 'pending': '⏳', 'push': '➖', 'void': '🚫', 'review': '🧐', 'unmatched': '🧐'}
+    leg_rows = []
+    for leg in legs:
+        reason = leg.get('review_reason_text') or leg.get('review_reason') or leg.get('settlement_reason_text') or '—'
+        leg_rows.append(
+            f"<tr><td>{leg.get('leg','—')}</td><td>{emoji.get(leg.get('result'),'🧐')} {(leg.get('result') or 'review').upper()}</td><td>{leg.get('matched_event') or '—'}</td><td>{reason}</td></tr>"
+        )
+    events_html = ''.join(f"<li>{event}</li>" for event in matched_events) or '<li>—</li>'
+    stake_text = f"${row.stake_amount:.2f}" if row.stake_amount is not None else '—'
+    bet_date_text = row.bet_date.date().isoformat() if row.bet_date else '—'
+    html = (
+        "<!doctype html><html><head><title>ParlayBot Result</title>"
+        "<style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:980px;color:#0f172a;}"
+        ".card{border:1px solid #e2e8f0;border-radius:12px;padding:14px;background:#fff;}"
+        "table{width:100%;border-collapse:collapse;margin-top:10px;}"
+        "th,td{text-align:left;padding:8px;border-bottom:1px solid #e2e8f0;vertical-align:top;}"
+        "th{font-size:12px;text-transform:uppercase;color:#64748b;}"
+        "a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;display:inline-block;}"
+        ".cta{background:#0f172a;color:#fff;}</style></head><body>"
+        f"<h1>ParlayBot Result</h1><div class='card'><div><strong>Overall:</strong> {result_label}</div>"
+        f"<div><strong>Public ID:</strong> {row.public_id}</div><div><strong>Parser confidence:</strong> {row.parser_confidence or 'low'}</div>"
+        f"<div><strong>Bet date:</strong> {bet_date_text}</div><div><strong>Stake:</strong> {stake_text}</div><div><strong>Checked at:</strong> {checked_at}</div>"
+        f"<h3>Leg Results</h3><table><thead><tr><th>Leg</th><th>Result</th><th>Matched Event</th><th>Review Reason</th></tr></thead><tbody>{''.join(leg_rows)}</tbody></table>"
+        f"<h3>Matched Events</h3><ul>{events_html}</ul></div><div style='margin-top:16px;'><a class='cta' href='/check'>Check another slip</a></div></body></html>"
+    )
+    return HTMLResponse(html)
 
 
 @app.post('/auth/register', response_model=SessionResponse)

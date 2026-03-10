@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import secrets
+import string
 from urllib.parse import urlencode
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
@@ -34,6 +35,7 @@ from ..db.models import (
     StripeEventORM,
     BillingInvoiceORM,
     EmailNotificationORM,
+    PublicSlipResultORM,
 )
 from ..models import GradeResponse, GradedLeg, Leg
 
@@ -1050,3 +1052,44 @@ def get_billing_history(db: Session, user: UserORM) -> dict[str, object]:
         'recent_billing_events': list(db.scalars(select(StripeEventORM).order_by(StripeEventORM.processed_at.desc()).limit(25)).all()),
         'email_notifications': list_email_notifications(db, user=user, limit=50),
     }
+
+
+def _new_public_slip_id(length: int = 8) -> str:
+    alphabet = string.ascii_lowercase + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def save_public_slip_result(
+    db: Session,
+    *,
+    raw_slip_text: str,
+    parsed_legs: list[str],
+    legs: list[dict],
+    overall_result: str,
+    parser_confidence: str | None = None,
+    bet_date: datetime | None = None,
+    stake_amount: float | None = None,
+) -> PublicSlipResultORM:
+    matched_events = [leg.get('matched_event') for leg in legs if leg.get('matched_event')]
+    public_id = _new_public_slip_id()
+    while db.scalar(select(PublicSlipResultORM).where(PublicSlipResultORM.public_id == public_id)):
+        public_id = _new_public_slip_id()
+    row = PublicSlipResultORM(
+        public_id=public_id,
+        raw_slip_text=raw_slip_text,
+        parsed_legs_json=json.dumps(parsed_legs),
+        legs_json=json.dumps(legs),
+        matched_events_json=json.dumps(matched_events),
+        overall_result=overall_result,
+        parser_confidence=parser_confidence,
+        bet_date=bet_date,
+        stake_amount=stake_amount,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def get_public_slip_result(db: Session, public_id: str) -> PublicSlipResultORM | None:
+    return db.scalar(select(PublicSlipResultORM).where(PublicSlipResultORM.public_id == public_id))
