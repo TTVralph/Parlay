@@ -273,6 +273,7 @@ def test_check_page_shows_unresolved_typo_explanation_and_structured_details():
     assert page.status_code == 200
     html = page.text
     assert "const canPickPlayer=!playerSelectionApplied&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';" in html
+    assert "const shouldShowPicker=item.result==='review'&&!playerSelectionApplied&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';" in html
     assert 'Player resolution method:' in html
     assert 'Player resolution confidence:' in html
     assert 'Player resolution mode:' in html

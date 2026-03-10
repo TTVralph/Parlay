@@ -60,3 +60,38 @@ def test_unresolved_identity_returns_top_three_candidate_players() -> None:
     assert result.ambiguity_reason == 'player not found in sport directory'
     assert len(result.candidate_players) >= 3
     assert len(result.candidate_player_details) >= 3
+
+
+def _candidate_rank(result, name: str) -> int:
+    for idx, candidate in enumerate(result.candidate_players):
+        if candidate == name:
+            return idx
+    return -1
+
+
+def test_lebrun_ranks_lebron_above_braun_and_brunson() -> None:
+    result = resolve_player_identity('lebrun', sport='NBA')
+    assert result.candidate_players
+    lebron_idx = _candidate_rank(result, 'LeBron James')
+    braun_idx = _candidate_rank(result, 'Christian Braun')
+    brunson_idx = _candidate_rank(result, 'Jalen Brunson')
+    assert lebron_idx != -1
+    if braun_idx != -1:
+        assert lebron_idx < braun_idx
+    if brunson_idx != -1:
+        assert lebron_idx < brunson_idx
+
+
+def test_tray_young_ranks_trae_young_first() -> None:
+    result = resolve_player_identity('tray young', sport='NBA')
+    if result.resolved_player_name:
+        assert result.resolved_player_name == 'Trae Young'
+    else:
+        assert result.candidate_players and result.candidate_players[0] == 'Trae Young'
+
+
+def test_tatom_and_yokic_typo_candidates_rank_targets_first() -> None:
+    tatum = resolve_player_identity('tatom', sport='NBA')
+    jokic = resolve_player_identity('yokic', sport='NBA')
+    assert tatum.resolved_player_name == 'Jayson Tatum' or (tatum.candidate_players and tatum.candidate_players[0] == 'Jayson Tatum')
+    assert jokic.resolved_player_name == 'Nikola Jokic' or (jokic.candidate_players and jokic.candidate_players[0] == 'Nikola Jokic')

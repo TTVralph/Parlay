@@ -720,3 +720,28 @@ def test_check_invalid_selected_player_id_returns_review_code(monkeypatch):
     assert body['legs'][0]['result'] == 'review'
     assert body['legs'][0]['review_details']['review_reason_code'] == 'INVALID_SELECTED_PLAYER_ID'
     assert 'could not be applied' in body['legs'][0]['review_reason_text'].lower()
+
+
+def test_check_review_reason_text_uses_specific_message_not_generic(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        leg = Leg(raw_text='Lebrun over 25.5 points', sport='NBA', market_type='player_points', player='Lebrun', confidence=0.95)
+        graded = GradedLeg(
+            leg=leg,
+            settlement='unmatched',
+            reason='Low-confidence identity match requires review',
+            review_reason='player identity ambiguous',
+            review_reason_text='Review: player/event validation failed',
+            identity_match_confidence='LOW',
+            identity_match_method='ambiguous',
+        )
+        return GradeResponse(overall='needs_review', legs=[graded])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Lebrun over 25.5 points'}).json()
+    reason = body['legs'][0]['review_reason_text']
+    assert reason == 'Multiple plausible player matches found; select the correct player.'
+    assert reason != 'Review: player/event validation failed'
