@@ -116,6 +116,29 @@ def _slugify_team_id(team: str) -> str:
     return f"nba-{re.sub(r'[^a-z0-9]+', '-', normalize_team_name(team)).strip('-')}"
 
 
+def _split_name_tokens(name: str) -> list[str]:
+    return [token for token in normalize_entity_name(name).split() if token]
+
+
+def _single_strong_candidate_score(input_name: str, candidate: CanonicalPlayerIdentity) -> float:
+    input_tokens = _split_name_tokens(input_name)
+    candidate_tokens = _split_name_tokens(candidate.full_name)
+    if len(input_tokens) < 2 or len(candidate_tokens) < 2:
+        return 0.0
+
+    first_score = SequenceMatcher(None, input_tokens[0], candidate_tokens[0]).ratio()
+    if first_score < 0.8:
+        return 0.0
+
+    input_surname_joined = ''.join(input_tokens[1:])
+    candidate_surname_joined = ''.join(candidate_tokens[1:])
+    surname_score = SequenceMatcher(None, input_surname_joined, candidate_surname_joined).ratio()
+    full_score = SequenceMatcher(None, normalize_entity_name(input_name), candidate.normalized_name).ratio()
+
+    team_bonus = 0.03 if candidate.team_name else 0.0
+    return (first_score * 0.55) + (surname_score * 0.35) + (full_score * 0.10) + team_bonus
+
+
 def _fetch_json(url: str, *, timeout: int = _NBA_REFRESH_TIMEOUT_SECONDS, urlopen: Any = request.urlopen) -> dict[str, Any]:
     with urlopen(url, timeout=timeout) as response:
         payload = json.load(response)
@@ -668,6 +691,46 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
     ranked.sort(key=lambda item: item[0], reverse=True)
     if not ranked:
         return PlayerResolutionResult(sport, None, None, None, 0.0, ambiguity_reason='player not found in sport directory', identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], confidence_level='LOW')
+
+    if sport == 'NBA':
+        top_score, top_player = ranked[0]
+        strong_single_score = _single_strong_candidate_score(player_name, top_player)
+        runner_up_score = ranked[1][0] if len(ranked) > 1 else 0.0
+        close_competitors = [entry for entry in ranked[1:] if (top_score - entry[0]) < 0.05]
+        if (
+            strong_single_score >= 0.89
+            and top_score >= 0.82
+            and not close_competitors
+            and (top_score - runner_up_score) >= 0.06
+        ):
+            return PlayerResolutionResult(
+                sport,
+                top_player.full_name,
+                top_player.canonical_player_id,
+                top_player.team_name,
+                round(max(top_score, strong_single_score), 2),
+                identity_source=metadata['identity_source'],
+                identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
+                match_method='single_strong_candidate',
+                confidence_level='MEDIUM',
+            )
+
+        if strong_single_score >= 0.84 and len(ranked) == 1:
+            likely_name = top_player.full_name
+            return PlayerResolutionResult(
+                sport,
+                None,
+                None,
+                None,
+                round(max(top_score, strong_single_score), 2),
+                ambiguity_reason=f'player likely refers to {likely_name}, but identity confidence was not high enough to auto-resolve',
+                candidate_players=(likely_name,),
+                identity_source=metadata['identity_source'],
+                identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
+                match_method='ambiguous_single_candidate',
+                confidence_level='LOW',
+            )
+
     if ranked[0][0] < 0.86:
         suggestions = tuple(item[1].full_name for item in ranked[:3])
         return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player not found in sport directory', candidate_players=suggestions, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], confidence_level='LOW')

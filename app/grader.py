@@ -224,6 +224,8 @@ def _review_reason_text(review_reason: str | None, reason_code: str) -> str | No
     if reason_code in {reason_codes.EVENT_UNRESOLVED, reason_codes.NO_CANDIDATE_EVENTS} and ('multiple' in value or 'ambiguous' in value):
         return 'Review: multiple plausible event/stat matches'
     if reason_code in {reason_codes.MATCHED_EVENT_TEAM_MISMATCH, reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER, reason_codes.IDENTITY_MATCH_AMBIGUOUS}:
+        if 'likely refers to' in value:
+            return f'Review: {review_reason}' if review_reason else 'Review: likely single candidate but confidence too low'
         return 'Review: player/event validation failed'
     if reason_code in {reason_codes.MISSING_STAT_SOURCE, reason_codes.STAT_NOT_FOUND, reason_codes.MARKET_MAPPING_MISSING} and any(k in value for k in ('combo', 'component', 'stat')):
         return 'Review: combo component stats incomplete'
@@ -313,13 +315,14 @@ def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_
         )
 
     if leg.identity_match_confidence == 'LOW':
+        ambiguity_reason = leg.resolution_ambiguity_reason or 'player identity ambiguous'
         return explained(
             settlement='unmatched',
             reason='Low-confidence identity match requires review',
             reason_code=reason_codes.IDENTITY_MATCH_AMBIGUOUS,
             reason_message='Player identity match is ambiguous',
-            review_reason='player identity ambiguous',
-            explanation_reason='player identity ambiguous',
+            review_reason=ambiguity_reason,
+            explanation_reason=ambiguity_reason,
         )
 
     if not leg.event_id:

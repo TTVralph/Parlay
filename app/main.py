@@ -1739,7 +1739,7 @@ def _player_resolution_method(match_method: str | None, result: str) -> str:
         return 'surname_shorthand'
     if method in {'single_token_first_name', 'single_token_first_name_heuristic'}:
         return 'first_name_shorthand'
-    if method in {'fuzzy'}:
+    if method in {'fuzzy', 'single_strong_candidate'}:
         return 'fuzzy'
     if method in {'ambiguous'} or result == 'review':
         return 'manual_review'
@@ -1772,7 +1772,7 @@ def _review_reason_code(item: GradedLeg, *, did_you_mean: str | None) -> str | N
     identity_confidence = item.identity_match_confidence or item.leg.identity_match_confidence
     if identity_method == 'ambiguous' or identity_confidence == 'LOW' or 'identity ambiguous' in reason_text:
         return 'PLAYER_AMBIGUOUS'
-    if did_you_mean or 'player not found' in reason_text:
+    if did_you_mean or 'player not found' in reason_text or 'likely refers to' in reason_text:
         return 'PLAYER_UNRESOLVED'
     if len(item.candidate_games or item.candidate_events or item.leg.event_candidates) > 1 or 'multiple possible games' in notes:
         return 'MULTIPLE_GAMES_MATCHED'

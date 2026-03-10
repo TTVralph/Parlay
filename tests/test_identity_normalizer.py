@@ -32,3 +32,23 @@ def test_single_token_shorthand_resolves_unique_player() -> None:
     assert luka.match_method in {'single_token_shorthand', 'single_token_first_name', 'single_token_first_name_heuristic'}
     assert tatum.resolved_player_name == 'Jayson Tatum'
     assert tatum.match_method in {'alias', 'single_token_shorthand'}
+
+
+def test_shai_gilly_alexander_single_strong_candidate_resolves() -> None:
+    result = resolve_player_identity('shai gilly alexander', sport='NBA')
+    assert result.resolved_player_name == 'Shai Gilgeous-Alexander'
+    assert result.resolved_player_id is not None
+    assert result.match_method == 'single_strong_candidate'
+
+
+def test_dehyphenated_gilgeous_alexander_resolves() -> None:
+    result = resolve_player_identity('shai gilgeous alexander', sport='NBA')
+    assert result.resolved_player_name == 'Shai Gilgeous-Alexander'
+    assert result.resolved_player_id is not None
+
+
+def test_multiple_close_candidates_still_review() -> None:
+    result = resolve_player_identity('Williams', sport='NBA')
+    assert result.resolved_player_id is None
+    assert result.confidence_level == 'LOW'
+    assert result.match_method == 'ambiguous'

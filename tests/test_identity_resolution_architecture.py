@@ -119,3 +119,59 @@ def test_common_misspelling_alias_resolves() -> None:
     pelle = resolve_player_identity('Pelle Larson', sport='NBA')
     assert pelle.resolved_player_name == 'Pelle Larsson'
     assert pelle.resolved_team == 'Miami Heat'
+
+
+class ThunderPipelineProvider:
+    def __init__(self) -> None:
+        self.event = EventInfo(
+            event_id='nba-evt-den-okc',
+            sport='NBA',
+            home_team='Oklahoma City Thunder',
+            away_team='Denver Nuggets',
+            start_time=datetime.fromisoformat('2026-03-09T01:00:00+00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        if team == 'Oklahoma City Thunder':
+            return [self.event]
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return [self.event]
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return None
+
+
+def test_single_strong_candidate_with_team_context_resolves_event() -> None:
+    provider = ThunderPipelineProvider()
+    leg = Leg(
+        raw_text='shai gilly alexander over 2 points',
+        sport='NBA',
+        market_type='player_points',
+        player='shai gilly alexander',
+        direction='over',
+        line=2.0,
+        confidence=0.9,
+    )
+
+    resolved = resolve_leg_events(
+        [leg],
+        provider,
+        posted_at=date.fromisoformat('2026-03-09'),
+        include_historical=True,
+        bet_date=date.fromisoformat('2026-03-09'),
+    )
+
+    assert resolved[0].resolved_player_id is not None
+    assert resolved[0].resolved_team == 'Oklahoma City Thunder'
+    assert resolved[0].event_id == 'nba-evt-den-okc'
