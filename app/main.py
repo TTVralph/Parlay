@@ -1082,7 +1082,7 @@ Murray over 2.5 threes'></textarea>
 
     function reviewStatusLabel(details){
       if(!details||!details.player_resolution_status){return null;}
-      const labels={resolved:'Resolved',ambiguous:'Ambiguous',unresolved:'Unresolved'};
+      const labels={fuzzy_resolved:'Resolved',ambiguous:'Ambiguous',unresolved:'Unresolved'};
       return labels[details.player_resolution_status]||'Review';
     }
 
@@ -1143,6 +1143,7 @@ Murray over 2.5 threes'></textarea>
             : (item.player_found_in_boxscore ? 'Yes' : 'No'));
         const settlementDiag=item.settlement_diagnostics||{};
         const marketMapping=settlementDiag.market_mapping||{};
+        const details=item.review_details||item.resolution_details||null;
         detailsBody.innerHTML=`
           <div>Sport: ${item.leg?.sport||item.sport||'—'}</div>
           <div>Parsed: ${item.parsed_player_name||item.parsed_player_or_team||'—'} / ${item.normalized_stat_type||item.normalized_market||'—'}</div>
@@ -1161,6 +1162,11 @@ Murray over 2.5 threes'></textarea>
           <div>Reason: ${item.settlement_reason_text||item.settlement_reason||item.explanation_reason||'—'}</div>
           <div>Grading confidence: ${item.grading_confidence ?? '—'}</div>
           <div>Resolved player: ${item.resolved_player_name||'—'} (${item.resolved_player_id||'—'})</div>
+          <div>Player resolution method: ${details?.player_resolution_method||item.player_resolution_method||'—'}</div>
+          <div>Player resolution confidence: ${details?.player_resolution_confidence??item.player_resolution_confidence??'—'}</div>
+          <div>Player resolution mode: ${details?.player_resolution_is_exact?'Exact':(details?.player_resolution_is_conservative?'Conservative':'Review')}</div>
+          <div>Player resolution explanation: ${details?.player_resolution_explanation||item.player_resolution_explanation||'—'}</div>
+          <div>Canonical matched player: ${details?.canonical_matched_player_name||item.resolved_player_name||'—'}</div>
           <div>Resolved team: ${item.resolved_team||'—'}</div>
           <div>Player in box score: ${boxscoreText}</div>
           <div>Resolution confidence: ${item.resolution_confidence ?? '—'}</div>
@@ -1184,7 +1190,22 @@ Murray over 2.5 threes'></textarea>
         legCell.appendChild(detailsWrap);
 
         resultCell.textContent=resultLabel[item.result]||String(item.result||'review');
-        const details=item.review_details||item.resolution_details||null;
+        if(details&&details.player_resolution_status==='fuzzy_resolved'){
+          const subtle=document.createElement('div');
+          subtle.style.marginTop='4px';
+          subtle.style.fontSize='11px';
+          subtle.style.color='#64748b';
+          subtle.textContent='Resolved from likely player name match';
+          resultCell.appendChild(subtle);
+        }
+        if(details&&(details.player_resolution_status==='ambiguous'||details.player_resolution_status==='unresolved')&&details.player_resolution_explanation){
+          const explanation=document.createElement('div');
+          explanation.style.marginTop='4px';
+          explanation.style.fontSize='11px';
+          explanation.style.color='#475569';
+          explanation.textContent=details.player_resolution_explanation;
+          resultCell.appendChild(explanation);
+        }
         const statusBadge=reviewStatusLabel(details);
         if(statusBadge){
           const badge=document.createElement('div');
@@ -1739,11 +1760,73 @@ def _player_resolution_method(match_method: str | None, result: str) -> str:
         return 'surname_shorthand'
     if method in {'single_token_first_name', 'single_token_first_name_heuristic'}:
         return 'first_name_shorthand'
-    if method in {'fuzzy', 'single_strong_candidate'}:
+    if method == 'single_strong_candidate':
+        return 'single_strong_candidate'
+    if method in {'fuzzy'}:
         return 'fuzzy'
     if method in {'ambiguous'} or result == 'review':
         return 'manual_review'
     return 'exact'
+
+
+def _player_resolution_status(item: GradedLeg, *, method: str) -> str:
+    has_player = bool(item.leg.player)
+    has_resolved_player = bool(item.resolved_player_name or item.leg.resolved_player_name)
+    if not has_player:
+        return 'exact'
+    if has_resolved_player and method == 'exact':
+        return 'exact'
+    if has_resolved_player and method in {'surname_shorthand', 'first_name_shorthand', 'single_strong_candidate', 'fuzzy'}:
+        return 'fuzzy_resolved'
+    if method == 'manual_review' or (item.identity_match_confidence or item.leg.identity_match_confidence) == 'LOW':
+        return 'ambiguous'
+    return 'unresolved'
+
+
+def _player_resolution_confidence(item: GradedLeg) -> str | float | None:
+    confidence_tier = item.identity_match_confidence or item.leg.identity_match_confidence
+    if confidence_tier:
+        return confidence_tier.lower()
+    numeric_conf = item.resolution_confidence if item.resolution_confidence is not None else item.leg.resolution_confidence
+    if numeric_conf is None:
+        return None
+    return round(float(numeric_conf), 2)
+
+
+def _player_resolution_explanation(item: GradedLeg, *, status: str, method: str, did_you_mean: str | None) -> str:
+    resolved_name = item.resolved_player_name or item.leg.resolved_player_name
+    ambiguity_reason = item.resolution_ambiguity_reason or item.leg.resolution_ambiguity_reason
+    review_reason = item.review_reason_text or item.review_reason or item.explanation_reason
+    if status == 'exact':
+        return f'Exact player match: {resolved_name}.' if resolved_name else 'Exact player match.'
+    if status == 'fuzzy_resolved':
+        if method == 'single_strong_candidate':
+            return f'Conservatively resolved to {resolved_name} from a likely player name match.' if resolved_name else 'Conservatively resolved from a likely player name match.'
+        return f'Resolved to {resolved_name} using conservative player name matching.' if resolved_name else 'Resolved using conservative player name matching.'
+    if ambiguity_reason:
+        return ambiguity_reason
+    if review_reason:
+        return review_reason
+    if did_you_mean:
+        return 'Player could not be confidently resolved.'
+    return 'Needs manual review. We could not confidently resolve this leg.'
+
+
+def _build_player_resolution_details(item: GradedLeg, *, result: str, did_you_mean: str | None) -> dict[str, object]:
+    method = _player_resolution_method(item.identity_match_method or item.leg.identity_match_method, result)
+    status = _player_resolution_status(item, method=method)
+    details: dict[str, object] = {
+        'player_resolution_status': status,
+        'player_resolution_method': method,
+        'player_resolution_confidence': _player_resolution_confidence(item),
+        'player_resolution_explanation': _player_resolution_explanation(item, status=status, method=method, did_you_mean=did_you_mean),
+        'player_resolution_is_exact': status == 'exact',
+        'player_resolution_is_conservative': status == 'fuzzy_resolved',
+        'canonical_matched_player_name': item.resolved_player_name or item.leg.resolved_player_name,
+    }
+    if did_you_mean and status in {'ambiguous', 'unresolved'}:
+        details['did_you_mean'] = did_you_mean
+    return details
 
 
 def _event_resolution_source(item: GradedLeg) -> str:
@@ -1788,18 +1871,13 @@ def _review_reason_code(item: GradedLeg, *, did_you_mean: str | None) -> str | N
 def _build_review_details(item: GradedLeg, *, result: str, did_you_mean: str | None) -> dict[str, object] | None:
     if result != 'review':
         return None
+    player_resolution_details = _build_player_resolution_details(item, result=result, did_you_mean=did_you_mean)
     candidate_players = item.candidate_players or item.leg.candidate_players
     matched_event_count = 1 if (item.matched_event or item.leg.event_label) else 0
-    status = 'resolved'
-    if (item.identity_match_method or item.leg.identity_match_method) == 'ambiguous' or (item.identity_match_confidence or item.leg.identity_match_confidence) == 'LOW':
-        status = 'ambiguous'
-    elif item.leg.player and not (item.resolved_player_name or item.leg.resolved_player_name):
-        status = 'unresolved'
 
     reason_text = item.review_reason_text or item.review_reason or item.explanation_reason or 'Needs manual review. We could not confidently resolve this leg.'
     details: dict[str, object] = {
-        'player_resolution_status': status,
-        'player_resolution_method': _player_resolution_method(item.identity_match_method or item.leg.identity_match_method, result),
+        **player_resolution_details,
         'candidate_count': len(candidate_players),
         'matched_event_count': matched_event_count,
         'event_resolution_source': _event_resolution_source(item),
@@ -1901,6 +1979,7 @@ def _process_public_check_text(
         if result == 'review' and suggestion_candidates:
             did_you_mean = f"Did you mean: {suggestion_candidates[0]}?"
 
+        resolution_details = _build_player_resolution_details(item, result=result, did_you_mean=did_you_mean)
         review_details = _build_review_details(item, result=result, did_you_mean=did_you_mean)
 
         legs.append({
@@ -1953,7 +2032,11 @@ def _process_public_check_text(
             'review_reason_text': item.review_reason_text,
             'did_you_mean': did_you_mean,
             'review_details': review_details,
-            'resolution_details': review_details,
+            'resolution_details': resolution_details,
+            'player_resolution_status': resolution_details.get('player_resolution_status'),
+            'player_resolution_method': resolution_details.get('player_resolution_method'),
+            'player_resolution_explanation': resolution_details.get('player_resolution_explanation'),
+            'player_resolution_confidence': resolution_details.get('player_resolution_confidence'),
             'debug_comparison': item.debug_comparison,
         })
 
