@@ -37,3 +37,29 @@ def test_check_slip_generates_public_link_and_page():
     assert page.status_code == 200
     assert 'ParlayBot Result' in page.text
     assert 'Check another slip' in page.text
+
+
+def test_check_slip_invalid_submission_does_not_persist_public_slip():
+    client = TestClient(app)
+    response = client.post('/check-slip', json={'text': '   '})
+    assert response.status_code == 200
+    body = response.json()
+    assert body['ok'] is False
+    assert 'public_id' not in body
+    assert 'public_url' not in body
+
+
+def test_public_parlay_page_has_graceful_invalid_id_state():
+    client = TestClient(app)
+    page = client.get('/parlay/NOT-VALID')
+    assert page.status_code == 404
+    assert "couldn't open that shared slip" in page.text
+    assert 'public ID format is invalid' in page.text
+
+
+def test_public_parlay_page_has_graceful_not_found_state():
+    client = TestClient(app)
+    page = client.get('/parlay/aaaaaaaa')
+    assert page.status_code == 404
+    assert 'This public slip was not found.' in page.text
+    assert 'Check a new slip' in page.text
