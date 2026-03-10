@@ -23,3 +23,5 @@ PLAYER_NOT_ON_EVENT_ROSTER: Final[str] = 'player_not_on_event_roster'
 STAT_NOT_FOUND: Final[str] = 'stat_not_found'
 MARKET_MAPPING_MISSING: Final[str] = 'market_mapping_missing'
 EVENT_NOT_FINAL: Final[str] = 'event_not_final'
+
+INVALID_SELECTED_PLAYER_ID: Final[str] = 'invalid_selected_player_id'

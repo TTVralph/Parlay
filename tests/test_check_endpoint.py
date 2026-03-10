@@ -637,3 +637,86 @@ def test_check_slip_public_page_retains_manual_selection_context(monkeypatch):
     page = client.get(body['public_url'])
     assert page.status_code == 200
     assert 'Using selected player: Jalen Brunson' in page.text
+
+
+def test_check_selected_player_leg_id_keys_are_normalized_to_strings(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    captured = {}
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        captured.update(kwargs)
+        leg = Leg(raw_text='LeBron over 25.5 points', sport='NBA', market_type='player_points', player='LeBron', confidence=0.9)
+        return GradeResponse(overall='needs_review', legs=[GradedLeg(leg=leg, settlement='unmatched', reason='x', review_reason='player identity ambiguous')])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    res = client.post('/check-slip', json={'text': 'LeBron over 25.5 points', 'selected_player_by_leg_id': {0: 'nba-espn-123'}})
+    assert res.status_code == 200
+    assert captured['selected_player_by_leg_id'] == {'0': 'nba-espn-123'}
+
+
+def test_resolve_leg_events_invalid_selected_player_id_is_non_fatal(monkeypatch):
+    from app.models import Leg
+    from app.identity_resolution import PlayerResolutionResult
+    from app.resolver import resolve_leg_events
+
+    class _Provider:
+        pass
+
+    monkeypatch.setattr('app.resolver.get_canonical_player_identity', lambda player_id, sport='NBA': None)
+    monkeypatch.setattr('app.resolver.resolve_player_identity', lambda player_name, sport='NBA': PlayerResolutionResult(
+        sport=sport,
+        resolved_player_name=None,
+        resolved_player_id=None,
+        resolved_team=None,
+        confidence=0.0,
+        ambiguity_reason='player identity ambiguous',
+        confidence_level='LOW',
+    ))
+    monkeypatch.setattr('app.resolver._resolve_player_team', lambda *args, **kwargs: None)
+    monkeypatch.setattr('app.resolver._player_candidates', lambda *args, **kwargs: [])
+
+    leg = Leg(raw_text='Christian Braunn over 10.5 points', sport='NBA', market_type='player_points', player='Christian Braunn', confidence=0.95)
+    resolved = resolve_leg_events([leg], _Provider(), posted_at=None, selected_player_by_leg_id={'0': 'nba-espn-4431767'})
+
+    assert len(resolved) == 1
+    assert resolved[0].raw_text == 'Christian Braunn over 10.5 points'
+    assert resolved[0].selection_applied is False
+    assert resolved[0].selection_error_code == 'INVALID_SELECTED_PLAYER_ID'
+
+
+def test_check_invalid_selected_player_id_returns_review_code(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        leg = Leg(
+            raw_text='Christian Braunn over 10.5 points',
+            sport='NBA',
+            market_type='player_points',
+            player='Christian Braunn',
+            confidence=0.95,
+            selection_source='user_selected',
+            selection_error_code='INVALID_SELECTED_PLAYER_ID',
+            selection_applied=False,
+            selection_explanation='Selected player could not be applied because the player ID was not found in the active directory.',
+        )
+        graded = GradedLeg(
+            leg=leg,
+            settlement='unmatched',
+            reason='Selected player override is invalid',
+            review_reason='Selected player could not be applied because the player ID was not found in the active directory.',
+            review_reason_text='Selected player could not be applied because the player ID was not found in the active directory.',
+            selection_error_code='INVALID_SELECTED_PLAYER_ID',
+        )
+        return GradeResponse(overall='needs_review', legs=[graded])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Christian Braunn over 10.5 points', 'selected_player_by_leg_id': {'0': 'nba-espn-4431767'}}).json()
+    assert body['ok'] is True
+    assert body['legs'][0]['result'] == 'review'
+    assert body['legs'][0]['review_details']['review_reason_code'] == 'INVALID_SELECTED_PLAYER_ID'
+    assert 'could not be applied' in body['legs'][0]['review_reason_text'].lower()

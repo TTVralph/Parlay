@@ -316,20 +316,32 @@ def resolve_leg_events(
         if default_date_reason:
             resolution_warnings.append(default_date_reason)
 
+        leg_id = str(leg.leg_id) if leg.leg_id is not None else str(index)
+        updates['leg_id'] = leg_id
+
         if leg.player:
-            selected_player_id = (selected_player_by_leg_id or {}).get(str(index))
+            selected_player_id = (selected_player_by_leg_id or {}).get(leg_id)
             selected_player = get_canonical_player_identity(selected_player_id, sport=leg.sport)
             resolution = resolve_player_identity(leg.player, sport=leg.sport)
-            if selected_player is not None:
-                selected_player_name = selected_player.full_name
-                selected_player_identity_id = selected_player.id
-                selection_source = 'user_selected'
-                selection_explanation = f'Used user-selected player: {selected_player_name}'
-                resolution = resolve_player_identity(selected_player_name, sport=leg.sport)
-                updates['identity_match_method'] = 'manual_selection'
-                updates['identity_match_confidence'] = 'HIGH'
-                updates['resolution_confidence'] = 1.0
-                notes.append('manual player selection applied')
+            updates['selection_applied'] = False
+            updates['selection_error_code'] = None
+            if selected_player_id:
+                if selected_player is not None:
+                    selected_player_name = selected_player.full_name
+                    selected_player_identity_id = selected_player.canonical_player_id
+                    selection_source = 'user_selected'
+                    selection_explanation = f'Used user-selected player: {selected_player_name}'
+                    resolution = resolve_player_identity(selected_player_name, sport=leg.sport)
+                    updates['identity_match_method'] = 'manual_selection'
+                    updates['identity_match_confidence'] = 'HIGH'
+                    updates['resolution_confidence'] = 1.0
+                    updates['selection_applied'] = True
+                    notes.append('manual player selection applied')
+                else:
+                    updates['selection_error_code'] = 'INVALID_SELECTED_PLAYER_ID'
+                    selection_source = 'user_selected'
+                    selection_explanation = 'Selected player could not be applied because the player ID was not found in the active directory.'
+                    notes.append('manual player selection invalid: player id not found in directory')
             if resolution.resolved_player_id:
                 player_identity_id = resolution.resolved_player_id
                 updates['resolution_confidence'] = updates.get('resolution_confidence') or resolution.confidence
@@ -438,7 +450,7 @@ def resolve_leg_events(
 
         selected_for_leg = None
         if selected_event_by_leg_id:
-            selected_for_leg = selected_event_by_leg_id.get(str(index))
+            selected_for_leg = selected_event_by_leg_id.get(leg_id)
         if not selected_for_leg:
             selected_for_leg = selected_event_id
 
@@ -462,6 +474,10 @@ def resolve_leg_events(
                 if linked:
                     candidates = linked
 
+        updates['selection_applied'] = bool(updates.get('selection_applied'))
+        updates['selection_error_code'] = updates.get('selection_error_code')
+        notes.append(f"diagnostic: selection_applied={updates['selection_applied']}")
+        notes.append(f"diagnostic: selection_error_code={updates.get('selection_error_code') or 'none'}")
         updates['parsed_player_name'] = leg.parsed_player_name or leg.player
         updates['normalized_stat_type'] = leg.normalized_stat_type or leg.market_type
         updates['resolved_player_name'] = resolved_player_name

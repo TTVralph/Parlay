@@ -40,6 +40,7 @@ class ParseRequest(BaseModel):
 
 
 class Leg(BaseModel):
+    leg_id: Optional[str] = None
     raw_text: str
     sport: Sport = "NBA"
     market_type: MarketType
@@ -85,6 +86,8 @@ class Leg(BaseModel):
     selected_player_id: Optional[str] = None
     selection_source: Optional[Literal['auto', 'user_selected']] = None
     selection_explanation: Optional[str] = None
+    selection_applied: bool = False
+    selection_error_code: Optional[str] = None
     canonical_player_name: Optional[str] = None
 
 
@@ -149,6 +152,8 @@ class GradedLeg(BaseModel):
     selected_player_id: Optional[str] = None
     selection_source: Optional[Literal['auto', 'user_selected']] = None
     selection_explanation: Optional[str] = None
+    selection_applied: bool = False
+    selection_error_code: Optional[str] = None
     canonical_player_name: Optional[str] = None
 
 
