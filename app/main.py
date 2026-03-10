@@ -1281,10 +1281,10 @@ Murray over 2.5 threes'></textarea>
     function applyNameSuggestion(legIndex){
       const suggestion=latestPlayerSuggestions.find((item)=>item.legIndex===legIndex);
       if(!suggestion){return;}
-      const lines=slip.value.split('\n');
+      const lines=slip.value.split('\\n');
       if(!lines[legIndex]){return;}
       lines[legIndex]=lines[legIndex].replace(suggestion.fromName,suggestion.toName);
-      slip.value=lines.join('\n');
+      slip.value=lines.join('\\n');
       latestPlayerSuggestions=latestPlayerSuggestions.filter((item)=>item.legIndex!==legIndex);
       renderNameSuggestions();
     }
