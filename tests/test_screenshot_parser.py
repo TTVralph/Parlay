@@ -93,3 +93,89 @@ def test_betmgm_double_double_yes_no_parses() -> None:
     parsed = parse_screenshot_text(raw, raw)
     assert len(parsed.parsed_legs) == 1
     assert parsed.parsed_legs[0].normalized_label == 'Bam Adebayo Double Double No'
+
+
+def test_bet365_binary_prop_slip_normalization() -> None:
+    raw = """
+    Russell Westbrook
+    Yes
+    Triple-Double
+    CHI Today 9:10 PM SAC
+    Dejounte Murray
+    Yes
+    Triple-Double
+    WAS Today 7:10 PM NO
+    Cash Out $5.00
+    Share
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert normalized.splitlines() == [
+        'Russell Westbrook Triple Double Yes',
+        'Dejounte Murray Triple Double Yes',
+    ]
+
+
+def test_fanduel_over_under_slip_normalization() -> None:
+    raw = """
+    Nikola Jokic O26.5 PTS
+    Luka Doncic O8.5 AST
+    Jayson Tatum U7.5 REB
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert normalized.splitlines() == [
+        'Nikola Jokic Over 26.5 Points',
+        'Luka Doncic Over 8.5 Assists',
+        'Jayson Tatum Under 7.5 Rebounds',
+    ]
+
+
+def test_draftkings_shorthand_and_noise_filtering() -> None:
+    raw = """
+    DraftKings
+    Stephen Curry O4.5 Ast
+    +5200
+    Hide Legs
+    Anthony Davis U11.5 Reb
+    To Pay $124
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert normalized.splitlines() == [
+        'Stephen Curry Over 4.5 Assists',
+        'Anthony Davis Under 11.5 Rebounds',
+    ]
+
+
+def test_betmgm_combo_prop_slip_normalization() -> None:
+    raw = """
+    Quentin Grimes Over 22.5 Pts + Ast
+    Aaron Gordon Under 17.5 Pts + Reb
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert normalized.splitlines() == [
+        'Quentin Grimes Over 22.5 Points + Assists',
+        'Aaron Gordon Under 17.5 Points + Rebounds',
+    ]
+
+
+def test_common_shorthand_and_line_break_joining() -> None:
+    raw = """
+    Tyler Herro
+    More 3.5
+    3PT
+    Scottie Barnes
+    Less 8.5
+    Reb + Ast
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert normalized.splitlines() == [
+        'Tyler Herro Over 3.5 Threes',
+        'Scottie Barnes Under 8.5 Rebounds + Assists',
+    ]
+
+
+def test_safe_player_typo_correction_case() -> None:
+    raw = """
+    Shai Gilly-Alexander Under 1.5 Threes
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert normalized == 'Shai Gilgeous-Alexander Under 1.5 Threes'
