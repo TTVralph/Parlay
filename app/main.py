@@ -1395,6 +1395,8 @@ Murray over 2.5 threes'></textarea>
         overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');
         if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){
           payoutOut.textContent=`Estimated payout: $${Number(data.estimated_payout).toFixed(2)} (profit: $${Number(data.estimated_profit).toFixed(2)})`;
+        }else if(data.payout_message){
+          payoutOut.textContent=data.payout_message;
         }else{
           payoutOut.textContent='';
         }
@@ -1721,18 +1723,11 @@ def _process_public_check_text(
 
     if stake_amount is not None:
         financials = extract_financials(normalized)
-        if financials.american_odds is None:
-            return {
-                'ok': False,
-                'message': 'Add odds in your slip text (for example +120) to estimate payout.',
-                'legs': [],
-                'parsed_legs': parsed_legs,
-                'parse_warning': None,
-                'grading_warning': out.get('grading_warning'),
-                'parlay_result': 'needs_review',
-            }
-        est_profit = _estimate_profit_from_american(stake_amount, financials.american_odds)
         out['stake_amount'] = round(stake_amount, 2)
+        if financials.american_odds is None:
+            out['payout_message'] = 'Add odds in your slip text (for example +120) to estimate payout.'
+            return out
+        est_profit = _estimate_profit_from_american(stake_amount, financials.american_odds)
         out['estimated_profit'] = est_profit
         out['estimated_payout'] = round(stake_amount + est_profit, 2)
         out['american_odds_used'] = financials.american_odds

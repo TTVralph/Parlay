@@ -75,6 +75,7 @@ def test_check_sets_grading_warning_when_all_legs_unmatched(monkeypatch):
         leg = Leg(raw_text='Denver ML', sport='NBA', market_type='moneyline', team='Denver Nuggets', confidence=0.95)
         return GradeResponse(overall='needs_review', legs=[GradedLeg(leg=leg, settlement='unmatched', reason='x')])
 
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
     monkeypatch.setattr('app.main.grade_text', _grade)
     res = client.post('/check-slip', json={'text': 'Denver ML'})
     assert res.status_code == 200
@@ -89,3 +90,51 @@ def test_check_nonsense_input_is_rejected():
     assert body['ok'] is False
     assert body['message'] == 'No valid betting legs detected.'
     assert body['legs'] == []
+
+
+def test_check_with_stake_without_odds_preserves_full_grading_payload(monkeypatch):
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+
+    res = client.post('/check-slip', json={'text': 'Denver ML', 'stake_amount': 100})
+    assert res.status_code == 200
+    body = res.json()
+
+    assert body['ok'] is True
+    assert body['message']
+    assert body['payout_message'] == 'Add odds in your slip text (for example +120) to estimate payout.'
+    assert body['stake_amount'] == 100.0
+    assert 'estimated_profit' not in body
+    assert 'estimated_payout' not in body
+    assert body['parsed_legs'] == ['Denver ML']
+    assert body['legs']
+    assert 'parse_confidence' in body
+
+
+def test_check_same_slip_payload_shape_matches_with_or_without_stake(monkeypatch):
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+
+    base = client.post('/check-slip', json={'text': 'Denver ML'}).json()
+    with_stake_no_odds = client.post('/check-slip', json={'text': 'Denver ML', 'stake_amount': 100}).json()
+
+    shared_keys = {'ok', 'legs', 'parsed_legs', 'parse_warning', 'grading_warning', 'parlay_result', 'parse_confidence'}
+    for key in shared_keys:
+        assert with_stake_no_odds[key] == base[key]
+    assert with_stake_no_odds['message'] == base['message']
+
+
+def test_check_with_stake_and_odds_keeps_full_payload_and_adds_payout(monkeypatch):
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+
+    res = client.post('/check-slip', json={'text': 'Denver ML\nOdds +150', 'stake_amount': 100})
+    assert res.status_code == 200
+    body = res.json()
+
+    assert body['ok'] is True
+    assert body['message']
+    assert body['parsed_legs'] == ['Denver ML']
+    assert body['legs']
+    assert 'parse_confidence' in body
+    assert body['stake_amount'] == 100.0
+    assert body['estimated_profit'] == 150.0
+    assert body['estimated_payout'] == 250.0
+    assert body['american_odds_used'] == 150
