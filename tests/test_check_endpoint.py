@@ -46,7 +46,8 @@ def test_check_with_stake_returns_estimated_payout_and_profit():
     assert body['ok'] is True
     assert body['estimated_profit'] == 30.0
     assert body['estimated_payout'] == 50.0
-    assert body['american_odds_used'] == 150
+    assert body['american_odds_used'] == [150]
+    assert body['decimal_odds_used'] == 2.5
     assert body['parsed_legs'] == ['Denver ML']
 
 
@@ -137,4 +138,35 @@ def test_check_with_stake_and_odds_keeps_full_payload_and_adds_payout(monkeypatc
     assert body['stake_amount'] == 100.0
     assert body['estimated_profit'] == 150.0
     assert body['estimated_payout'] == 250.0
+    assert body['american_odds_used'] == [150]
+    assert body['decimal_odds_used'] == 2.5
+
+
+def test_check_with_multi_leg_odds_multiplies_parlay_payout(monkeypatch):
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+
+    text = 'Draymond Green Over 5.5 Assists +500\nQuentin Grimes Over 22.5 Pts + Ast +250'
+    res = client.post('/check-slip', json={'text': text, 'stake_amount': 100})
+    assert res.status_code == 200
+    body = res.json()
+
+    assert body['ok'] is True
+    assert body['parsed_legs'] == ['Draymond Green Over 5.5 Assists', 'Quentin Grimes Over 22.5 Pts + Ast']
+    assert body['american_odds_used'] == [500, 250]
+    assert body['decimal_odds_used'] == 21.0
+    assert body['estimated_payout'] == 2100.0
+    assert body['estimated_profit'] == 2000.0
+
+
+def test_check_with_mixed_leg_odds_uses_ticket_level_odds(monkeypatch):
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+
+    text = 'Denver ML +150\nNikola Jokic Over 24.5 Points'
+    res = client.post('/check-slip', json={'text': text, 'stake_amount': 50})
+    assert res.status_code == 200
+    body = res.json()
+
+    assert body['ok'] is True
+    assert body['estimated_profit'] == 75.0
+    assert body['estimated_payout'] == 125.0
     assert body['american_odds_used'] == 150
