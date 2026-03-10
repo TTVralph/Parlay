@@ -300,6 +300,10 @@ class ParsedScreenshotLeg(BaseModel):
     confidence: Optional[float] = None
     match_method: Optional[str] = None
     match_confidence: Optional[Literal['HIGH', 'MEDIUM', 'LOW']] = None
+    suggested_player_name: Optional[str] = None
+    suggestion_confidence: Optional[float] = None
+    suggestion_confidence_level: Optional[Literal['HIGH', 'MEDIUM']] = None
+    suggestion_auto_applied: bool = False
 
 
 class ScreenshotPreprocessingMetadata(BaseModel):

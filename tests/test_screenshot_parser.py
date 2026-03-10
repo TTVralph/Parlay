@@ -178,4 +178,10 @@ def test_safe_player_typo_correction_case() -> None:
     Shai Gilly-Alexander Under 1.5 Threes
     """
     normalized = normalize_sportsbook_ocr_text(raw)
-    assert normalized == 'Shai Gilgeous-Alexander Under 1.5 Threes'
+    assert normalized == 'Shai Gilly-Alexander Under 1.5 Threes'
+
+    parsed = parse_screenshot_text(raw, raw)
+    assert parsed.parsed_legs[0].player_name == 'Shai Gilgeous-Alexander'
+    assert parsed.parsed_legs[0].suggested_player_name == 'Shai Gilgeous-Alexander'
+    assert parsed.parsed_legs[0].suggestion_auto_applied is True
+
