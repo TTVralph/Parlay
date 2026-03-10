@@ -170,3 +170,69 @@ def test_check_with_mixed_leg_odds_uses_ticket_level_odds(monkeypatch):
     assert body['estimated_profit'] == 75.0
     assert body['estimated_payout'] == 125.0
     assert body['american_odds_used'] == 150
+
+def test_check_empty_slip_after_previous_result_returns_reset_payload(monkeypatch):
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+
+    first = client.post('/check-slip', json={'text': 'Denver ML'}).json()
+    assert first['ok'] is True
+    assert first['legs']
+
+    second_resp = client.post('/check-slip', json={'text': '   '})
+    assert second_resp.status_code == 200
+    second = second_resp.json()
+    assert second['ok'] is False
+    assert second['legs'] == []
+    assert second['parsed_legs'] == []
+    assert second['parlay_result'] == 'needs_review'
+    assert second['message'] == 'Paste at least one leg first.'
+
+
+def test_check_unresolved_player_includes_did_you_mean_suggestion(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        leg = Leg(
+            raw_text='Shai Gilly-Alexander O5.5 AST',
+            sport='NBA',
+            market_type='player_assists',
+            player='Shai Gilly-Alexander',
+            direction='over',
+            line=5.5,
+            confidence=0.9,
+            candidate_players=['Shai Gilgeous-Alexander'],
+        )
+        return GradeResponse(overall='needs_review', legs=[GradedLeg(leg=leg, settlement='unmatched', reason='x', review_reason='player not found in sport directory')])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Shai Gilly-Alexander O5.5 AST'}).json()
+    assert body['ok'] is True
+    assert body['legs'][0]['did_you_mean'] == 'Did you mean: Shai Gilgeous-Alexander?'
+    assert body['legs'][0]['result'] == 'review'
+
+
+def test_check_mixed_valid_and_invalid_legs_keeps_partial_results(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        good = Leg(raw_text='Denver ML', sport='NBA', market_type='moneyline', team='Denver Nuggets', confidence=0.95)
+        bad = Leg(raw_text='Typo Name O5.5 AST', sport='NBA', market_type='player_assists', player='Typo Name', direction='over', line=5.5, confidence=0.92)
+        return GradeResponse(
+            overall='needs_review',
+            legs=[
+                GradedLeg(leg=good, settlement='win', reason='ok'),
+                GradedLeg(leg=bad, settlement='unmatched', reason='x', review_reason='player not found in sport directory', candidate_players=['Tyus Jones']),
+            ],
+        )
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Denver ML\nTypo Name O5.5 AST'}).json()
+    assert body['ok'] is True
+    assert len(body['legs']) == 2
+    assert body['legs'][0]['result'] == 'win'
+    assert body['legs'][1]['result'] == 'review'
+    assert body['grading_warning'] == '1 leg(s) need manual review.'

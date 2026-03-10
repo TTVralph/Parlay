@@ -23,3 +23,12 @@ def test_ambiguous_surname_only_is_low_confidence() -> None:
 def test_team_abbreviation_normalization() -> None:
     assert normalize_team_name('L.A. Clippers') == normalize_team_name('LA Clippers')
     assert normalize_team_name('N.Y. Knicks') == normalize_team_name('NY Knicks')
+
+def test_single_token_shorthand_resolves_unique_player() -> None:
+    luka = resolve_player_identity('Luka', sport='NBA')
+    tatum = resolve_player_identity('Tatum', sport='NBA')
+
+    assert luka.resolved_player_name == 'Luka Doncic'
+    assert luka.match_method in {'single_token_shorthand', 'single_token_first_name', 'single_token_first_name_heuristic'}
+    assert tatum.resolved_player_name == 'Jayson Tatum'
+    assert tatum.match_method in {'alias', 'single_token_shorthand'}

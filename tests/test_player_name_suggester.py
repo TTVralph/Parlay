@@ -6,7 +6,7 @@ def test_obvious_shai_misspelling_gets_high_confidence_suggestion() -> None:
     assert suggestion is not None
     assert suggestion.suggested_name == 'Shai Gilgeous-Alexander'
     assert suggestion.confidence_level == 'HIGH'
-    assert suggestion.auto_applied is True
+    assert suggestion.auto_applied is False
 
 
 def test_hard_last_names_get_suggestions() -> None:

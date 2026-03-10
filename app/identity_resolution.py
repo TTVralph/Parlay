@@ -581,6 +581,82 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
         names = tuple(sorted(item.full_name for item in direct))
         return PlayerResolutionResult(sport, None, None, None, 0.5, ambiguity_reason='player identity ambiguous', candidate_players=names, identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
 
+    # Safe single-token fallback using directory names.
+    # Phase 1: unique surname hit (preferred).
+    # Phase 2: unique first-name hit; if there are multiple, choose deterministic top candidate
+    # only for common sportsbook shorthand (e.g., "Luka") with reduced confidence.
+    parts = [part for part in normalized.split() if part]
+    if sport == 'NBA' and len(parts) == 1:
+        token = parts[0]
+        surname_matches: list[CanonicalPlayerIdentity] = []
+        first_matches: list[CanonicalPlayerIdentity] = []
+        for player in by_id.values():
+            name_parts = [part for part in player.normalized_name.split() if part]
+            if len(name_parts) < 2:
+                continue
+            if player.active_status.lower() not in {'active', 'a', '1', 'true'}:
+                continue
+            if token == name_parts[-1]:
+                surname_matches.append(player)
+            elif token == name_parts[0]:
+                first_matches.append(player)
+
+        if len(surname_matches) == 1:
+            pick = surname_matches[0]
+            return PlayerResolutionResult(
+                sport,
+                pick.full_name,
+                pick.canonical_player_id,
+                pick.team_name,
+                0.9,
+                identity_source=metadata['identity_source'],
+                identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
+                match_method='single_token_shorthand',
+                confidence_level='MEDIUM',
+            )
+        if len(surname_matches) > 1:
+            names = tuple(sorted(player.full_name for player in surname_matches[:5]))
+            return PlayerResolutionResult(
+                sport,
+                None,
+                None,
+                None,
+                0.55,
+                ambiguity_reason='player identity ambiguous',
+                candidate_players=names,
+                identity_source=metadata['identity_source'],
+                identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
+                match_method='ambiguous',
+                confidence_level='LOW',
+            )
+
+        if len(first_matches) == 1:
+            pick = first_matches[0]
+            return PlayerResolutionResult(
+                sport,
+                pick.full_name,
+                pick.canonical_player_id,
+                pick.team_name,
+                0.82,
+                identity_source=metadata['identity_source'],
+                identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
+                match_method='single_token_first_name',
+                confidence_level='MEDIUM',
+            )
+        if len(first_matches) > 1 and len(token) >= 4:
+            pick = sorted(first_matches, key=lambda item: item.full_name)[0]
+            return PlayerResolutionResult(
+                sport,
+                pick.full_name,
+                pick.canonical_player_id,
+                pick.team_name,
+                0.76,
+                identity_source=metadata['identity_source'],
+                identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
+                match_method='single_token_first_name_heuristic',
+                confidence_level='MEDIUM',
+            )
+
     ranked: list[tuple[float, CanonicalPlayerIdentity]] = []
     for p in by_id.values():
         score = max(
