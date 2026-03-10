@@ -704,3 +704,67 @@ def test_required_nba_players_resolve_with_team() -> None:
         assert resolution is not None
         assert resolution.resolved_team == team
         assert resolution.resolution_confidence >= 0.95
+
+class PlayerAppearanceDisambiguationProvider:
+    def __init__(self) -> None:
+        self._appeared = EventInfo(
+            event_id='nba-2026-03-07-lac-mem',
+            sport='NBA',
+            home_team='Memphis Grizzlies',
+            away_team='LA Clippers',
+            start_time=datetime.fromisoformat('2026-03-08T01:00:00+00:00'),
+        )
+        self._did_not_appear = EventInfo(
+            event_id='nba-2026-03-07-mem-por',
+            sport='NBA',
+            home_team='Portland Trail Blazers',
+            away_team='Memphis Grizzlies',
+            start_time=datetime.fromisoformat('2026-03-08T03:00:00+00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        if team == 'Memphis Grizzlies':
+            return [self._appeared, self._did_not_appear]
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'Scotty Pippen Jr.':
+            return [self._appeared, self._did_not_appear]
+        return []
+
+    def did_player_appear(self, player: str, event_id: str | None = None) -> bool | None:
+        if player != 'Scotty Pippen Jr.':
+            return None
+        if event_id == self._appeared.event_id:
+            return True
+        if event_id == self._did_not_appear.event_id:
+            return False
+        return None
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return None
+
+
+def test_player_appearance_breaks_nba_ambiguity_on_selected_date() -> None:
+    provider = PlayerAppearanceDisambiguationProvider()
+    leg = Leg(
+        raw_text='Scotty Pippen Jr. over 3.5 assists',
+        sport='NBA',
+        market_type='player_assists',
+        player='Scotty Pippen Jr.',
+        direction='over',
+        line=3.5,
+        confidence=0.9,
+    )
+    resolved = resolve_leg_events([leg], provider, posted_at=datetime(2026, 3, 8, tzinfo=timezone.utc), bet_date=date(2026, 3, 7))
+    assert resolved[0].event_id == 'nba-2026-03-07-lac-mem'
+    assert 'multiple games found for resolved team on date' not in resolved[0].notes

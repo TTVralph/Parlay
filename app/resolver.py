@@ -207,6 +207,26 @@ def _infer_same_game_event(
     return event_id if hits >= 2 else None
 
 
+
+
+def _rank_player_candidates_by_appearance(provider: ResultsProvider, player: str, candidates: list[EventInfo]) -> list[EventInfo]:
+    appeared: list[EventInfo] = []
+    unknown: list[EventInfo] = []
+    for event in candidates:
+        try:
+            did_appear = provider.did_player_appear(player, event.event_id)
+        except Exception:
+            did_appear = None
+        if did_appear is True:
+            appeared.append(event)
+        elif did_appear is None:
+            unknown.append(event)
+    if len(appeared) == 1:
+        return appeared
+    if appeared:
+        return appeared + [event for event in candidates if event not in appeared]
+    return unknown or candidates
+
 def _resolution_confidence_for_leg(leg: Leg) -> str:
     if leg.event_id and not leg.event_resolution_warnings:
         return 'high'
@@ -378,6 +398,14 @@ def resolve_leg_events(
             selected_only = [event for event in candidates if event.event_id == selected_for_leg]
             if selected_only:
                 candidates = selected_only
+
+        if leg.player and leg.sport == 'NBA' and len(candidates) > 1:
+            ranked = _rank_player_candidates_by_appearance(provider, str(updates.get('player', leg.player)), candidates)
+            if len(ranked) == 1:
+                candidates = ranked
+                resolution_warnings.append('player_appearance_used')
+            else:
+                candidates = ranked
 
         if resolved_event_ids:
             same_event_phrase = bool(re.search(r'\b(same\s*game\s*parlay|sgp|sgpx)\b', leg.raw_text, re.I))
