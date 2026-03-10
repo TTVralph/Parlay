@@ -305,6 +305,11 @@ def resolve_leg_events(
         identity_source: str | None = None
         identity_last_refreshed_at: str | None = None
         resolved_team_hint: str | None = None
+        selected_player_name: str | None = None
+        selected_player_identity_id: str | None = None
+        selection_source: str | None = None
+        selection_explanation: str | None = None
+        canonical_player_name: str | None = None
         directory_loaded = bool(resolve_player_identity('Nikola Jokic', sport=leg.sport).resolved_player_id) if leg.sport == 'NBA' else True
         normalized_lookup_key = normalize_entity_name(leg.player) if leg.player else None
 
@@ -316,14 +321,15 @@ def resolve_leg_events(
             selected_player = get_canonical_player_identity(selected_player_id, sport=leg.sport)
             resolution = resolve_player_identity(leg.player, sport=leg.sport)
             if selected_player is not None:
-                resolution = resolve_player_identity(selected_player.full_name, sport=leg.sport)
-                updates['player'] = selected_player.full_name
+                selected_player_name = selected_player.full_name
+                selected_player_identity_id = selected_player.id
+                selection_source = 'user_selected'
+                selection_explanation = f'Used user-selected player: {selected_player_name}'
+                resolution = resolve_player_identity(selected_player_name, sport=leg.sport)
                 updates['identity_match_method'] = 'manual_selection'
                 updates['identity_match_confidence'] = 'HIGH'
                 updates['resolution_confidence'] = 1.0
                 notes.append('manual player selection applied')
-            elif resolution.resolved_player_name and leg.player != resolution.resolved_player_name:
-                updates['player'] = resolution.resolved_player_name
             if resolution.resolved_player_id:
                 player_identity_id = resolution.resolved_player_id
                 updates['resolution_confidence'] = updates.get('resolution_confidence') or resolution.confidence
@@ -351,8 +357,9 @@ def resolve_leg_events(
                         for candidate in resolution.candidate_player_details
                     ]
                     notes.append(f"diagnostic: closest_directory_matches={', '.join(resolution.candidate_players)}")
-            player_lookup_name = str(updates.get('player', leg.player))
+            player_lookup_name = selected_player_name or resolution.resolved_player_name or leg.player
             resolved_player_name = player_lookup_name
+            canonical_player_name = resolved_player_name
             player_team = _resolve_player_team(provider, player_lookup_name, leg.sport, anchor, include_historical)
             notes.append(f'diagnostic: parsed_player_name={leg.player}')
             notes.append(f'diagnostic: normalized_player_lookup_key={normalized_lookup_key}')
@@ -369,7 +376,7 @@ def resolve_leg_events(
             candidates = _team_candidates(provider, leg.team, anchor, include_historical=include_historical)
             updates['matched_by'] = 'team_schedule_lookup'
         elif leg.player:
-            player_lookup_name = str(updates.get('player', leg.player))
+            player_lookup_name = resolved_player_name or leg.player
             if leg.sport == 'NBA' and explicit_slip_date is not None:
                 resolved_game = resolve_player_game(player_lookup_name, explicit_slip_date.isoformat(), provider=provider)
                 if resolved_game is not None:
@@ -441,7 +448,7 @@ def resolve_leg_events(
                 candidates = selected_only
 
         if leg.player and leg.sport == 'NBA' and len(candidates) > 1:
-            ranked = _rank_player_candidates_by_appearance(provider, str(updates.get('player', leg.player)), candidates)
+            ranked = _rank_player_candidates_by_appearance(provider, resolved_player_name or leg.player, candidates)
             if len(ranked) == 1:
                 candidates = ranked
                 resolution_warnings.append('player_appearance_used')
@@ -459,6 +466,11 @@ def resolve_leg_events(
         updates['normalized_stat_type'] = leg.normalized_stat_type or leg.market_type
         updates['resolved_player_name'] = resolved_player_name
         updates['resolved_player_id'] = player_identity_id
+        updates['selected_player_name'] = selected_player_name
+        updates['selected_player_id'] = selected_player_identity_id
+        updates['selection_source'] = selection_source or ('auto' if resolved_player_name else None)
+        updates['selection_explanation'] = selection_explanation
+        updates['canonical_player_name'] = canonical_player_name
         updates['resolved_team'] = player_team
         updates['identity_source'] = identity_source
         updates['identity_last_refreshed_at'] = identity_last_refreshed_at
