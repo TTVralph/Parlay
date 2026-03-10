@@ -936,6 +936,7 @@ def public_check_page() -> HTMLResponse:
   <textarea id='slip' placeholder='Jokic over 24.5 points
 Denver ML
 Murray over 2.5 threes'></textarea>
+  <div id='nameSuggestions' style='display:none;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;'></div>
   <input id='stakeAmount' type='number' min='0.01' step='0.01' placeholder='Stake amount (optional)' style='margin-top:10px;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;box-sizing:border-box;'>
   <label for='slipDate' style='display:block;margin-top:10px;font-weight:700;'>Bet Date</label>
   <input id='slipDate' type='date' placeholder='Bet Date (optional, recommended)' style='margin-top:6px;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;box-sizing:border-box;'>
@@ -993,6 +994,7 @@ Murray over 2.5 threes'></textarea>
     const downloadCardBtn=document.getElementById('downloadCardBtn');
     const shareCardCanvas=document.getElementById('shareCardCanvas');
     const msg=document.getElementById('message');
+    const nameSuggestions=document.getElementById('nameSuggestions');
     const actionStatus=document.getElementById('actionStatus');
     const wrap=document.getElementById('resultWrap');
     const overall=document.getElementById('overall');
@@ -1010,6 +1012,7 @@ Murray over 2.5 threes'></textarea>
     let latestResultPayload=null;
     let screenshotNeedsParse=false;
     let parsedScreenshotSignature=null;
+    let latestPlayerSuggestions=[];
 
     function getScreenshotSignature(file){
       if(!file){return null;}
@@ -1037,6 +1040,8 @@ Murray over 2.5 threes'></textarea>
       screenshotNeedsParse=false;
       parsedScreenshotSignature=null;
       if(!keepMessage){ msg.textContent=''; }
+      latestPlayerSuggestions=[];
+      renderNameSuggestions();
       if((debugOut.textContent||'').includes('OCR extracted text:')){ debugOut.innerHTML=''; }
     }
 
@@ -1268,6 +1273,53 @@ Murray over 2.5 threes'></textarea>
       return lines.join('\\n');
     }
 
+
+    function escapeHtml(text){
+      return String(text||'').replace(/[&<>"]/g,(ch)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]||ch));
+    }
+
+    function applyNameSuggestion(legIndex){
+      const suggestion=latestPlayerSuggestions.find((item)=>item.legIndex===legIndex);
+      if(!suggestion){return;}
+      const lines=slip.value.split('\n');
+      if(!lines[legIndex]){return;}
+      lines[legIndex]=lines[legIndex].replace(suggestion.fromName,suggestion.toName);
+      slip.value=lines.join('\n');
+      latestPlayerSuggestions=latestPlayerSuggestions.filter((item)=>item.legIndex!==legIndex);
+      renderNameSuggestions();
+    }
+
+    function renderNameSuggestions(){
+      if(!latestPlayerSuggestions.length){
+        nameSuggestions.style.display='none';
+        nameSuggestions.innerHTML='';
+        return;
+      }
+      const rows=latestPlayerSuggestions.map((item)=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;"><div><strong>Did you mean ${escapeHtml(item.toName)}?</strong><div style="font-size:12px;color:#475569;">Parsed as <code>${escapeHtml(item.fromName)}</code> (${item.confidenceLevel} confidence)</div></div><button type="button" class="secondary" data-apply-leg="${item.legIndex}">Apply</button></div>`).join('');
+      nameSuggestions.innerHTML=`<div style="font-size:13px;color:#334155;margin-bottom:8px;">Player name suggestions</div>${rows}`;
+      nameSuggestions.style.display='block';
+      nameSuggestions.querySelectorAll('[data-apply-leg]').forEach((btn)=>{
+        btn.addEventListener('click',()=>applyNameSuggestion(Number(btn.getAttribute('data-apply-leg'))));
+      });
+    }
+
+    function collectPlayerNameSuggestions(parsedLegObjects){
+      latestPlayerSuggestions=[];
+      parsedLegObjects.forEach((leg,idx)=>{
+        if(!leg||!leg.suggested_player_name){return;}
+        if(leg.suggestion_auto_applied){return;}
+        const fromName=leg.raw_player_text||leg.player_name;
+        if(!fromName||fromName===leg.suggested_player_name){return;}
+        latestPlayerSuggestions.push({
+          legIndex:idx,
+          fromName,
+          toName:leg.suggested_player_name,
+          confidenceLevel:leg.suggestion_confidence_level||'MEDIUM',
+        });
+      });
+      renderNameSuggestions();
+    }
+
     function normalizeScreenshotPayload(body){
       const parsedFromScreenshot=body.parsed_screenshot||{};
       const parsedLegObjects=parsedFromScreenshot.parsed_legs||[];
@@ -1358,7 +1410,9 @@ Murray over 2.5 threes'></textarea>
           const body=await res.json();
           if(!res.ok){msg.textContent=body.detail||body.message||'Could not parse this screenshot right now.';return;}
           const parsed=body.parsed_screenshot||{};
-          const parsedLegs=(parsed.parsed_legs||[]).map((item)=>item.normalized_label||item.raw_leg_text).filter(Boolean);
+          const parsedLegObjects=parsed.parsed_legs||[];
+          const parsedLegs=parsedLegObjects.map((item)=>item.normalized_label||item.raw_leg_text).filter(Boolean);
+          collectPlayerNameSuggestions(parsedLegObjects);
           if(parsedLegs.length){slip.value=parsedLegs.join('\\n');}
           else if(body.cleaned_text){slip.value=body.cleaned_text;}
           if(!slipDate.value&&parsed.detected_bet_date){slipDate.value=parsed.detected_bet_date;}
@@ -1370,6 +1424,8 @@ Murray over 2.5 threes'></textarea>
           return;
         }else{
           clearScreenshotSelection({keepMessage:true});
+          latestPlayerSuggestions=[];
+          renderNameSuggestions();
           const stakeRaw=(stakeAmount.value||'').trim();
           const payload={text};
           if(stakeRaw){payload.stake_amount=stakeRaw;}

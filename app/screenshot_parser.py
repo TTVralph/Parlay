@@ -2,15 +2,10 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from difflib import SequenceMatcher
-from functools import lru_cache
-import json
-from pathlib import Path
 
 from .models import Leg, ParsedScreenshotLeg, ParsedScreenshotResponse
 from .parser import parse_text
-from .player_identity import resolve_player_resolution
-from .services.identity_normalizer import normalize_person_name
+from .services.player_name_suggester import suggest_player_name
 
 _DATE_PATTERNS = (
     re.compile(r'\b(?P<m>\d{1,2})/(?P<d>\d{1,2})/(?P<y>20\d{2})\b'),
@@ -104,23 +99,6 @@ _DIRECTION_LINE_ONLY = re.compile(r'^(?P<dir>O|U|Over|Under)\s*(?P<line>\d+(?:\.
 _MARKET_ONLY_LINE = re.compile(r'^(?P<market>Pts|Points|Reb|Rebs|Rebounds|Ast|Asts|Assists|PRA|Pts\s*\+\s*Ast|Pts\s*\+\s*Reb|Reb\s*\+\s*Ast|3PM|3PT|Threes|Three\s+Pointers)$', re.I)
 
 
-@lru_cache(maxsize=1)
-def _nba_canonical_names() -> tuple[str, ...]:
-    directory_path = Path(__file__).resolve().parent / 'data' / 'nba_players_directory.json'
-    try:
-        payload = json.loads(directory_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return ()
-    players = payload.get('players', []) if isinstance(payload, dict) else []
-    if not isinstance(players, list):
-        return ()
-    return tuple(
-        str(player.get('full_name') or '').strip()
-        for player in players
-        if isinstance(player, dict) and str(player.get('full_name') or '').strip()
-    )
-
-
 def _is_noise_line(line: str) -> bool:
     lowered = line.lower()
     if any(noise in lowered for noise in _NOISE_KEYWORDS):
@@ -147,32 +125,8 @@ def _normalize_line_text(line: str) -> str:
     return re.sub(r'\s+', ' ', normalized).strip()
 
 
-def _maybe_fix_player_name(name: str) -> str:
-    resolution = resolve_player_resolution(name, sport='NBA')
-    normalized_input = normalize_person_name(name)
-    if resolution and resolution.resolution_confidence >= 0.97:
-        normalized_resolved = normalize_person_name(resolution.resolved_player_name)
-        similarity = SequenceMatcher(None, normalized_input, normalized_resolved).ratio()
-        if similarity >= 0.72:
-            return resolution.resolved_player_name
-
-    best_name = name
-    best_score = 0.0
-    input_parts = normalized_input.split()
-    for candidate in _nba_canonical_names():
-        normalized_candidate = normalize_person_name(candidate)
-        candidate_parts = normalized_candidate.split()
-        if len(input_parts) >= 2 and len(candidate_parts) >= 2 and input_parts[-1] != candidate_parts[-1]:
-            continue
-        score = SequenceMatcher(None, normalized_input, normalized_candidate).ratio()
-        if score > best_score:
-            best_name = candidate
-            best_score = score
-    return best_name if best_score >= 0.83 else name
-
-
 def _format_ou_leg(name: str, direction: str, line: str, market: str) -> str:
-    clean_name = _maybe_fix_player_name(_title_name(name))
+    clean_name = _title_name(name)
     clean_market = _normalize_market_label(market).title()
     clean_direction = 'Over' if direction.lower() in {'o', 'over'} else 'Under'
     return f'{clean_name} {clean_direction} {line} {clean_market}'
@@ -190,7 +144,7 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
     for line in cleaned_lines:
         inline_yes_no = _INLINE_YES_NO_LINE.match(line)
         if inline_yes_no:
-            name = _maybe_fix_player_name(_title_name(inline_yes_no.group('name')))
+            name = _title_name(inline_yes_no.group('name'))
             market = re.sub(r'\s+', ' ', inline_yes_no.group('market')).replace('-', ' ').title()
             selection = inline_yes_no.group('sel').title()
             normalized.append(f'{name} {market} {selection}')
@@ -205,7 +159,7 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
                 inline_ou.group('line'),
                 inline_ou.group('market'),
             ))
-            current_player = _maybe_fix_player_name(_title_name(inline_ou.group('name')))
+            current_player = _title_name(inline_ou.group('name'))
             continue
 
         direction_only = _DIRECTION_LINE_ONLY.match(line)
@@ -252,7 +206,7 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
             continue
 
         if _PLAYER_ONLY_LINE.match(line) and not _MARKET_FOLLOWUP_LINE.match(line):
-            current_player = _maybe_fix_player_name(_title_name(line))
+            current_player = _title_name(line)
             pending_yes_no_name = current_player
             pending_yes_no_market = None
             pending_yes_no_selection = None
@@ -329,6 +283,32 @@ def _detect_bet_date(text: str) -> str | None:
     return None
 
 
+def _apply_player_name_suggestion(parsed: ParsedScreenshotLeg) -> ParsedScreenshotLeg:
+    raw_player = parsed.raw_player_text or parsed.player_name
+    suggestion = suggest_player_name(raw_player, sport='NBA') if raw_player else None
+    if not suggestion:
+        return parsed
+
+    normalized_label = parsed.normalized_label
+    if suggestion.auto_applied:
+        replacement_target = parsed.raw_player_text or parsed.player_name or ''
+        if replacement_target and replacement_target in normalized_label:
+            normalized_label = normalized_label.replace(replacement_target, suggestion.suggested_name, 1)
+        elif parsed.player_name and parsed.player_name in normalized_label:
+            normalized_label = normalized_label.replace(parsed.player_name, suggestion.suggested_name, 1)
+        else:
+            stat_fragment = parsed.stat_type.title() if parsed.stat_type else ''
+            if parsed.direction and parsed.line is not None and stat_fragment:
+                normalized_label = f"{suggestion.suggested_name} {parsed.direction.title()} {parsed.line:g} {stat_fragment}"
+        parsed.player_name = suggestion.suggested_name
+
+    parsed.suggested_player_name = suggestion.suggested_name
+    parsed.suggestion_confidence = suggestion.confidence_score
+    parsed.suggestion_confidence_level = suggestion.confidence_level
+    parsed.suggestion_auto_applied = suggestion.auto_applied
+    return parsed
+
+
 def _leg_to_parsed(leg: Leg) -> ParsedScreenshotLeg:
     player_name = leg.player
     stat_type = _STAT_LABELS.get(leg.market_type)
@@ -341,6 +321,7 @@ def _leg_to_parsed(leg: Leg) -> ParsedScreenshotLeg:
         normalized_label = f"{player_name} {direction.title()} {line:g} {stat_type.title()}"
     return ParsedScreenshotLeg(
         raw_leg_text=leg.raw_text,
+        raw_player_text=leg.parsed_player_name or leg.player,
         player_name=player_name,
         stat_type=stat_type,
         line=line,
@@ -359,7 +340,7 @@ def parse_screenshot_text(raw_text: str, cleaned_text: str) -> ParsedScreenshotR
     parsed_legs: list[ParsedScreenshotLeg] = []
     seen: set[str] = set()
     for leg in legs:
-        parsed = _leg_to_parsed(leg)
+        parsed = _apply_player_name_suggestion(_leg_to_parsed(leg))
         key = parsed.normalized_label.lower().strip()
         if key in seen:
             continue
@@ -378,6 +359,10 @@ def parse_screenshot_text(raw_text: str, cleaned_text: str) -> ParsedScreenshotR
             continue
         if leg.confidence < 0.75:
             parse_warnings.append(f"Review suggested for leg: {leg.raw_text}")
+        if parsed.suggested_player_name and parsed.suggestion_auto_applied:
+            parse_warnings.append(
+                f"Auto-corrected player name: {parsed.raw_player_text} → {parsed.suggested_player_name}"
+            )
         parsed_legs.append(parsed)
 
     if not parsed_legs:
