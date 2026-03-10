@@ -113,3 +113,41 @@ def test_check_page_reset_selection_button_is_clickable() -> None:
     assert 'if(nextState.wasManuallySelected)' in html
     assert 'originalCandidateEvents' in html
     assert 'originalReviewReason' in html
+
+
+def test_check_page_share_actions_have_explicit_success_and_failure_feedback():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "id='actionStatus'" in html
+    assert 'Summary copied.' in html
+    assert 'Public link copied.' in html
+    assert 'Share card downloaded.' in html
+    assert 'Copy blocked. Summary selected for manual copy.' in html
+    assert 'Unable to copy automatically. Public URL:' in html
+    assert 'Could not generate share card image. Please try again.' in html
+
+
+def test_check_page_share_card_limits_long_slips_and_adds_footer():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert 'const maxLegsOnCard=8;' in html
+    assert 'const hiddenCount=Math.max(0,allLegs.length-shownLegs.length);' in html
+    assert "drawWrappedLine(`+${hiddenCount} more legs`" in html
+
+
+def test_public_parlay_page_layout_supports_long_wrapped_leg_content():
+    client = TestClient(app)
+    resp = client.post('/check-slip', json={'text': '\n'.join(['Denver ML'] * 9)})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['ok'] is True
+    page = client.get(body['public_url'])
+    assert page.status_code == 200
+    assert 'overflow-wrap:anywhere' in page.text
+    assert 'table-layout:fixed' in page.text
+    assert 'Leg Results (9)' in page.text
+

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from html import escape
 import json
 import logging
 import os
+import re
 import threading
 import time
 from uuid import uuid4
@@ -293,6 +295,24 @@ _public_check_rate_limit_hits: dict[str, list[float]] = {}
 _public_check_jobs_lock = threading.Lock()
 _public_check_jobs: dict[str, dict] = {}
 _public_check_provider = ESPNNBAResultsProvider()
+_PUBLIC_SLIP_ID_PATTERN = re.compile(r'^[a-z0-9]{8,16}$')
+
+
+def _has_persistable_public_result(result: dict) -> bool:
+    if not result.get('ok'):
+        return False
+    parsed_legs = [str(item).strip() for item in result.get('parsed_legs', []) if str(item).strip()]
+    if not parsed_legs:
+        return False
+    legs = result.get('legs', [])
+    if not isinstance(legs, list) or not legs:
+        return False
+    for leg in legs:
+        if not isinstance(leg, dict):
+            return False
+        if not str(leg.get('leg', '')).strip():
+            return False
+    return True
 
 
 def _cleanup_public_check_jobs() -> None:
@@ -881,6 +901,10 @@ def public_check_page() -> HTMLResponse:
     body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:900px;color:#0f172a;}
     h1{margin-bottom:8px;}
     p{color:#475569;}
+    .status{margin-top:8px;padding:10px 12px;border-radius:10px;font-weight:600;display:none;}
+    .status.show{display:block;}
+    .status.success{background:#ecfdf3;color:#166534;border:1px solid #bbf7d0;}
+    .status.error{background:#fef2f2;color:#991b1b;border:1px solid #fecaca;}
     textarea{width:100%;min-height:190px;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-family:inherit;box-sizing:border-box;}
     button{margin-top:12px;padding:10px 14px;border:1px solid #334155;border-radius:10px;background:#0f172a;color:#fff;cursor:pointer;}
     button[disabled]{opacity:.6;cursor:not-allowed;}
@@ -927,6 +951,7 @@ Murray over 2.5 threes'></textarea>
   <button id='checkBtn' type='submit'>Check Slip</button>
   </form>
   <div id='message'></div>
+  <div id='actionStatus' class='status' role='status' aria-live='polite'></div>
   <div id='resultWrap' hidden>
     <div id='overall'></div>
     <div id='payoutOut' style='margin:8px 0;color:#334155;'></div>
@@ -966,6 +991,7 @@ Murray over 2.5 threes'></textarea>
     const downloadCardBtn=document.getElementById('downloadCardBtn');
     const shareCardCanvas=document.getElementById('shareCardCanvas');
     const msg=document.getElementById('message');
+    const actionStatus=document.getElementById('actionStatus');
     const wrap=document.getElementById('resultWrap');
     const overall=document.getElementById('overall');
     const payoutOut=document.getElementById('payoutOut');
@@ -980,6 +1006,16 @@ Murray over 2.5 threes'></textarea>
     let legUiStateByLegId={};
     let latestPublicUrl='';
     let latestResultPayload=null;
+
+    function showActionStatus(text,type='success'){
+      actionStatus.textContent=text;
+      actionStatus.className=`status show ${type}`;
+    }
+
+    function clearActionStatus(){
+      actionStatus.textContent='';
+      actionStatus.className='status';
+    }
 
     function resetManualSelectionState(){
       selectedGameByLegId={};
@@ -1316,6 +1352,7 @@ Murray over 2.5 threes'></textarea>
         downloadCardBtn.disabled=true;
         latestPublicUrl='';
         latestResultPayload=null;
+        clearActionStatus();
         overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');
         if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){
           payoutOut.textContent=`Estimated payout: $${Number(data.estimated_payout).toFixed(2)} (profit: $${Number(data.estimated_profit).toFixed(2)})`;
@@ -1364,48 +1401,113 @@ Murray over 2.5 threes'></textarea>
 
     function drawShareCard(payload){
       const ctx=shareCardCanvas.getContext('2d');
-      ctx.fillStyle='#f8fafc'; ctx.fillRect(0,0,shareCardCanvas.width,shareCardCanvas.height);
-      ctx.fillStyle='#0f172a'; ctx.font='bold 52px Arial'; ctx.fillText('ParlayBot Check',60,90);
-      ctx.font='bold 44px Arial'; ctx.fillText('Parlay: '+(overallLabel[payload.parlay_result]||'NEEDS REVIEW'),60,160);
-      ctx.font='32px Arial';
+      if(!ctx){ throw new Error('Share card canvas unavailable.'); }
+      const cardWidth=shareCardCanvas.width;
+      const cardHeight=shareCardCanvas.height;
+      const maxLegsOnCard=8;
+      const horizontalPadding=60;
+      const lineHeight=40;
+      const maxTextWidth=cardWidth-(horizontalPadding*2);
+      const allLegs=Array.isArray(payload.legs)?payload.legs:[];
+      const shownLegs=allLegs.slice(0,maxLegsOnCard);
+      const hiddenCount=Math.max(0,allLegs.length-shownLegs.length);
+
+      function drawWrappedLine(text,startY,font='30px Arial'){
+        ctx.font=font;
+        const words=String(text||'—').split(/\s+/).filter(Boolean);
+        if(!words.length){
+          ctx.fillText('—',horizontalPadding,startY);
+          return startY+lineHeight;
+        }
+        let current='';
+        let y=startY;
+        for(const word of words){
+          const candidate=current?`${current} ${word}`:word;
+          if(ctx.measureText(candidate).width<=maxTextWidth){
+            current=candidate;
+            continue;
+          }
+          if(current){
+            ctx.fillText(current,horizontalPadding,y);
+            y+=lineHeight;
+          }
+          current=word;
+        }
+        if(current){
+          ctx.fillText(current,horizontalPadding,y);
+          y+=lineHeight;
+        }
+        return y;
+      }
+
+      ctx.fillStyle='#f8fafc'; ctx.fillRect(0,0,cardWidth,cardHeight);
+      ctx.fillStyle='#0f172a'; ctx.font='bold 52px Arial'; ctx.fillText('ParlayBot Check',horizontalPadding,90);
+      ctx.font='bold 44px Arial'; ctx.fillText('Parlay: '+(overallLabel[payload.parlay_result]||'NEEDS REVIEW'),horizontalPadding,160);
+
       let y=230;
-      for(const leg of (payload.legs||[]).slice(0,10)){
-        const line=`${leg.leg} ${resultEmoji[leg.result]||'🧐'}`;
-        ctx.fillText(line.slice(0,64),60,y);
-        y+=54;
+      for(const leg of shownLegs){
+        const line=`${leg.leg||'—'} ${resultEmoji[leg.result]||'🧐'}`;
+        y=drawWrappedLine(line,y,'30px Arial');
+        y+=6;
+      }
+      if(hiddenCount>0){
+        ctx.font='bold 28px Arial';
+        ctx.fillStyle='#475569';
+        y=drawWrappedLine(`+${hiddenCount} more legs`,Math.min(y+12,cardHeight-130),'bold 28px Arial');
+        ctx.fillStyle='#0f172a';
       }
       ctx.font='24px Arial';
-      ctx.fillText(`Checked: ${new Date().toLocaleString()}`,60,shareCardCanvas.height-50);
+      ctx.fillText(`Checked: ${new Date().toLocaleString()}`,horizontalPadding,cardHeight-50);
     }
 
     copyLinkBtn.addEventListener('click',async()=>{
-      if(!latestPublicUrl){return;}
+      if(!latestPublicUrl){
+        showActionStatus('No public link is available for this result.','error');
+        return;
+      }
       const full=window.location.origin+latestPublicUrl;
-      try{await navigator.clipboard.writeText(full); msg.textContent='Public link copied.';}catch(err){msg.textContent=full;}
+      try{
+        await navigator.clipboard.writeText(full);
+        showActionStatus('Public link copied.','success');
+      }catch(err){
+        showActionStatus(`Unable to copy automatically. Public URL: ${full}`,'error');
+      }
     });
     openLinkBtn.addEventListener('click',()=>{
       if(!latestPublicUrl){return;}
       window.open(latestPublicUrl,'_blank','noopener');
     });
     downloadCardBtn.addEventListener('click',()=>{
-      if(!latestResultPayload){return;}
-      drawShareCard(latestResultPayload);
-      const a=document.createElement('a');
-      a.href=shareCardCanvas.toDataURL('image/png');
-      a.download='parlaybot-share-card.png';
-      a.click();
+      if(!latestResultPayload){
+        showActionStatus('Run a slip check before exporting a share card.','error');
+        return;
+      }
+      try{
+        drawShareCard(latestResultPayload);
+        const a=document.createElement('a');
+        a.href=shareCardCanvas.toDataURL('image/png');
+        a.download='parlaybot-share-card.png';
+        a.click();
+        showActionStatus('Share card downloaded.','success');
+      }catch(err){
+        console.error('Share card export failed:',err);
+        showActionStatus('Could not generate share card image. Please try again.','error');
+      }
     });
 
     copyBtn.addEventListener('click',async()=>{
       const text=summaryOut.value.trim();
-      if(!text){return;}
+      if(!text){
+        showActionStatus('No summary available yet.','error');
+        return;
+      }
       try{
         await navigator.clipboard.writeText(text);
-        msg.textContent='Summary copied.';
+        showActionStatus('Summary copied.','success');
       }catch(err){
         summaryOut.focus();
         summaryOut.select();
-        msg.textContent='Copy blocked. Summary selected for manual copy.';
+        showActionStatus('Copy blocked. Summary selected for manual copy.','error');
       }
     });
   </script>
@@ -1656,7 +1758,7 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
         selected_event_id=(str(payload.get('selected_event_id') or '').strip() or None),
         selected_event_by_leg_id=selected_event_by_leg_id,
     )
-    if result.get('ok'):
+    if _has_persistable_public_result(result):
         bet_dt = datetime.combine(parsed_date, datetime.min.time()) if parsed_date else None
         saved = save_public_slip_result(
             db,
@@ -1721,9 +1823,36 @@ def get_public_check_job(job_id: str) -> CheckJobStatusResponse:
 
 @app.get('/parlay/{public_id}', response_class=HTMLResponse)
 def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> HTMLResponse:
-    row = get_public_slip_result(db, public_id)
+    normalized_public_id = public_id.strip().lower()
+    if not _PUBLIC_SLIP_ID_PATTERN.fullmatch(normalized_public_id):
+        html = (
+            "<!doctype html><html><head><title>ParlayBot Result</title>"
+            "<style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:860px;color:#0f172a;}"
+            ".card{border:1px solid #e2e8f0;border-radius:12px;padding:18px;background:#fff;}"
+            ".notice{margin-top:12px;padding:12px;border-radius:10px;background:#fef2f2;color:#991b1b;border:1px solid #fecaca;}"
+            "a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;display:inline-block;margin-top:16px;}"
+            ".cta{background:#0f172a;color:#fff;}</style></head><body>"
+            "<h1>ParlayBot Result</h1><div class='card'><h2>We couldn't open that shared slip.</h2>"
+            "<div class='notice'>The public ID format is invalid. Please verify the link and try again.</div>"
+            "<a class='cta' href='/check'>Check a new slip</a></div></body></html>"
+        )
+        return HTMLResponse(html, status_code=404)
+
+    row = get_public_slip_result(db, normalized_public_id)
     if not row:
-        raise HTTPException(status_code=404, detail='Parlay result not found')
+        html = (
+            "<!doctype html><html><head><title>ParlayBot Result</title>"
+            "<style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:860px;color:#0f172a;}"
+            ".card{border:1px solid #e2e8f0;border-radius:12px;padding:18px;background:#fff;}"
+            ".notice{margin-top:12px;padding:12px;border-radius:10px;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;}"
+            "a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;display:inline-block;margin-top:16px;}"
+            ".cta{background:#0f172a;color:#fff;}</style></head><body>"
+            "<h1>ParlayBot Result</h1><div class='card'><h2>This public slip was not found.</h2>"
+            "<div class='notice'>It may have expired, been removed, or the link may be incomplete.</div>"
+            "<a class='cta' href='/check'>Check a new slip</a></div></body></html>"
+        )
+        return HTMLResponse(html, status_code=404)
+
     legs = json.loads(row.legs_json or '[]')
     matched_events = json.loads(row.matched_events_json or '[]')
     checked_at = row.created_at.isoformat() if row.created_at else 'Unknown'
@@ -1733,24 +1862,41 @@ def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> 
     for leg in legs:
         reason = leg.get('review_reason_text') or leg.get('review_reason') or leg.get('settlement_reason_text') or '—'
         leg_rows.append(
-            f"<tr><td>{leg.get('leg','—')}</td><td>{emoji.get(leg.get('result'),'🧐')} {(leg.get('result') or 'review').upper()}</td><td>{leg.get('matched_event') or '—'}</td><td>{reason}</td></tr>"
+            "<tr>"
+            f"<td>{escape(str(leg.get('leg', '—')))}</td>"
+            f"<td>{emoji.get(leg.get('result'), '🧐')} {escape((leg.get('result') or 'review').upper())}</td>"
+            f"<td>{escape(str(leg.get('matched_event') or '—'))}</td>"
+            f"<td>{escape(str(reason))}</td>"
+            "</tr>"
         )
-    events_html = ''.join(f"<li>{event}</li>" for event in matched_events) or '<li>—</li>'
+
+    if not leg_rows:
+        leg_rows.append("<tr><td colspan='4'>No leg details were available for this shared result.</td></tr>")
+
+    events_html = ''.join(f"<li>{escape(str(event))}</li>" for event in matched_events) or '<li>—</li>'
     stake_text = f"${row.stake_amount:.2f}" if row.stake_amount is not None else '—'
     bet_date_text = row.bet_date.date().isoformat() if row.bet_date else '—'
     html = (
         "<!doctype html><html><head><title>ParlayBot Result</title>"
-        "<style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:980px;color:#0f172a;}"
-        ".card{border:1px solid #e2e8f0;border-radius:12px;padding:14px;background:#fff;}"
-        "table{width:100%;border-collapse:collapse;margin-top:10px;}"
-        "th,td{text-align:left;padding:8px;border-bottom:1px solid #e2e8f0;vertical-align:top;}"
+        "<style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:1100px;color:#0f172a;line-height:1.45;}"
+        ".card{border:1px solid #e2e8f0;border-radius:12px;padding:18px;background:#fff;}"
+        ".meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px 16px;margin:10px 0 14px;}"
+        ".tableWrap{overflow-x:auto;border:1px solid #e2e8f0;border-radius:10px;}"
+        "table{width:100%;border-collapse:collapse;table-layout:fixed;}"
+        "th,td{text-align:left;padding:10px;border-bottom:1px solid #e2e8f0;vertical-align:top;white-space:normal;overflow-wrap:anywhere;word-break:break-word;}"
         "th{font-size:12px;text-transform:uppercase;color:#64748b;}"
-        "a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;display:inline-block;}"
-        ".cta{background:#0f172a;color:#fff;}</style></head><body>"
+        "th:nth-child(1),td:nth-child(1){width:42%;}"
+        "th:nth-child(2),td:nth-child(2){width:14%;}"
+        "th:nth-child(3),td:nth-child(3){width:24%;}"
+        "th:nth-child(4),td:nth-child(4){width:20%;}"
+        "ul{padding-left:20px;margin-top:8px;}li{margin-bottom:6px;overflow-wrap:anywhere;}"
+        "a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;display:inline-block;margin-top:16px;}"
+        ".cta{background:#0f172a;color:#fff;}"
+        "</style></head><body>"
         f"<h1>ParlayBot Result</h1><div class='card'><div><strong>Overall:</strong> {result_label}</div>"
-        f"<div><strong>Public ID:</strong> {row.public_id}</div><div><strong>Parser confidence:</strong> {row.parser_confidence or 'low'}</div>"
-        f"<div><strong>Bet date:</strong> {bet_date_text}</div><div><strong>Stake:</strong> {stake_text}</div><div><strong>Checked at:</strong> {checked_at}</div>"
-        f"<h3>Leg Results</h3><table><thead><tr><th>Leg</th><th>Result</th><th>Matched Event</th><th>Review Reason</th></tr></thead><tbody>{''.join(leg_rows)}</tbody></table>"
+        f"<div class='meta'><div><strong>Public ID:</strong> {escape(row.public_id)}</div><div><strong>Parser confidence:</strong> {escape(row.parser_confidence or 'low')}</div>"
+        f"<div><strong>Bet date:</strong> {bet_date_text}</div><div><strong>Stake:</strong> {stake_text}</div><div><strong>Checked at:</strong> {escape(checked_at)}</div></div>"
+        f"<h3>Leg Results ({len(legs)})</h3><div class='tableWrap'><table><thead><tr><th>Leg</th><th>Result</th><th>Matched Event</th><th>Review Reason</th></tr></thead><tbody>{''.join(leg_rows)}</tbody></table></div>"
         f"<h3>Matched Events</h3><ul>{events_html}</ul></div><div style='margin-top:16px;'><a class='cta' href='/check'>Check another slip</a></div></body></html>"
     )
     return HTMLResponse(html)
