@@ -20,7 +20,7 @@ def test_check_page_has_loading_state_and_friendly_layout():
     assert "id='debugOut'" in html
     assert 'OCR extracted text:' in html
     assert 'Parsed legs before grading:' in html
-    assert 'No valid bet legs were detected from this input.' in html
+    assert 'No valid betting legs detected.' in html
 
 
 def test_check_slip_returns_graded_legs_with_event_and_overall():
@@ -55,7 +55,7 @@ def test_check_page_supports_screenshot_upload_flow():
     html = page.text
     assert "id='slipImage'" in html
     assert "accept='image/*'" in html
-    assert "fetch('/ingest/screenshot/grade'" in html
+    assert "const screenshotGradeEndpoint='/ingest/screenshot/grade'" in html
     assert 'normalizeScreenshotPayload' in html
     assert 'grading_warning' in html
     assert 'parse_warning' in html

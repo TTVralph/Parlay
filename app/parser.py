@@ -9,12 +9,23 @@ from .services.market_registry import canonical_to_player_market, normalize_mark
 from .player_identity import resolve_player_resolution
 
 ALT_PATTERN = re.compile(r"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+$", re.I)
+MARKET_PATTERN = (
+    r"pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|"
+    r"reb\s*\+\s*ast|rebs\s*\+\s*asts|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|"
+    r"pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|"
+    r"pts|points|reb|rebs|rebounds|ast|asts|assists|stl|steals|blk|blocks|tov|turnovers|"
+    r"p\+r\+a|pts\+reb\+ast|points rebounds assists|pts reb ast|p\+r|pts\+reb|points rebounds|"
+    r"p\+a|pts\+ast|points assists|r\+a|reb\+ast|rebounds assists|"
+    r"3s|3pm|3 ptm|3pt made|3ptm|threes|three pointers|three-pointers|threes made|"
+    r"3 pointers made|3-pointers made|three pointers made|three-point field goals made|three point field goals made|"
+    r"pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits"
+)
 OVER_UNDER_PATTERN = re.compile(
-    r"^(?P<name>[\w .\-'’]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|stl|steals|blk|blocks|tov|turnovers|p\+r\+a|pts\+reb\+ast|points rebounds assists|pts reb ast|p\+r|pts\+reb|points rebounds|p\+a|pts\+ast|points assists|r\+a|reb\+ast|rebounds assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)?$",
+    rf"^(?P<name>[\w .\-'’]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>{MARKET_PATTERN})?$",
     re.I,
 )
 NAMED_MARKET_PATTERN = re.compile(
-    r"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>pts\s*\+\s*ast|points\s*\+\s*assists|pts\s*\+\s*reb|points\s*\+\s*rebounds|reb\s*\+\s*ast|rebounds\s*\+\s*assists|pra|points\s*\+\s*rebounds\s*\+\s*assists|pr|points\s*\+\s*rebounds|pa|points\s*\+\s*assists|ra|rebounds\s*\+\s*assists|pts|points|reb|rebounds|ast|assists|stl|steals|blk|blocks|tov|turnovers|p\+r\+a|pts\+reb\+ast|points rebounds assists|pts reb ast|p\+r|pts\+reb|points rebounds|p\+a|pts\+ast|points assists|r\+a|reb\+ast|rebounds assists|3s|3pm|threes|threes made|3pt made|three pointers made|3 pointers made|3-pointers made|three-point field goals made|three point field goals made|pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits)$",
+    rf"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>{MARKET_PATTERN})$",
     re.I,
 )
 ML_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+ml$', re.I)
@@ -163,8 +174,8 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             direction = 'over' if direction_token in {'o', 'over'} else 'under'
             line_value = float(ou_match.group('line'))
             sport = _infer_sport(player=player, sport_hint=line_sport_hint)
-            parse_confidence = 0.92 if market_type else 0.55
-            confidence = max(parse_confidence, resolution_conf if resolved_player else 0.82)
+            parse_confidence = (1.0 + 1.0 + (1.0 if market_type else 0.0) + (1.0 if resolved_player else 0.7)) / 4.0
+            confidence = max(parse_confidence, resolution_conf if resolved_player else parse_confidence)
             notes = list(opponent_note)
             if not market_type:
                 notes.append('Could not parse stat type')
@@ -187,11 +198,11 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             notes = ['Mapped plus-threshold to over line for MVP settlement', *opponent_note]
             if not alias_hit:
                 notes.append('Parsed player name from raw text; alias not found')
-            parse_confidence = 0.9 if market_type else 0.55
+            parse_confidence = (1.0 + 1.0 + (1.0 if market_type else 0.0) + (1.0 if alias_hit else 0.7)) / 4.0
             if not market_type:
                 notes.append('Could not parse stat type')
                 market_type = 'player_points'
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='over', line=standardized, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=max(parse_confidence, resolution_conf if alias_hit else 0.82), notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if alias_hit else None, resolved_player_name=resolved_player))
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='over', line=standardized, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=max(parse_confidence, resolution_conf if alias_hit else parse_confidence), notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if alias_hit else None, resolved_player_name=resolved_player))
             continue
 
         alt_match = ALT_PATTERN.match(normalized_line)
@@ -206,9 +217,27 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             notes.extend(opponent_note)
             if resolved_player is None:
                 notes.append('Parsed player name from raw text; alias not found')
-            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=default_market, player=player, direction='over', line=line_value - 0.5, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=0.7 if resolved_player else 0.6, notes=notes, parse_confidence=0.7 if resolved_player else 0.6, parsed_player_name=parsed_name, normalized_stat_type=default_market, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player))
+            alt_confidence = 0.78 if resolved_player else 0.66
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=default_market, player=player, direction='over', line=line_value - 0.5, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=alt_confidence, notes=notes, parse_confidence=alt_confidence, parsed_player_name=parsed_name, normalized_stat_type=default_market, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player))
             continue
 
         legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='player_points', confidence=0.0, notes=['Unmatched leg']))
 
     return legs
+
+
+def is_valid_leg(leg: Leg) -> bool:
+    if leg.confidence <= 0:
+        return False
+    invalid_notes = {'Unmatched leg', 'Could not parse stat type'}
+    if any(note in invalid_notes for note in leg.notes):
+        return False
+    if leg.market_type in {'moneyline', 'spread'}:
+        return bool(leg.team) and (leg.market_type != 'spread' or leg.line is not None)
+    if leg.market_type == 'game_total':
+        return leg.direction is not None and leg.line is not None
+    return bool(leg.player and leg.direction and leg.line is not None)
+
+
+def filter_valid_legs(legs: list[Leg]) -> list[Leg]:
+    return [leg for leg in legs if is_valid_leg(leg)]

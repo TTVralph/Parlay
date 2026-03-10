@@ -125,7 +125,7 @@ from .models import (
 )
 from .ocr import get_ocr_provider
 from .ocr.providers import validate_image_upload
-from .parser import parse_text
+from .parser import filter_valid_legs, parse_text
 from .services.slip_parser import SlipParserService
 from .odds_matcher import match_ticket_odds
 from .providers.allsports_client import AllSportsClient, AllSportsError
@@ -899,10 +899,11 @@ def public_check_page() -> HTMLResponse:
 <body>
   <h1>Did This Parlay Cash?</h1>
   <p>One leg per line. Pick a sample, paste your slip, or upload a screenshot, then hit <code>Check Slip</code>.</p>
+  <p style='margin-top:-8px;font-size:12px;color:#64748b;'>MLB/NFL grading is currently beta preview only. NBA grading is the most reliable right now.</p>
   <div id='samples'>
     <button type='button' class='sample' data-sample='sample_nba_props'>NBA Props</button>
-    <button type='button' class='sample' data-sample='sample_mlb'>MLB Mix</button>
-    <button type='button' class='sample' data-sample='sample_nfl'>NFL Mix</button>
+    <button type='button' class='sample' data-sample='sample_mlb'>MLB Mix (Beta)</button>
+    <button type='button' class='sample' data-sample='sample_nfl'>NFL Mix (Beta)</button>
   </div>
   <form id='checkForm'>
   <textarea id='slip' placeholder='Jokic over 24.5 points
@@ -1195,7 +1196,7 @@ Murray over 2.5 threes'></textarea>
         :(parsedLegs.length===0
           ?(extracted
             ?'OCR text was extracted but it was not parseable into bet legs. Try a clearer screenshot.'
-            :'No valid bet legs were detected from this input.')
+            :'No valid betting legs detected.')
           :null);
       return {
         ok:true,
@@ -1303,7 +1304,7 @@ Murray over 2.5 threes'></textarea>
         const gradingWarning=data.grading_warning?`<div><strong>Grading:</strong> ${data.grading_warning}</div>`:'';
         debugOut.innerHTML=`
           ${extracted?`<div><strong>OCR extracted text:</strong><pre style="white-space:pre-wrap;background:#f8fafc;padding:8px;border-radius:8px;">${extracted.replace(/</g,'&lt;')}</pre></div>`:''}
-          <div><strong>Parsed legs before grading:</strong> ${parsedLegs.length?parsedLegs.join(' | '):'No valid bet legs were detected from this input.'}</div>
+          <div><strong>Parsed legs before grading:</strong> ${parsedLegs.length?parsedLegs.join(' | '):'No valid betting legs detected.'}</div>
           <div><strong>Parser confidence:</strong> ${(data.parse_confidence||'low')}</div>
           ${parseWarning}
           ${gradingWarning}
@@ -1385,14 +1386,16 @@ def _process_public_check_text(
             'parlay_result': 'needs_review',
         }
 
-    parsed_legs = [leg.raw_text for leg in parse_text(normalized)]
+    parsed = parse_text(normalized)
+    valid_parsed = filter_valid_legs(parsed)
+    parsed_legs = [leg.raw_text for leg in valid_parsed]
     if not parsed_legs:
         return {
             'ok': False,
-            'message': 'No bet legs found. Try one leg per line.',
+            'message': 'No valid betting legs detected.',
             'legs': [],
             'parsed_legs': [],
-            'parse_warning': 'No valid bet legs were detected from this input.',
+            'parse_warning': 'No valid betting legs detected.',
             'grading_warning': None,
             'parlay_result': 'needs_review',
         }
@@ -1410,7 +1413,8 @@ def _process_public_check_text(
             grade_kwargs['selected_event_id'] = selected_event_id
         if selected_event_by_leg_id:
             grade_kwargs['selected_event_by_leg_id'] = selected_event_by_leg_id
-        graded = grade_text(normalized, **grade_kwargs)
+        grading_text = '\n'.join(parsed_legs)
+        graded = grade_text(grading_text, **grade_kwargs)
     except Exception:
         return {
             'ok': False,

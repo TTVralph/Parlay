@@ -61,3 +61,29 @@ def test_parse_handles_unicode_and_apostrophes_without_market_errors() -> None:
     assert legs[0].market_type == 'player_points'
     assert legs[1].market_type == 'player_points'
     assert legs[2].market_type == 'player_assists'
+
+
+def test_parse_shorthand_stat_aliases_are_consistent() -> None:
+    lines = (
+        'Jayson Tatum O26.5 PTS\n'
+        'Domantas Sabonis over 12.5 rebs\n'
+        'Trae Young under 10.5 asts\n'
+        'Stephen Curry over 4.5 three-pointers\n'
+        'Nikola Jokic over 47.5 PRA'
+    )
+    legs = parse_text(lines)
+    assert [leg.market_type for leg in legs] == [
+        'player_points',
+        'player_rebounds',
+        'player_assists',
+        'player_threes',
+        'player_pra',
+    ]
+    assert all(leg.parse_confidence and leg.parse_confidence >= 0.9 for leg in legs)
+
+
+def test_parse_rejects_nonsense_as_unmatched() -> None:
+    legs = parse_text('hello\nthis is a test\nrandom bet')
+    assert len(legs) == 3
+    assert all(leg.confidence == 0.0 for leg in legs)
+    assert all('Unmatched leg' in leg.notes for leg in legs)

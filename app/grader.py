@@ -10,7 +10,7 @@ from .services.market_registry import MARKET_REGISTRY, player_market_to_canonica
 from .providers.base import ResultsProvider
 from .providers.factory import get_results_provider
 from .event_matcher import resolve_leg_events
-from .parser import parse_text
+from .parser import filter_valid_legs, parse_text
 
 
 _MARKET_LABELS = {
@@ -543,7 +543,8 @@ def grade_text(
     code_path: str = 'manual_text_slip_grading',
 ) -> GradeResponse:
     provider = provider or get_results_provider()
-    legs = parse_text(text)
+    parsed_legs = parse_text(text)
+    legs = filter_valid_legs(parsed_legs)
     resolved_legs = resolve_leg_events(
         legs,
         provider,

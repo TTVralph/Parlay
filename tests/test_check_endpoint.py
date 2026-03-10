@@ -22,8 +22,8 @@ def test_check_no_legs_parsed_message(monkeypatch):
     assert res.status_code == 200
     body = res.json()
     assert body['ok'] is False
-    assert body['message'] == 'No bet legs found. Try one leg per line.'
-    assert body['parse_warning'] == 'No valid bet legs were detected from this input.'
+    assert body['message'] == 'No valid betting legs detected.'
+    assert body['parse_warning'] == 'No valid betting legs detected.'
 
 
 def test_check_grading_error_message(monkeypatch):
@@ -80,3 +80,12 @@ def test_check_sets_grading_warning_when_all_legs_unmatched(monkeypatch):
     assert res.status_code == 200
     body = res.json()
     assert body['grading_warning'] == 'Parsed legs were detected, but ESPN matching could not settle any leg.'
+
+
+def test_check_nonsense_input_is_rejected():
+    res = client.post('/check-slip', json={'text': 'hello\nthis is a test\nrandom bet'})
+    assert res.status_code == 200
+    body = res.json()
+    assert body['ok'] is False
+    assert body['message'] == 'No valid betting legs detected.'
+    assert body['legs'] == []
