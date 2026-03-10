@@ -1704,6 +1704,7 @@ def _process_public_check_text(
             'parse_warning': None,
             'grading_warning': None,
             'parlay_result': 'needs_review',
+            'parse_confidence': 'low',
         }
     if not normalized:
         return {
@@ -1714,6 +1715,7 @@ def _process_public_check_text(
             'parse_warning': None,
             'grading_warning': None,
             'parlay_result': 'needs_review',
+            'parse_confidence': 'low',
         }
 
     parsed = parse_text(normalized)
@@ -1728,6 +1730,7 @@ def _process_public_check_text(
             'parse_warning': 'No valid betting legs detected.',
             'grading_warning': None,
             'parlay_result': 'needs_review',
+            'parse_confidence': 'low',
         }
 
     try:
@@ -1754,6 +1757,7 @@ def _process_public_check_text(
             'parse_warning': None,
             'grading_warning': 'Parsed legs were detected, but grading did not complete.',
             'parlay_result': 'needs_review',
+            'parse_confidence': 'low',
         }
 
     legs = []
