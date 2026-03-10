@@ -1008,6 +1008,13 @@ Murray over 2.5 threes'></textarea>
     let legUiStateByLegId={};
     let latestPublicUrl='';
     let latestResultPayload=null;
+    let screenshotNeedsParse=false;
+    let parsedScreenshotSignature=null;
+
+    function getScreenshotSignature(file){
+      if(!file){return null;}
+      return `${file.name||'upload'}:${file.size||0}:${file.lastModified||0}`;
+    }
 
     function showActionStatus(text,type='success'){
       actionStatus.textContent=text;
@@ -1027,12 +1034,17 @@ Murray over 2.5 threes'></textarea>
     function clearScreenshotSelection({keepMessage=false}={}){
       slipImage.value='';
       removeScreenshotBtn.style.display='none';
+      screenshotNeedsParse=false;
+      parsedScreenshotSignature=null;
       if(!keepMessage){ msg.textContent=''; }
       if((debugOut.textContent||'').includes('OCR extracted text:')){ debugOut.innerHTML=''; }
     }
 
     slipImage.addEventListener('change',()=>{
-      removeScreenshotBtn.style.display=(slipImage.files&&slipImage.files[0])?'inline-block':'none';
+      const file=slipImage.files&&slipImage.files[0];
+      const nextSignature=getScreenshotSignature(file);
+      removeScreenshotBtn.style.display=file?'inline-block':'none';
+      screenshotNeedsParse=Boolean(file)&&nextSignature!==parsedScreenshotSignature;
     });
 
     removeScreenshotBtn.addEventListener('click',()=>{
@@ -1326,9 +1338,11 @@ Murray over 2.5 threes'></textarea>
     async function submitCheck(){
       const text=slip.value.trim();
       const file=slipImage.files&&slipImage.files[0];
+      const screenshotSignature=getScreenshotSignature(file);
+      const shouldParseScreenshot=Boolean(file)&&screenshotNeedsParse;
       if(!text&&!file){msg.textContent='Paste at least one leg first, or upload a screenshot.';return;}
-      if(file&&file.type&&!file.type.startsWith('image/')){msg.textContent='Please upload an image file for screenshot grading.';return;}
-      if(file&&file.size>8*1024*1024){msg.textContent='Screenshot is too large. Please use an image under 8MB.';return;}
+      if(shouldParseScreenshot&&file.type&&!file.type.startsWith('image/')){msg.textContent='Please upload an image file for screenshot grading.';return;}
+      if(shouldParseScreenshot&&file.size>8*1024*1024){msg.textContent='Screenshot is too large. Please use an image under 8MB.';return;}
 
       btn.disabled=true;
       btn.textContent='Checking...';
@@ -1336,7 +1350,7 @@ Murray over 2.5 threes'></textarea>
       try{
         let data;
         let res;
-        if(file){
+        if(shouldParseScreenshot){
           resetManualSelectionState();
           const form=new FormData();
           form.append('file',file);
@@ -1348,6 +1362,8 @@ Murray over 2.5 threes'></textarea>
           if(parsedLegs.length){slip.value=parsedLegs.join('\\n');}
           else if(body.cleaned_text){slip.value=body.cleaned_text;}
           if(!slipDate.value&&parsed.detected_bet_date){slipDate.value=parsed.detected_bet_date;}
+          screenshotNeedsParse=false;
+          parsedScreenshotSignature=screenshotSignature;
           msg.textContent='Screenshot parsed. Review/edit the text, then click Check Slip.';
           removeScreenshotBtn.style.display='inline-block';
           wrap.hidden=true;
