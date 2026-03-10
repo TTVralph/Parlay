@@ -109,3 +109,23 @@ def test_threes_explanation_uses_human_readable_reason() -> None:
     assert leg.settlement_explanation.normalized_market == 'player_threes'
     assert leg.settlement_explanation.actual_stat_value == 1.0
     assert leg.settlement_explanation.settlement_reason_text == '1.0 is below 1.5'
+
+
+def test_low_confidence_single_candidate_uses_specific_review_text() -> None:
+    leg = Leg(
+        raw_text='shai gilly alexander over 2 points',
+        sport='NBA',
+        market_type='player_points',
+        player='shai gilly alexander',
+        direction='over',
+        line=2.0,
+        confidence=0.9,
+        event_id='evt-1',
+        identity_match_confidence='LOW',
+        resolution_ambiguity_reason='player likely refers to Shai Gilgeous-Alexander, but identity confidence was not high enough to auto-resolve',
+    )
+    from app.grader import settle_leg
+
+    graded = settle_leg(leg, DnpProvider())
+    assert graded.review_reason_text == 'Review: player likely refers to Shai Gilgeous-Alexander, but identity confidence was not high enough to auto-resolve'
+    assert graded.review_reason_text != 'Review: player/event validation failed'
