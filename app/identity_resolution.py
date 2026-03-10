@@ -710,17 +710,22 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
                 confidence_level='MEDIUM',
             )
 
-    ranked: list[tuple[float, CanonicalPlayerIdentity]] = []
+    ranked_all: list[tuple[float, CanonicalPlayerIdentity]] = []
+    ranked_viable: list[tuple[float, CanonicalPlayerIdentity]] = []
     for p in by_id.values():
         score = max(
             SequenceMatcher(None, normalized, p.normalized_name).ratio(),
             *(SequenceMatcher(None, normalized, normalize_entity_name(alias)).ratio() for alias in p.alternate_names),
         )
+        ranked_all.append((score, p))
         if score >= 0.75:
-            ranked.append((score, p))
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    if not ranked:
+            ranked_viable.append((score, p))
+    ranked_all.sort(key=lambda item: item[0], reverse=True)
+    ranked_viable.sort(key=lambda item: item[0], reverse=True)
+    if not ranked_all:
         return PlayerResolutionResult(sport, None, None, None, 0.0, ambiguity_reason='player not found in sport directory', identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], confidence_level='LOW')
+
+    ranked = ranked_viable or ranked_all
 
     if sport == 'NBA':
         top_score, top_player = ranked[0]
@@ -763,8 +768,8 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
             )
 
     if ranked[0][0] < 0.86:
-        suggestions = tuple(item[1].full_name for item in ranked[:3])
-        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player not found in sport directory', candidate_players=suggestions, candidate_player_details=tuple(_candidate_match(item[1], rank=idx + 1, score=item[0], reason='close typo match') for idx, item in enumerate(ranked[:3])), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], confidence_level='LOW')
+        suggestions = tuple(item[1].full_name for item in ranked_all[:3])
+        return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player not found in sport directory', candidate_players=suggestions, candidate_player_details=tuple(_candidate_match(item[1], rank=idx + 1, score=item[0], reason='close typo match') for idx, item in enumerate(ranked_all[:3])), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], confidence_level='LOW')
     if len(ranked) > 1 and (ranked[0][0] - ranked[1][0]) < 0.05:
         names = tuple(item[1].full_name for item in ranked[:3])
         return PlayerResolutionResult(sport, None, None, None, round(ranked[0][0], 2), ambiguity_reason='player identity ambiguous', candidate_players=names, candidate_player_details=tuple(_candidate_match(item[1], rank=idx + 1, score=item[0], reason='ambiguous first/last name') for idx, item in enumerate(ranked[:3])), identity_source=metadata['identity_source'], identity_last_refreshed_at=metadata['identity_last_refreshed_at'], match_method='ambiguous', confidence_level='LOW')
