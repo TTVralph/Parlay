@@ -915,6 +915,10 @@ def public_check_page() -> HTMLResponse:
     #message{margin-top:12px;color:#334155;font-weight:600;}
     #resultWrap{margin-top:14px;border:1px solid #e2e8f0;border-radius:12px;padding:14px;}
     #overall{font-size:18px;font-weight:700;margin-bottom:12px;}
+    .result-summary{display:flex;flex-wrap:wrap;gap:8px;margin:-4px 0 12px;}
+    .result-chip{display:inline-flex;align-items:center;border:1px solid #cbd5e1;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:700;background:#f8fafc;color:#334155;}
+    .result-meta{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px;}
+    .meta-chip{display:inline-flex;align-items:center;border:1px solid #e2e8f0;border-radius:999px;padding:3px 10px;font-size:12px;background:#fff;color:#475569;}
     #summaryWrap{margin-top:12px;}
     #summaryOut{min-height:98px;background:#f8fafc;}
     table{width:100%;border-collapse:collapse;}
@@ -956,6 +960,8 @@ Murray over 2.5 threes'></textarea>
   <div id='actionStatus' class='status' role='status' aria-live='polite'></div>
   <div id='resultWrap' hidden>
     <div id='overall'></div>
+    <div id='resultSummary' class='result-summary' hidden></div>
+    <div id='metaSummary' class='result-meta' hidden></div>
     <div id='payoutOut' style='margin:8px 0;color:#334155;'></div>
     <div id='debugOut' style='margin:8px 0 12px;color:#334155;'></div>
     <table>
@@ -998,6 +1004,8 @@ Murray over 2.5 threes'></textarea>
     const actionStatus=document.getElementById('actionStatus');
     const wrap=document.getElementById('resultWrap');
     const overall=document.getElementById('overall');
+    const resultSummary=document.getElementById('resultSummary');
+    const metaSummary=document.getElementById('metaSummary');
     const payoutOut=document.getElementById('payoutOut');
     const debugOut=document.getElementById('debugOut');
     const legsBody=document.getElementById('legsBody');
@@ -1274,6 +1282,44 @@ Murray over 2.5 threes'></textarea>
     }
 
 
+
+    function countLegResults(legs){
+      const counts={total:0,won:0,lost:0,review:0};
+      for(const item of (legs||[])){
+        counts.total+=1;
+        const normalized=item.result==='unmatched'?'review':item.result;
+        if(normalized==='win'){counts.won+=1;}
+        else if(normalized==='loss'){counts.lost+=1;}
+        else if(normalized==='review'){counts.review+=1;}
+      }
+      return counts;
+    }
+
+    function renderResultSummary(payload){
+      const counts=countLegResults(payload.legs||[]);
+      resultSummary.innerHTML=`
+        <span class='result-chip'>${counts.total} Legs</span>
+        <span class='result-chip'>${counts.won} Won</span>
+        <span class='result-chip'>${counts.lost} Lost</span>
+        <span class='result-chip'>${counts.review} Review</span>
+      `;
+      resultSummary.hidden=false;
+
+      const sportSet=new Set((payload.legs||[]).map((item)=>item.sport).filter(Boolean));
+      const sports=[...sportSet];
+      const betDate=payload.bet_date||payload.slip_default_date||null;
+      const hasStake=payload.stake_amount!==undefined&&payload.stake_amount!==null;
+      const chips=[];
+      if(sports.length===1){chips.push(`<span class='meta-chip'>Sport: ${sports[0]}</span>`);}
+      else if(sports.length>1){chips.push(`<span class='meta-chip'>Sport: ${sports.join('/')}</span>`);}
+      if(betDate){chips.push(`<span class='meta-chip'>Bet date: ${betDate}</span>`);}
+      if(hasStake){chips.push(`<span class='meta-chip'>Stake: $${Number(payload.stake_amount).toFixed(2)}</span>`);}
+      if(payload.estimated_payout!==undefined&&payload.estimated_payout!==null){chips.push(`<span class='meta-chip'>Est. payout: $${Number(payload.estimated_payout).toFixed(2)}</span>`);}
+      if(hasStake&&payload.payout_message){chips.push(`<span class='meta-chip'>${payload.payout_message}</span>`);}
+      metaSummary.innerHTML=chips.join('');
+      metaSummary.hidden=!chips.length;
+    }
+
     function escapeHtml(text){
       return String(text||'').replace(/[&<>"]/g,(ch)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]||ch));
     }
@@ -1440,6 +1486,10 @@ Murray over 2.5 threes'></textarea>
         msg.textContent=data.message||'Done.';
         legsBody.innerHTML='';
         debugOut.innerHTML='';
+        resultSummary.innerHTML='';
+        resultSummary.hidden=true;
+        metaSummary.innerHTML='';
+        metaSummary.hidden=true;
         summaryOut.value='';
         copyBtn.disabled=true;
         copyLinkBtn.disabled=true;
@@ -1449,6 +1499,7 @@ Murray over 2.5 threes'></textarea>
         latestResultPayload=null;
         clearActionStatus();
         overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');
+        renderResultSummary(data);
         if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){
           payoutOut.textContent=`Estimated payout: $${Number(data.estimated_payout).toFixed(2)} (profit: $${Number(data.estimated_profit).toFixed(2)})`;
         }else if(data.payout_message){
@@ -1718,6 +1769,7 @@ def _process_public_check_text(
         legs.append({
             'leg_id': str(index),
             'leg': item.leg.raw_text,
+            'sport': item.leg.sport,
             'result': result,
             'matched_event': item.matched_event or item.leg.event_label,
             'candidate_games': item.candidate_games or item.leg.event_candidates,
@@ -1781,6 +1833,7 @@ def _process_public_check_text(
         'mixed_event_dates_detected': mixed_event_dates_detected,
         'parse_confidence': next((item.get('parse_confidence') for item in legs if item.get('parse_confidence')), 'low'),
         'checked_at': datetime.utcnow().isoformat(),
+        'bet_date': bet_date.isoformat() if bet_date is not None else None,
     }
     if unmatched_count == len(legs):
         out['message'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
