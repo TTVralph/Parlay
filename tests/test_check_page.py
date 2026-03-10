@@ -151,3 +151,36 @@ def test_public_parlay_page_layout_supports_long_wrapped_leg_content():
     assert 'table-layout:fixed' in page.text
     assert 'Leg Results (9)' in page.text
 
+
+
+def test_check_page_screenshot_can_be_removed_before_text_only_submit():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "id='removeScreenshotBtn'" in html
+    assert "clearScreenshotSelection({keepMessage:true});" in html
+    assert "if(file){" in html
+    assert "}else{" in html
+
+
+def test_check_page_screenshot_can_be_removed_and_reuploaded():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "slipImage.addEventListener('change'" in html
+    assert "removeScreenshotBtn.style.display=(slipImage.files&&slipImage.files[0])?'inline-block':'none';" in html
+    assert "removeScreenshotBtn.addEventListener('click'" in html
+    assert "slipImage.value='';" in html
+
+
+def test_check_page_keeps_ocr_text_in_textarea_when_screenshot_removed():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "if(parsedLegs.length){slip.value=parsedLegs.join('\\n');}" in html
+    assert "else if(body.cleaned_text){slip.value=body.cleaned_text;}" in html
+    assert "clearScreenshotSelection({keepMessage:true});" in html
+    assert "slip.focus();" in html
