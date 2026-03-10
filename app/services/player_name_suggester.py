@@ -94,7 +94,7 @@ def suggest_player_name(name: str | None, sport: str = 'NBA') -> PlayerNameSugge
             suggested_name=best_name,
             confidence_score=round(best_weighted, 3),
             confidence_level='HIGH',
-            auto_applied=True,
+            auto_applied=False,
         )
     if medium_confidence:
         return PlayerNameSuggestion(

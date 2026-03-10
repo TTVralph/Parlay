@@ -151,9 +151,29 @@ def _merge_player_and_team_candidates(
     player_candidates: list[EventInfo],
     team_candidates: list[EventInfo],
 ) -> list[EventInfo]:
-    if team_candidates:
+    if not player_candidates:
         return team_candidates
-    return player_candidates
+    if not team_candidates:
+        return player_candidates
+
+    def _event_key(event: EventInfo) -> tuple[str, str]:
+        return (event.event_id, event.start_time.isoformat())
+
+    player_keys = {_event_key(event) for event in player_candidates}
+    team_keys = {_event_key(event) for event in team_candidates}
+    overlap = player_keys & team_keys
+    if overlap:
+        return [event for event in player_candidates if _event_key(event) in overlap]
+
+    merged: list[EventInfo] = []
+    seen: set[tuple[str, str]] = set()
+    for event in [*player_candidates, *team_candidates]:
+        key = _event_key(event)
+        if key in seen:
+            continue
+        merged.append(event)
+        seen.add(key)
+    return merged
 
 
 def _event_ids(events: list[EventInfo]) -> list[str]:

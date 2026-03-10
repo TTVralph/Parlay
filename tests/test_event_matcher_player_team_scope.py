@@ -352,3 +352,47 @@ def test_no_candidate_events_remains_unmatched_with_reason_code() -> None:
 
     assert resolved[0].event_id is None
     assert 'no_candidate_events' in resolved[0].event_resolution_warnings
+
+def test_player_event_lookup_keeps_player_candidates_when_team_schedule_disagrees() -> None:
+    class DivergentProvider(TeamScopedPlayerProvider):
+        def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return 'Golden State Warriors'
+
+        def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return [
+                EventInfo(
+                    event_id='evt-gsw-lal',
+                    sport='NBA',
+                    home_team='Los Angeles Lakers',
+                    away_team='Golden State Warriors',
+                    start_time=datetime.fromisoformat('2026-10-05T21:00:00'),
+                )
+            ]
+
+        def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+            # Divergent team schedule candidate that does not match the selected slip date.
+            return [
+                EventInfo(
+                    event_id='evt-gsw-phx-next',
+                    sport='NBA',
+                    home_team='Phoenix Suns',
+                    away_team='Golden State Warriors',
+                    start_time=datetime.fromisoformat('2026-10-06T21:00:00'),
+                )
+            ]
+
+    provider = DivergentProvider()
+    leg = Leg(
+        raw_text='Draymond Green over 5.5 assists',
+        sport='NBA',
+        market_type='player_assists',
+        player='Draymond Green',
+        direction='over',
+        line=5.5,
+        confidence=0.9,
+    )
+
+    resolved = resolve_leg_events([leg], provider, posted_at=date(2026, 10, 5), include_historical=True, bet_date=date(2026, 10, 5))
+
+    assert resolved[0].event_id == 'evt-gsw-lal'
+    assert 'no game found for resolved team on date' not in resolved[0].notes

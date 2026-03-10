@@ -1155,7 +1155,7 @@ Murray over 2.5 threes'></textarea>
           <div>Candidate players: ${(item.candidate_players||[]).join(', ') || '—'}</div>
           <div>Candidate events: ${(item.candidate_events||[]).map((e)=>e.event_label||e.event_id).join(', ') || '—'}</div>
           <div>Parse confidence: ${item.parse_confidence ?? '—'}</div>
-          <div>Review reason: ${item.review_reason||'—'}</div>
+          <div>Review reason: ${item.review_reason_text||item.did_you_mean||item.review_reason||'—'}</div>
           <div>Warnings: ${(item.validation_warnings||[]).join(' | ') || '—'}</div>
           <div>Unmatched reason code: ${item.unmatched_reason_code||'—'}</div>
           <div>Event resolution worked: ${settlementDiag.event_resolution_worked===undefined?'—':String(settlementDiag.event_resolution_worked)}</div>
@@ -1229,7 +1229,7 @@ Murray over 2.5 threes'></textarea>
             reviewNote.style.marginTop='6px';
             reviewNote.style.fontSize='12px';
             reviewNote.style.color='#475569';
-            reviewNote.textContent=`Review reason: ${item.review_reason_text||item.review_reason||item.explanation_reason}`;
+            reviewNote.textContent=`Review reason: ${item.review_reason_text||item.did_you_mean||item.review_reason||item.explanation_reason}`;
             eventCell.appendChild(reviewNote);
           }
           if(item.matched_event){
@@ -1433,12 +1433,35 @@ Murray over 2.5 threes'></textarea>
       };
     }
 
+    function resetRenderedSlipResult(){
+      legsBody.innerHTML='';
+      debugOut.innerHTML='';
+      resultSummary.innerHTML='';
+      resultSummary.hidden=true;
+      metaSummary.innerHTML='';
+      metaSummary.hidden=true;
+      summaryOut.value='';
+      copyBtn.disabled=true;
+      copyLinkBtn.disabled=true;
+      openLinkBtn.disabled=true;
+      downloadCardBtn.disabled=true;
+      latestPublicUrl='';
+      latestResultPayload=null;
+      clearActionStatus();
+      overall.textContent='Parlay result: NEEDS REVIEW';
+      payoutOut.textContent='';
+    }
+
     async function submitCheck(){
       const text=slip.value.trim();
       const file=slipImage.files&&slipImage.files[0];
       const screenshotSignature=getScreenshotSignature(file);
       const shouldParseScreenshot=Boolean(file)&&screenshotNeedsParse;
-      if(!text&&!file){msg.textContent='Paste at least one leg first, or upload a screenshot.';return;}
+      if(!text&&!file){
+        resetRenderedSlipResult();
+        msg.textContent='Paste at least one leg first, or upload a screenshot.';
+        return;
+      }
       if(shouldParseScreenshot&&file.type&&!file.type.startsWith('image/')){msg.textContent='Please upload an image file for screenshot grading.';return;}
       if(shouldParseScreenshot&&file.size>8*1024*1024){msg.textContent='Screenshot is too large. Please use an image under 8MB.';return;}
 
@@ -1484,20 +1507,7 @@ Murray over 2.5 threes'></textarea>
 
         if(!res.ok){msg.textContent=data.detail||data.message||'Could not check this slip right now.';return;}
         msg.textContent=data.message||'Done.';
-        legsBody.innerHTML='';
-        debugOut.innerHTML='';
-        resultSummary.innerHTML='';
-        resultSummary.hidden=true;
-        metaSummary.innerHTML='';
-        metaSummary.hidden=true;
-        summaryOut.value='';
-        copyBtn.disabled=true;
-        copyLinkBtn.disabled=true;
-        openLinkBtn.disabled=true;
-        downloadCardBtn.disabled=true;
-        latestPublicUrl='';
-        latestResultPayload=null;
-        clearActionStatus();
+        resetRenderedSlipResult();
         overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');
         renderResultSummary(data);
         if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){
@@ -1770,6 +1780,11 @@ def _process_public_check_text(
             result = 'review'
             if any('multiple possible games' in note.lower() for note in item.leg.notes):
                 ambiguous_count += 1
+        did_you_mean = None
+        suggestion_candidates = item.candidate_players or item.leg.candidate_players
+        if result == 'review' and suggestion_candidates:
+            did_you_mean = f"Did you mean: {suggestion_candidates[0]}?"
+
         legs.append({
             'leg_id': str(index),
             'leg': item.leg.raw_text,
@@ -1818,6 +1833,7 @@ def _process_public_check_text(
             'settlement_diagnostics': item.settlement_diagnostics,
             'unmatched_reason_code': (item.settlement_diagnostics or {}).get('unmatched_reason_code'),
             'review_reason_text': item.review_reason_text,
+            'did_you_mean': did_you_mean,
             'debug_comparison': item.debug_comparison,
         })
 
