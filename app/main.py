@@ -1356,13 +1356,13 @@ Murray over 2.5 threes'></textarea>
               eventCell.appendChild(pendingAfterSelection);
             }
           }
-          const canPickPlayer=!playerSelectionApplied&&details&&(details.player_resolution_status==='ambiguous'||details.player_resolution_status==='unresolved')&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';
+          const canPickPlayer=!playerSelectionApplied&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';
           if(canPickPlayer){
             const pickerLabel=document.createElement('div');
             pickerLabel.style.marginTop='8px';
             pickerLabel.style.fontSize='12px';
             pickerLabel.style.fontWeight='600';
-            pickerLabel.textContent=candidatePlayers.length===1?`Did you mean ${candidatePlayers[0].player_name}?`:'Pick a player';
+            pickerLabel.textContent='Did you mean?';
             eventCell.appendChild(pickerLabel);
 
             const selectedPlayerId=selectedPlayerByLegId[legId]||'';

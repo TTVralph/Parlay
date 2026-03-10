@@ -272,8 +272,9 @@ def test_check_page_shows_unresolved_typo_explanation_and_structured_details():
     page = client.get('/check')
     assert page.status_code == 200
     html = page.text
-    assert "details.player_resolution_status==='ambiguous'||details.player_resolution_status==='unresolved'" in html
+    assert "const canPickPlayer=!playerSelectionApplied&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';" in html
     assert 'Player resolution method:' in html
     assert 'Player resolution confidence:' in html
     assert 'Player resolution mode:' in html
     assert 'Canonical matched player:' in html
+    assert "pickerLabel.textContent='Did you mean?';" in html

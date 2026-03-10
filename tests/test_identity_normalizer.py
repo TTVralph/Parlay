@@ -52,3 +52,11 @@ def test_multiple_close_candidates_still_review() -> None:
     assert result.resolved_player_id is None
     assert result.confidence_level == 'LOW'
     assert result.match_method == 'ambiguous'
+
+
+def test_unresolved_identity_returns_top_three_candidate_players() -> None:
+    result = resolve_player_identity('Xyzqv', sport='NBA')
+    assert result.resolved_player_id is None
+    assert result.ambiguity_reason == 'player not found in sport directory'
+    assert len(result.candidate_players) >= 3
+    assert len(result.candidate_player_details) >= 3
