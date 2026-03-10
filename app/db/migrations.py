@@ -136,6 +136,27 @@ MIGRATIONS: tuple[Migration, ...] = (
             )
             '''.strip(),
         ),
+    ),
+    Migration(
+        version='20260310_008_public_slip_results',
+        description='add persistent public slip results for shareable checks',
+        statements=(
+            '''
+            CREATE TABLE IF NOT EXISTS public_slip_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_id VARCHAR(16) NOT NULL UNIQUE,
+                raw_slip_text TEXT NOT NULL,
+                parsed_legs_json TEXT NOT NULL DEFAULT '[]',
+                legs_json TEXT NOT NULL DEFAULT '[]',
+                matched_events_json TEXT NOT NULL DEFAULT '[]',
+                overall_result VARCHAR(20) NOT NULL,
+                parser_confidence VARCHAR(20),
+                bet_date DATETIME,
+                stake_amount FLOAT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            '''.strip(),
+        ),
     )
 )
 
@@ -228,6 +249,8 @@ def apply_migrations(engine: Engine) -> list[str]:
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             '''.strip())
+        elif migration.version == '20260310_008_public_slip_results':
+            statements = list(migration.statements)
         with engine.begin() as conn:
             for stmt in statements:
                 conn.execute(text(stmt))

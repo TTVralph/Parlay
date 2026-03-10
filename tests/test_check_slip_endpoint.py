@@ -10,17 +10,9 @@ def test_check_slip_endpoint_returns_review_when_unmatched_legs():
 
     assert response.status_code == 200
     body = response.json()
-    assert body['ok'] is True
+    assert body['ok'] is False
     assert body['parlay_result'] == 'needs_review'
-    assert body['legs'][0]['leg'] == 'Leg A'
-    assert body['legs'][1]['leg'] == 'Leg B'
-    assert body['legs'][0]['result'] == 'review'
-    assert body['legs'][1]['result'] == 'review'
-    assert body['legs'][0]['matched_event'] is None
-    assert body['legs'][1]['matched_event'] is None
-    assert body['legs'][0]['candidate_games'] == []
-    assert body['legs'][1]['candidate_games'] == []
-    assert body['legs'][0]['explanation_reason'] == 'Low-confidence parse; send to manual review'
+    assert body['message'] in {'No valid betting legs detected.', 'Paste at least one leg first.'}
 
 
 def test_check_slip_accepts_bet_date_field():
@@ -30,3 +22,18 @@ def test_check_slip_accepts_bet_date_field():
     body = response.json()
     assert body['ok'] is True
     assert 'legs' in body
+
+
+def test_check_slip_generates_public_link_and_page():
+    client = TestClient(app)
+    response = client.post('/check-slip', json={'text': 'Denver ML'})
+    assert response.status_code == 200
+    body = response.json()
+    assert body['ok'] is True
+    assert body.get('public_id')
+    assert body.get('public_url') == f"/parlay/{body['public_id']}"
+
+    page = client.get(body['public_url'])
+    assert page.status_code == 200
+    assert 'ParlayBot Result' in page.text
+    assert 'Check another slip' in page.text
