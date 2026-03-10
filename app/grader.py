@@ -231,12 +231,23 @@ def _input_source_from_code_path(code_path: str) -> str:
 
 def _review_reason_text(review_reason: str | None, reason_code: str) -> str | None:
     value = (review_reason or '').lower()
-    if reason_code in {reason_codes.EVENT_UNRESOLVED, reason_codes.NO_CANDIDATE_EVENTS} and ('multiple' in value or 'ambiguous' in value):
-        return 'Review: multiple plausible event/stat matches'
-    if reason_code in {reason_codes.MATCHED_EVENT_TEAM_MISMATCH, reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER, reason_codes.IDENTITY_MATCH_AMBIGUOUS}:
-        if 'likely refers to' in value:
-            return f'Review: {review_reason}' if review_reason else 'Review: likely single candidate but confidence too low'
-        return 'Review: player/event validation failed'
+    explicit = {
+        reason_codes.IDENTITY_MATCH_AMBIGUOUS: 'Review: Multiple plausible player matches found; select the correct player.',
+        reason_codes.INVALID_SELECTED_PLAYER_ID: 'Review: Selected player could not be applied; please choose again.',
+        reason_codes.PLAYER_NOT_ON_EVENT_ROSTER: 'Review: Resolved player is not on the matched game roster.',
+        reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER: 'Review: Resolved player is not on the matched game roster.',
+        reason_codes.EVENT_UNRESOLVED: 'Review: No matching game was found for the resolved team/date.',
+        reason_codes.NO_CANDIDATE_EVENTS: 'Review: No matching game was found for the resolved team/date.',
+    }
+    if reason_code in explicit:
+        if reason_code == reason_codes.IDENTITY_MATCH_AMBIGUOUS:
+            if 'likely refers to' in value and review_reason:
+                return f'Review: {review_reason}'
+            if 'not found' in value or 'could not be resolved' in value:
+                return 'Review: Player name could not be resolved confidently.'
+        return explicit[reason_code]
+    if reason_code in {reason_codes.MATCHED_EVENT_TEAM_MISMATCH, reason_codes.EVENT_TEAM_MISMATCH}:
+        return 'Review: Resolved player is not on the matched game roster.'
     if reason_code in {reason_codes.MISSING_STAT_SOURCE, reason_codes.STAT_NOT_FOUND, reason_codes.MARKET_MAPPING_MISSING} and any(k in value for k in ('combo', 'component', 'stat')):
         return 'Review: combo component stats incomplete'
     if review_reason:

@@ -6,6 +6,7 @@ from difflib import SequenceMatcher
 from functools import lru_cache
 import json
 import logging
+import os
 from pathlib import Path
 import re
 from time import monotonic
@@ -129,6 +130,102 @@ def _slugify_team_id(team: str) -> str:
 
 def _split_name_tokens(name: str) -> list[str]:
     return [token for token in normalize_entity_name(name).split() if token]
+
+
+def _phonetic_key(value: str) -> str:
+    normalized = re.sub(r'[^a-z]', '', normalize_entity_name(value))
+    if not normalized:
+        return ''
+    substitutions = (
+        ('ph', 'f'),
+        ('ck', 'k'),
+        ('qu', 'k'),
+        ('q', 'k'),
+        ('x', 'ks'),
+        ('z', 's'),
+        ('ae', 'e'),
+        ('ai', 'e'),
+        ('ay', 'e'),
+        ('ee', 'i'),
+        ('ie', 'i'),
+        ('oo', 'u'),
+        ('ou', 'u'),
+    )
+    for source, target in substitutions:
+        normalized = normalized.replace(source, target)
+    normalized = re.sub(r'(.)\1+', r'\1', normalized)
+    if len(normalized) <= 1:
+        return normalized
+    return normalized[0] + re.sub(r'[aeiouy]', '', normalized[1:])
+
+
+def _token_similarity(left: str, right: str) -> float:
+    left_clean = normalize_entity_name(left)
+    right_clean = normalize_entity_name(right)
+    if not left_clean or not right_clean:
+        return 0.0
+    base = SequenceMatcher(None, left_clean, right_clean).ratio()
+    prefix_chars = len(os.path.commonprefix([left_clean, right_clean]))
+    prefix = prefix_chars / max(len(left_clean), len(right_clean))
+    phonetic = SequenceMatcher(None, _phonetic_key(left_clean), _phonetic_key(right_clean)).ratio()
+    return min(1.0, (base * 0.70) + (prefix * 0.20) + (phonetic * 0.10))
+
+
+def _first_name_bias(input_name: str) -> float:
+    parts = [part for part in _split_name_tokens(input_name) if part]
+    if not parts:
+        return 0.0
+    if len(parts) == 1:
+        token = parts[0]
+        if len(token) <= 3:
+            return 0.2
+        return 0.1
+    first = parts[0]
+    last = ''.join(parts[1:])
+    first_weight = max(0.0, 1.0 - min(0.35, abs(len(first) - len(last)) * 0.06))
+    return 0.12 if first_weight >= 0.78 else -0.08
+
+
+def _candidate_similarity_score(input_name: str, candidate: CanonicalPlayerIdentity, *, first_name_bias: float) -> float:
+    input_tokens = _split_name_tokens(input_name)
+    candidate_tokens = _split_name_tokens(candidate.full_name)
+    if not input_tokens or len(candidate_tokens) < 2:
+        return 0.0
+
+    candidate_first = candidate_tokens[0]
+    candidate_last = ''.join(candidate_tokens[1:])
+    input_full = ''.join(input_tokens)
+    candidate_full = ''.join(candidate_tokens)
+    full_score = _token_similarity(input_full, candidate_full)
+
+    if len(input_tokens) == 1:
+        token = input_tokens[0]
+        first_score = _token_similarity(token, candidate_first)
+        last_score = _token_similarity(token, candidate_last)
+        if first_name_bias > 0.02:
+            score = (first_score * 0.58) + (full_score * 0.24) + (last_score * 0.18)
+            if last_score > first_score + 0.12:
+                score -= 0.09
+            return score
+        if first_name_bias < -0.02:
+            score = (last_score * 0.58) + (full_score * 0.24) + (first_score * 0.18)
+            if first_score > last_score + 0.12:
+                score -= 0.09
+            return score
+        return max(first_score, last_score) * 0.68 + full_score * 0.32
+
+    input_first = input_tokens[0]
+    input_last = ''.join(input_tokens[1:])
+    first_score = _token_similarity(input_first, candidate_first)
+    last_score = _token_similarity(input_last, candidate_last)
+    cross_first_last = _token_similarity(input_first, candidate_last)
+    cross_last_first = _token_similarity(input_last, candidate_first)
+    score = (first_score * 0.42) + (last_score * 0.42) + (full_score * 0.16)
+    if cross_first_last > first_score + 0.14:
+        score -= 0.08
+    if cross_last_first > last_score + 0.14:
+        score -= 0.08
+    return score
 
 
 def _single_strong_candidate_score(input_name: str, candidate: CanonicalPlayerIdentity) -> float:
@@ -712,11 +809,39 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
 
     ranked_all: list[tuple[float, CanonicalPlayerIdentity]] = []
     ranked_viable: list[tuple[float, CanonicalPlayerIdentity]] = []
+    name_bias = _first_name_bias(player_name)
+    input_parts = [part for part in normalized.split() if part]
+    if len(input_parts) == 1:
+        token = input_parts[0]
+        if token.endswith(('ic', 'vic', 'son')):
+            name_bias = -0.12
+        best_first = 0.0
+        best_last = 0.0
+        for candidate in by_id.values():
+            candidate_tokens = _split_name_tokens(candidate.full_name)
+            if len(candidate_tokens) < 2:
+                continue
+            best_first = max(best_first, _token_similarity(token, candidate_tokens[0]))
+            best_last = max(best_last, _token_similarity(token, ''.join(candidate_tokens[1:])))
+        if name_bias > -0.11 and best_last - best_first > 0.06:
+            name_bias = -0.12
+        elif name_bias < 0.11 and best_first - best_last > 0.06:
+            name_bias = 0.12
     for p in by_id.values():
-        score = max(
-            SequenceMatcher(None, normalized, p.normalized_name).ratio(),
-            *(SequenceMatcher(None, normalized, normalize_entity_name(alias)).ratio() for alias in p.alternate_names),
-        )
+        base_score = _candidate_similarity_score(player_name, p, first_name_bias=name_bias)
+        legacy_score = SequenceMatcher(None, normalized, p.normalized_name).ratio()
+        alias_score = max((SequenceMatcher(None, normalized, normalize_entity_name(alias)).ratio() for alias in p.alternate_names), default=0.0)
+        blended_legacy = (legacy_score * 0.78) + (alias_score * 0.22)
+        if len(input_parts) == 1:
+            candidate_tokens = _split_name_tokens(p.full_name)
+            if len(candidate_tokens) >= 2:
+                first_token_score = _token_similarity(input_parts[0], candidate_tokens[0])
+                last_token_score = _token_similarity(input_parts[0], ''.join(candidate_tokens[1:]))
+                if name_bias > 0 and last_token_score > first_token_score + 0.14:
+                    blended_legacy -= 0.07
+            score = (base_score * 0.72) + (blended_legacy * 0.28) if name_bias > 0 else max(base_score, blended_legacy)
+        else:
+            score = max(base_score, blended_legacy)
         ranked_all.append((score, p))
         if score >= 0.75:
             ranked_viable.append((score, p))

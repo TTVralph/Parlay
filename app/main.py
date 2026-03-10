@@ -1225,6 +1225,7 @@ Murray over 2.5 threes'></textarea>
 
         const playerSelectionApplied=Boolean(item.player_selection_applied||item.selection_source==='user_selected');
         const selectedPlayerLabel=item.selected_player_name||item.canonical_player_name||details?.selected_player_name||details?.canonical_matched_player_name||null;
+        const candidatePlayers=(item.candidate_players||[]).filter((candidate)=>candidate&&candidate.player_name);
         const candidateGames=(item.candidate_games||[]).length
           ?(item.candidate_games||[])
           :(nextState.wasManuallySelected ? (nextState.originalCandidateEvents||[]) : []);
@@ -1324,6 +1325,30 @@ Murray over 2.5 threes'></textarea>
             selectionBadge.textContent=`Using selected player: ${selectedPlayerLabel}`;
             eventCell.appendChild(selectionBadge);
           }
+          const shouldShowPicker=item.result==='review'&&!playerSelectionApplied&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';
+          if(shouldShowPicker){
+            const pickerLabel=document.createElement('div');
+            pickerLabel.style.marginTop='8px';
+            pickerLabel.style.fontSize='12px';
+            pickerLabel.style.fontWeight='600';
+            pickerLabel.textContent='Did you mean?';
+            eventCell.appendChild(pickerLabel);
+            candidatePlayers.forEach((candidate)=>{
+              const pickBtn=document.createElement('button');
+              pickBtn.type='button';
+              pickBtn.className='secondary';
+              pickBtn.style.marginTop='6px';
+              pickBtn.style.marginRight='6px';
+              const teamText=candidate.team_name?` (${candidate.team_name})`:'';
+              pickBtn.textContent=`${candidate.player_name}${teamText}`;
+              pickBtn.addEventListener('click',()=>{
+                if(!candidate.player_id){return;}
+                selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:candidate.player_id};
+                submitCheck();
+              });
+              eventCell.appendChild(pickBtn);
+            });
+          }
         }else{
           const fallbackReason=bestReviewReason(item);
           const reasonNode=document.createElement('div');
@@ -1339,7 +1364,6 @@ Murray over 2.5 threes'></textarea>
             eventCell.appendChild(suggestion);
           }
 
-          const candidatePlayers=(item.candidate_players||[]).filter((candidate)=>candidate&&candidate.player_name);
           if(playerSelectionApplied&&selectedPlayerLabel){
             const selectionBadge=document.createElement('div');
             selectionBadge.style.marginTop='6px';
@@ -1906,6 +1930,22 @@ def _build_player_resolution_details(item: GradedLeg, *, result: str, did_you_me
     return details
 
 
+
+
+_REVIEW_REASON_TEXT_BY_CODE: dict[str, str] = {
+    'PLAYER_AMBIGUOUS': 'Multiple plausible player matches found; select the correct player.',
+    'PLAYER_UNRESOLVED': 'Player name could not be resolved confidently.',
+    'INVALID_SELECTED_PLAYER_ID': 'Selected player could not be applied; please choose again.',
+    'PLAYER_NOT_ON_EVENT_ROSTER': 'Resolved player is not on the matched game roster.',
+    'EVENT_NOT_FOUND': 'No matching game was found for the resolved team/date.',
+}
+
+
+def _review_reason_text_from_code(code: str | None, fallback: str | None) -> str:
+    if code and code in _REVIEW_REASON_TEXT_BY_CODE:
+        return _REVIEW_REASON_TEXT_BY_CODE[code]
+    return fallback or 'Needs manual review. We could not confidently resolve this leg.'
+
 def _event_resolution_source(item: GradedLeg) -> str:
     matched_by = (item.leg.matched_by or '').lower()
     if matched_by.startswith('team_'):
@@ -1928,18 +1968,21 @@ def _review_reason_code(item: GradedLeg, *, did_you_mean: str | None) -> str | N
         return None
     reason_text = ((item.review_reason_text or item.review_reason or item.explanation_reason or '')).lower()
     notes = ' | '.join(item.leg.notes).lower()
+    unmatched_reason_code = str((item.settlement_diagnostics or {}).get('unmatched_reason_code') or '').lower()
     identity_method = item.identity_match_method or item.leg.identity_match_method
     identity_confidence = item.identity_match_confidence or item.leg.identity_match_confidence
-    if identity_method == 'ambiguous' or identity_confidence == 'LOW' or 'identity ambiguous' in reason_text:
-        return 'PLAYER_AMBIGUOUS'
     if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_PLAYER_ID':
         return 'INVALID_SELECTED_PLAYER_ID'
+    if 'player_not_on_event_roster' in unmatched_reason_code or 'player not found on event roster' in reason_text or 'does not include player team' in notes:
+        return 'PLAYER_NOT_ON_EVENT_ROSTER'
+    if identity_method == 'ambiguous' or identity_confidence == 'LOW' or 'identity ambiguous' in reason_text:
+        return 'PLAYER_AMBIGUOUS'
     if did_you_mean or 'player not found' in reason_text or 'likely refers to' in reason_text:
         return 'PLAYER_UNRESOLVED'
     if len(item.candidate_games or item.candidate_events or item.leg.event_candidates) > 1 or 'multiple possible games' in notes:
         return 'MULTIPLE_GAMES_MATCHED'
-    if 'no game found for resolved team on date' in notes:
-        return 'TEAM_DATE_MISMATCH'
+    if 'no game found for resolved team on date' in notes or unmatched_reason_code in {'event_unresolved', 'no_candidate_events'}:
+        return 'EVENT_NOT_FOUND'
     if 'parse stat type' in reason_text or 'parse stat type' in notes:
         return 'STAT_TYPE_UNCLEAR'
     if 'event unresolved' in reason_text or 'no candidate events' in reason_text or 'no_candidate_events' in str(item.settlement_diagnostics):
@@ -1985,13 +2028,15 @@ def _build_review_details(item: GradedLeg, *, result: str, did_you_mean: str | N
     candidate_players = _candidate_players_payload(item)
     matched_event_count = 1 if (item.matched_event or item.leg.event_label) else 0
 
-    reason_text = item.review_reason_text or item.review_reason or item.explanation_reason or 'Needs manual review. We could not confidently resolve this leg.'
+    reason_code = _review_reason_code(item, did_you_mean=did_you_mean) or 'PARTIAL_SLIP_REVIEW'
+    fallback_reason = item.review_reason_text or item.review_reason or item.explanation_reason
+    reason_text = _review_reason_text_from_code(reason_code, fallback_reason)
     details: dict[str, object] = {
         **player_resolution_details,
         'candidate_count': len(candidate_players),
         'matched_event_count': matched_event_count,
         'event_resolution_source': _event_resolution_source(item),
-        'review_reason_code': _review_reason_code(item, did_you_mean=did_you_mean) or 'PARTIAL_SLIP_REVIEW',
+        'review_reason_code': reason_code,
         'review_reason_text': reason_text,
     }
     if did_you_mean:
@@ -2094,6 +2139,7 @@ def _process_public_check_text(
 
         resolution_details = _build_player_resolution_details(item, result=result, did_you_mean=did_you_mean)
         review_details = _build_review_details(item, result=result, did_you_mean=did_you_mean)
+        effective_review_text = (review_details or {}).get('review_reason_text') if isinstance(review_details, dict) else None
 
         legs.append({
             'leg_id': str(index),
@@ -2151,7 +2197,7 @@ def _process_public_check_text(
             'grading_confidence': item.settlement_explanation.grading_confidence if item.settlement_explanation else None,
             'settlement_diagnostics': item.settlement_diagnostics,
             'unmatched_reason_code': (item.settlement_diagnostics or {}).get('unmatched_reason_code'),
-            'review_reason_text': item.review_reason_text,
+            'review_reason_text': effective_review_text or item.review_reason_text,
             'did_you_mean': did_you_mean,
             'review_details': review_details,
             'resolution_details': resolution_details,
