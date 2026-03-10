@@ -219,3 +219,29 @@ def test_check_page_uploading_different_screenshot_triggers_new_parse():
     assert "function getScreenshotSignature(file){" in html
     assert "const nextSignature=getScreenshotSignature(file);" in html
     assert "screenshotNeedsParse=Boolean(file)&&nextSignature!==parsedScreenshotSignature;" in html
+
+
+def test_check_page_renders_compact_result_summary_chips():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "id='resultSummary'" in html
+    assert "countLegResults(legs)" in html
+    assert "<span class='result-chip'>${counts.total} Legs</span>" in html
+    assert "<span class='result-chip'>${counts.won} Won</span>" in html
+    assert "<span class='result-chip'>${counts.lost} Lost</span>" in html
+    assert "<span class='result-chip'>${counts.review} Review</span>" in html
+
+
+def test_check_page_renders_metadata_summary_row_when_available():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "id='metaSummary'" in html
+    assert "Sport: ${sports[0]}" in html
+    assert "Bet date: ${betDate}" in html
+    assert "Stake: $${Number(payload.stake_amount).toFixed(2)}" in html
+    assert "Est. payout: $${Number(payload.estimated_payout).toFixed(2)}" in html
+    assert "if(hasStake&&payload.payout_message)" in html
