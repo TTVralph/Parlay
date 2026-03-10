@@ -18,10 +18,14 @@ MARKET_PATTERN = (
     r"p\+a|pts\+ast|points assists|r\+a|reb\+ast|rebounds assists|"
     r"3s|3pm|3 ptm|3pt made|3ptm|threes|three pointers|three-pointers|threes made|"
     r"3 pointers made|3-pointers made|three pointers made|three-point field goals made|three point field goals made|"
-    r"pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits"
+    r"pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits|triple\s*double|double\s*double"
 )
 OVER_UNDER_PATTERN = re.compile(
     rf"^(?P<name>[\w .\-'’]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>{MARKET_PATTERN})?$",
+    re.I,
+)
+YES_NO_PATTERN = re.compile(
+    r"^(?P<name>[\w .\-'’]+?)\s+(?P<market>triple\s*double|double\s*double)\s+(?P<dir>yes|no)$",
     re.I,
 )
 NAMED_MARKET_PATTERN = re.compile(
@@ -164,6 +168,26 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='game_total', direction=direction, line=line_value, display_line=str(line_value), confidence=0.82, notes=['Will infer event from other legs in same ticket when possible']))
             continue
 
+        yes_no_match = YES_NO_PATTERN.match(normalized_line)
+        if yes_no_match:
+            parsed_name = _normalize_whitespace(yes_no_match.group('name'))
+            resolved_player, resolution_conf = _player_lookup(parsed_name)
+            player = resolved_player or parsed_name
+            market_raw = yes_no_match.group('market').lower()
+            market_type = _market_lookup(market_raw)
+            direction = yes_no_match.group('dir').lower()
+            sport = _infer_sport(player=player, sport_hint=line_sport_hint)
+            parse_confidence = (1.0 + (1.0 if market_type else 0.0) + (1.0 if resolved_player else 0.7)) / 3.0
+            confidence = max(parse_confidence, resolution_conf if resolved_player else parse_confidence)
+            notes = list(opponent_note)
+            if not market_type:
+                notes.append('Could not parse stat type')
+                market_type = 'player_points'
+            if confidence < 0.9:
+                notes.append('Parsed player name from raw text; alias not found')
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction=direction, line=1.0, display_line=direction.title(), confidence=confidence, notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player))
+            continue
+
         ou_match = OVER_UNDER_PATTERN.match(normalized_line)
         if ou_match:
             parsed_name = _normalize_whitespace(ou_match.group('name'))
@@ -236,6 +260,8 @@ def is_valid_leg(leg: Leg) -> bool:
         return bool(leg.team) and (leg.market_type != 'spread' or leg.line is not None)
     if leg.market_type == 'game_total':
         return leg.direction is not None and leg.line is not None
+    if leg.market_type in {'player_triple_double', 'player_double_double'}:
+        return bool(leg.player and leg.direction in {'yes', 'no'})
     return bool(leg.player and leg.direction and leg.line is not None)
 
 

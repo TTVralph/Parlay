@@ -1,4 +1,4 @@
-from app.screenshot_parser import parse_screenshot_text
+from app.screenshot_parser import normalize_sportsbook_ocr_text, parse_screenshot_text
 
 
 def test_parse_screenshot_extracts_multiple_legs_and_date_and_ignores_odds() -> None:
@@ -35,3 +35,61 @@ def test_parse_screenshot_handles_noisy_line_breaks_and_dedupes() -> None:
     assert len(parsed.parsed_legs) == 1
     assert parsed.parsed_legs[0].direction == 'under'
     assert parsed.parsed_legs[0].stat_type == 'threes'
+
+
+def test_bet365_player_and_market_lines_normalize_and_parse() -> None:
+    raw = """
+    Bet365 Bet Slip
+    Nikola Jokic
+    O26.5 Pts
+    Russell Westbrook
+    Triple Double Yes
+    Cash Out
+    To Pay $145.00
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert 'Nikola Jokic Over 26.5 Points' in normalized
+    assert 'Russell Westbrook Triple Double Yes' in normalized
+    assert 'Cash Out' not in normalized
+
+    parsed = parse_screenshot_text(raw, raw)
+    labels = [leg.normalized_label for leg in parsed.parsed_legs]
+    assert 'Nikola Jokic Over 26.5 Points' in labels
+    assert 'Russell Westbrook Triple Double Yes' in labels
+
+
+def test_fanduel_player_plus_over_under_format_parses() -> None:
+    raw = """
+    FanDuel
+    Jalen Brunson
+    Over 25.5 Pts + Ast
+    Track
+    """
+    parsed = parse_screenshot_text(raw, raw)
+    assert len(parsed.parsed_legs) == 1
+    assert parsed.parsed_legs[0].normalized_label == 'Jalen Brunson Over 25.5 Points + Assists'
+
+
+def test_draftkings_shorthand_lines_parse() -> None:
+    raw = """
+    DraftKings
+    Stephen Curry O4.5 Ast
+    Anthony Davis U11.5 Reb
+    Share
+    Wager $20
+    """
+    parsed = parse_screenshot_text(raw, raw)
+    labels = [leg.normalized_label for leg in parsed.parsed_legs]
+    assert 'Stephen Curry Over 4.5 Assists' in labels
+    assert 'Anthony Davis Under 11.5 Rebounds' in labels
+
+
+def test_betmgm_double_double_yes_no_parses() -> None:
+    raw = """
+    BetMGM
+    Bam Adebayo Double Double No
+    Boost
+    """
+    parsed = parse_screenshot_text(raw, raw)
+    assert len(parsed.parsed_legs) == 1
+    assert parsed.parsed_legs[0].normalized_label == 'Bam Adebayo Double Double No'

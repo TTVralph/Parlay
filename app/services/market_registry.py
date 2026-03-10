@@ -129,6 +129,8 @@ CANONICAL_TO_PLAYER_MARKET = {
     'pr': 'player_pr',
     'pa': 'player_pa',
     'ra': 'player_ra',
+    'double_double': 'player_double_double',
+    'triple_double': 'player_triple_double',
 }
 
 PLAYER_MARKET_TO_CANONICAL = {value: key for key, value in CANONICAL_TO_PLAYER_MARKET.items()}
