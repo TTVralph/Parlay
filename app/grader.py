@@ -148,6 +148,8 @@ def _base_leg_kwargs(leg: Leg, *, input_source_path: str = 'manual_text') -> dic
         'selected_player_id': leg.selected_player_id,
         'selection_source': leg.selection_source,
         'selection_explanation': leg.selection_explanation,
+        'selection_applied': leg.selection_applied,
+        'selection_error_code': leg.selection_error_code,
         'canonical_player_name': leg.canonical_player_name,
     }
 
@@ -204,6 +206,8 @@ def _review_reason_from_notes(leg: Leg) -> str:
         return 'Could not parse stat type'
     if any('player identity ambiguous' in note for note in lowered_notes):
         return 'player identity ambiguous'
+    if any('manual player selection invalid' in note for note in lowered_notes):
+        return 'Selected player could not be applied because the player ID was not found in the active directory.'
     if any('player not found in sport directory' in note for note in lowered_notes):
         return 'player not found in sport directory'
     if any('team could not be resolved from player identity' in note for note in lowered_notes):
@@ -309,6 +313,16 @@ def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_
             input_source_path=input_source_path,
         )
         return graded
+
+    if leg.selection_error_code == 'INVALID_SELECTED_PLAYER_ID':
+        return explained(
+            settlement='unmatched',
+            reason='Selected player override is invalid',
+            reason_code=reason_codes.INVALID_SELECTED_PLAYER_ID,
+            reason_message='Selected player could not be applied because the player ID was not found in the active directory.',
+            review_reason='Selected player could not be applied because the player ID was not found in the active directory.',
+            explanation_reason='Selected player could not be applied because the player ID was not found in the active directory.',
+        )
 
     if leg.confidence < 0.75:
         return explained(

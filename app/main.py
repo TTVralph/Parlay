@@ -1932,6 +1932,8 @@ def _review_reason_code(item: GradedLeg, *, did_you_mean: str | None) -> str | N
     identity_confidence = item.identity_match_confidence or item.leg.identity_match_confidence
     if identity_method == 'ambiguous' or identity_confidence == 'LOW' or 'identity ambiguous' in reason_text:
         return 'PLAYER_AMBIGUOUS'
+    if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_PLAYER_ID':
+        return 'INVALID_SELECTED_PLAYER_ID'
     if did_you_mean or 'player not found' in reason_text or 'likely refers to' in reason_text:
         return 'PLAYER_UNRESOLVED'
     if len(item.candidate_games or item.candidate_events or item.leg.event_candidates) > 1 or 'multiple possible games' in notes:
@@ -2112,11 +2114,13 @@ def _process_public_check_text(
             'resolved_player_name': item.resolved_player_name or item.leg.resolved_player_name,
             'resolved_team': item.resolved_team or item.leg.resolved_team,
             'resolved_player_id': item.resolved_player_id or item.leg.resolved_player_id,
-            'player_selection_applied': (item.identity_match_method or item.leg.identity_match_method) == 'manual_selection',
+            'player_selection_applied': bool(item.selection_applied or item.leg.selection_applied or (item.identity_match_method or item.leg.identity_match_method) == 'manual_selection'),
             'selected_player_name': item.selected_player_name or item.leg.selected_player_name,
             'selected_player_id': item.selected_player_id or item.leg.selected_player_id,
             'selection_source': item.selection_source or item.leg.selection_source,
             'selection_explanation': item.selection_explanation or item.leg.selection_explanation,
+            'selection_applied': bool(item.selection_applied or item.leg.selection_applied),
+            'selection_error_code': item.selection_error_code or item.leg.selection_error_code,
             'canonical_player_name': item.canonical_player_name or item.leg.canonical_player_name,
             'parsed_player_name': item.parsed_player_name or item.leg.parsed_player_name,
             'normalized_stat_type': item.normalized_stat_type or item.leg.normalized_stat_type,
