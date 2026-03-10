@@ -269,6 +269,7 @@ def test_check_review_leg_includes_structured_review_metadata(monkeypatch):
     details = body['legs'][0]['review_details']
     assert details['player_resolution_status'] == 'ambiguous'
     assert details['player_resolution_method'] == 'manual_review'
+    assert details['player_resolution_explanation'] == 'player identity ambiguous'
     assert details['candidate_count'] == 1
     assert details['matched_event_count'] == 0
     assert details['event_resolution_source'] == 'player'
@@ -338,6 +339,67 @@ def test_check_valid_leg_does_not_include_review_details(monkeypatch):
     body = client.post('/check-slip', json={'text': 'Denver ML'}).json()
     assert body['legs'][0]['result'] == 'win'
     assert body['legs'][0]['review_details'] is None
+    assert body['legs'][0]['player_resolution_status'] == 'exact'
+    assert body['legs'][0]['player_resolution_method'] == 'exact'
+
+
+def test_check_single_strong_candidate_leg_includes_player_resolution_metadata(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        leg = Leg(
+            raw_text='Shai Gilly Alexander O5.5 AST',
+            sport='NBA',
+            market_type='player_assists',
+            player='Shai Gilly Alexander',
+            resolved_player_name='Shai Gilgeous-Alexander',
+            resolved_player_id='nba:1628983',
+            identity_match_method='single_strong_candidate',
+            identity_match_confidence='MEDIUM',
+            resolution_confidence=0.74,
+            direction='over',
+            line=5.5,
+            confidence=0.9,
+        )
+        return GradeResponse(overall='pending', legs=[GradedLeg(leg=leg, settlement='pending', reason='ok')])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Shai Gilly Alexander O5.5 AST'}).json()
+    leg = body['legs'][0]
+    assert leg['player_resolution_status'] == 'fuzzy_resolved'
+    assert leg['player_resolution_method'] == 'single_strong_candidate'
+    assert leg['player_resolution_confidence'] == 'medium'
+    assert leg['resolution_details']['canonical_matched_player_name'] == 'Shai Gilgeous-Alexander'
+
+
+def test_check_ambiguous_unresolved_leg_includes_specific_explanation(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        leg = Leg(
+            raw_text='Jalen over 20.5 points',
+            sport='NBA',
+            market_type='player_points',
+            player='Jalen',
+            identity_match_method='ambiguous',
+            identity_match_confidence='LOW',
+            resolution_ambiguity_reason='Multiple close player candidates found for "Jalen".',
+            candidate_players=['Jalen Brunson', 'Jalen Green'],
+            direction='over',
+            line=20.5,
+            confidence=0.9,
+        )
+        return GradeResponse(overall='needs_review', legs=[GradedLeg(leg=leg, settlement='unmatched', reason='x', review_reason='player identity ambiguous')])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Jalen over 20.5 points'}).json()
+    details = body['legs'][0]['review_details']
+    assert details['player_resolution_status'] == 'ambiguous'
+    assert details['player_resolution_explanation'] == 'Multiple close player candidates found for "Jalen".'
 
 
 def test_check_ambiguous_shorthand_stays_review_without_autocorrect(monkeypatch):

@@ -256,3 +256,24 @@ def test_check_page_renders_structured_review_reason_fallback_ui():
     assert 'Needs manual review. We could not confidently resolve this leg.' in html
     assert "const statusBadge=reviewStatusLabel(details);" in html
     assert "suggestion.textContent=didYouMeanText;" in html
+
+
+def test_check_page_renders_subtle_fuzzy_resolution_message_in_main_table():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "details.player_resolution_status==='fuzzy_resolved'" in html
+    assert 'Resolved from likely player name match' in html
+
+
+def test_check_page_shows_unresolved_typo_explanation_and_structured_details():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "details.player_resolution_status==='ambiguous'||details.player_resolution_status==='unresolved'" in html
+    assert 'Player resolution method:' in html
+    assert 'Player resolution confidence:' in html
+    assert 'Player resolution mode:' in html
+    assert 'Canonical matched player:' in html
