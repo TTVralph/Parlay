@@ -915,9 +915,21 @@ def public_check_page() -> HTMLResponse:
     button[disabled]{opacity:.6;cursor:not-allowed;}
     button.sample{margin-top:0;background:#1a2333;color:#dbeafe;border:1px solid #2a3a52;padding:8px 12px;border-radius:999px;}
     button.secondary{background:#1a2333;color:#dbeafe;border-color:#2a3a52;}
-    .candidate-btn{display:inline-flex;align-items:center;gap:6px;margin-top:6px;margin-right:8px;padding:9px 12px;border-radius:999px;border:1px solid #334155;background:#111827;color:#e2e8f0;cursor:pointer;pointer-events:auto;font-size:12px;font-weight:700;}
+    .candidate-btn{display:inline-flex;align-items:center;gap:6px;margin-top:8px;margin-right:8px;padding:11px 14px;border-radius:12px;border:1px solid #334155;background:#111827;color:#e2e8f0;cursor:pointer;pointer-events:auto;font-size:13px;font-weight:700;}
     .candidate-btn:hover{background:#1e293b;border-color:#3b82f6;}
+    .candidate-btn.selected{background:#1d4ed8;border-color:#60a5fa;color:#eff6ff;}
     .candidate-btn:focus-visible{outline:2px solid #60a5fa;outline-offset:2px;}
+    .review-panel{margin-top:6px;padding:10px;border:1px solid #854d0e;background:#2a1a05;border-radius:10px;color:#fde68a;}
+    .review-title{font-size:12px;font-weight:800;letter-spacing:.02em;text-transform:uppercase;}
+    .review-reason{margin-top:4px;font-size:13px;color:#fef3c7;}
+    .leg-progress{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+    .leg-progress-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #334155;border-radius:999px;padding:6px 10px;font-size:12px;background:#0b1220;color:#e2e8f0;font-weight:700;}
+    .leg-progress-chip.loss{border-color:#ef4444;color:#fecaca;}
+    .leg-progress-chip.win{border-color:#22c55e;color:#bbf7d0;}
+    .leg-progress-chip.review{border-color:#f59e0b;color:#fde68a;}
+    .autopsy-card{border:1px solid #7f1d1d;background:#2a1116;color:#fecaca;border-radius:12px;padding:12px;}
+    .autopsy-card.soft{border-color:#854d0e;background:#2a1a05;color:#fde68a;}
+
     #samples{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px;}
     #uploadWrap{margin-top:12px;padding:12px;border:1px dashed #334155;border-radius:12px;background:#0f172a;}
     #message{margin-top:12px;color:#bfdbfe;font-weight:600;}
@@ -975,6 +987,7 @@ Murray over 2.5 threes'></textarea>
   <div id='resultWrap' hidden class='card'>
     <div id='overall'></div>
     <div id='resultSummary' class='result-summary' hidden></div>
+    <div id='legProgressStrip' class='leg-progress' hidden></div>
     <div id='metaSummary' class='result-meta' hidden></div>
     <div id='diedHere' hidden></div>
     <div id='payoutOut' style='margin:8px 0;color:#cbd5e1;'></div>
@@ -1023,6 +1036,7 @@ Murray over 2.5 threes'></textarea>
     const overall=document.getElementById('overall');
     const resultSummary=document.getElementById('resultSummary');
     const metaSummary=document.getElementById('metaSummary');
+    const legProgressStrip=document.getElementById('legProgressStrip');
     const payoutOut=document.getElementById('payoutOut');
     const diedHere=document.getElementById('diedHere');
     const debugOut=document.getElementById('debugOut');
@@ -1308,7 +1322,7 @@ Murray over 2.5 threes'></textarea>
           const pickerLabel=document.createElement('div');
           pickerLabel.style.fontSize='12px';
           pickerLabel.style.fontWeight='600';
-          pickerLabel.textContent='Possible games';
+          pickerLabel.textContent='Multiple games found. Choose the correct one.';
           pickerWrap.appendChild(pickerLabel);
 
           const resetGameBtn=document.createElement('button');
@@ -1329,7 +1343,7 @@ Murray over 2.5 threes'></textarea>
             pickBtn.type='button';
             pickBtn.className='secondary candidate-btn';
             pickBtn.textContent=game.event_label||game.event_id;
-            if(selectedGameId&&selectedGameId===game.event_id){pickBtn.disabled=true;}
+            if(selectedGameId&&selectedGameId===game.event_id){pickBtn.classList.add('selected');}
             pickBtn.addEventListener('click',()=>{
               if(!game.event_id){return;}
               selectedGameByLegId={...selectedGameByLegId,[legId]:game.event_id};
@@ -1433,7 +1447,7 @@ Murray over 2.5 threes'></textarea>
             pickerLabel.style.marginTop='8px';
             pickerLabel.style.fontSize='12px';
             pickerLabel.style.fontWeight='600';
-            pickerLabel.textContent='Did you mean?';
+            pickerLabel.textContent='Multiple players matched. Choose the correct player.';
             eventCell.appendChild(pickerLabel);
             candidatePlayers.forEach((candidate)=>{
               const pickBtn=document.createElement('button');
@@ -1455,7 +1469,7 @@ Murray over 2.5 threes'></textarea>
         }else{
           const fallbackReason=bestReviewReason(item);
           const reasonNode=document.createElement('div');
-          reasonNode.textContent=fallbackReason ? `Review: ${fallbackReason}` : 'Review: Needs manual review.';
+          reasonNode.innerHTML=`<div class='review-panel'><div class='review-title'>⚠️ Needs manual review</div><div class='review-reason'>${escapeHtml(fallbackReason||'We could not confidently resolve this leg yet.')}</div></div>`;
           eventCell.appendChild(reasonNode);
           const didYouMeanText=(details&&details.did_you_mean)||item.did_you_mean;
           if(didYouMeanText){
@@ -1489,7 +1503,7 @@ Murray over 2.5 threes'></textarea>
             pickerLabel.style.marginTop='8px';
             pickerLabel.style.fontSize='12px';
             pickerLabel.style.fontWeight='600';
-            pickerLabel.textContent='Did you mean?';
+            pickerLabel.textContent='Multiple players matched. Choose the correct player.';
             eventCell.appendChild(pickerLabel);
 
             candidatePlayers.forEach((candidate)=>{
@@ -1500,7 +1514,7 @@ Murray over 2.5 threes'></textarea>
               pickBtn.style.marginRight='6px';
               const teamText=candidate.team_name?` (${candidate.team_name})`:'';
               pickBtn.textContent=`${candidate.player_name}${teamText}`;
-              if(selectedPlayerId&&selectedPlayerId===candidate.player_id){pickBtn.disabled=true;}
+              if(selectedPlayerId&&selectedPlayerId===candidate.player_id){pickBtn.classList.add('selected');}
               pickBtn.addEventListener('click',()=>{
                 if(!candidate.player_id){return;}
                 selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:candidate.player_id};
@@ -1542,6 +1556,29 @@ Murray over 2.5 threes'></textarea>
       return counts;
     }
 
+    function shortLegLabel(item){
+      const text=String(item.parsed_player_name||item.player_name||item.leg||'Leg').trim();
+      if(!text){return 'Leg';}
+      const parts=text.split(/\s+/);
+      if(parts.length===1){return parts[0].slice(0,10);}
+      return `${parts[0]} ${parts[parts.length-1].replace(/[^A-Za-z]/g,'').slice(0,1)}`.trim();
+    }
+
+    function renderProgressStrip(legs){
+      const chips=(legs||[]).map((item)=>{
+        const state=item.result==='unmatched'?'review':(item.result||'review');
+        const emoji=resultEmoji[state]||'🧐';
+        return `<span class='leg-progress-chip ${state}'>${escapeHtml(shortLegLabel(item))} ${emoji}</span>`;
+      });
+      legProgressStrip.innerHTML=chips.join('');
+      legProgressStrip.hidden=!chips.length;
+    }
+
+    function asNumber(value){
+      const n=Number(value);
+      return Number.isFinite(n)?n:null;
+    }
+
     function renderResultSummary(payload){
       const counts=countLegResults(payload.legs||[]);
       const firstLoss=(payload.legs||[]).find((item)=>item.result==='loss');
@@ -1568,9 +1605,20 @@ Murray over 2.5 threes'></textarea>
       if(firstLoss&&payload.parlay_result==='lost'){secondary+=` · Parlay died on ${firstLoss.leg||'a leg'}`;}
       metaSummary.innerHTML=`<span class='meta-chip'>${secondary}</span>${chips.join('')}`;
       metaSummary.hidden=false;
-      if(payload.parlay_result==='lost'&&firstLoss){
-        diedHere.innerHTML=`<div class='died-card'><strong>Parlay died here</strong><div style='margin-top:6px;'>${firstLoss.leg||'—'}</div><div style='margin-top:4px;font-size:12px;color:#fecaca;'>Needed ${firstLoss.line ?? '—'} · Actual ${firstLoss.actual_value ?? '—'}</div></div>`;
+      renderProgressStrip(payload.legs||[]);
+      const reviewMode=payload.parlay_result!=='lost';
+      if(firstLoss&&payload.parlay_result==='lost'){
+        const needed=asNumber(firstLoss.line);
+        const actual=asNumber(firstLoss.actual_value);
+        const missedBy=(needed!==null&&actual!==null)?(needed-actual):null;
+        diedHere.innerHTML=`<div class='autopsy-card'><strong>Parlay died here</strong><div style='margin-top:6px;'>${escapeHtml(firstLoss.leg||'—')}</div><div style='margin-top:4px;font-size:12px;'>Needed: ${needed!==null?needed:'—'}</div><div style='margin-top:2px;font-size:12px;'>Actual: ${actual!==null?actual:'—'}</div>${missedBy!==null?`<div style='margin-top:2px;font-size:12px;'>Missed by: ${Math.abs(missedBy)}</div>`:''}</div>`;
         diedHere.hidden=false;
+      }else if(counts.review>0||reviewMode){
+        const firstReview=(payload.legs||[]).find((item)=>item.result==='review'||item.result==='unmatched');
+        if(firstReview){
+          diedHere.innerHTML=`<div class='autopsy-card soft'><strong>Parlay autopsy</strong><div style='margin-top:6px;'>Still in review: ${escapeHtml(firstReview.leg||'A leg needs manual review.')}</div><div style='margin-top:2px;font-size:12px;'>Final miss point will appear once unresolved legs are matched.</div></div>`;
+          diedHere.hidden=false;
+        }
       }
     }
 
@@ -1692,6 +1740,8 @@ Murray over 2.5 threes'></textarea>
       debugOut.innerHTML='';
       resultSummary.innerHTML='';
       resultSummary.hidden=true;
+      legProgressStrip.hidden=true;
+      legProgressStrip.innerHTML='';
       metaSummary.innerHTML='';
       metaSummary.hidden=true;
       diedHere.hidden=true;

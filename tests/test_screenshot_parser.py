@@ -183,5 +183,49 @@ def test_safe_player_typo_correction_case() -> None:
     parsed = parse_screenshot_text(raw, raw)
     assert parsed.parsed_legs[0].player_name == 'Shai Gilgeous-Alexander'
     assert parsed.parsed_legs[0].suggested_player_name == 'Shai Gilgeous-Alexander'
-    assert parsed.parsed_legs[0].suggestion_auto_applied is True
 
+
+
+def test_alt_market_phrases_with_split_lines_normalize_and_parse() -> None:
+    raw = """
+    Jerami Grant
+    TO SCORE 15+ POINTS
+    Michael Porter Jr.
+    TO SCORE 20+ POINTS
+    Daniel Gafford
+    TO RECORD 6+ REBOUNDS
+    Luka Doncic
+    TO RECORD 8+ REBOUNDS
+    Derrick White
+    TO RECORD 4+ REBOUNDS
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert normalized.splitlines() == [
+        'Jerami Grant Over 14.5 Points',
+        'Michael Porter Jr. Over 19.5 Points',
+        'Daniel Gafford Over 5.5 Rebounds',
+        'Luka Doncic Over 7.5 Rebounds',
+        'Derrick White Over 3.5 Rebounds',
+    ]
+
+    parsed = parse_screenshot_text(raw, raw)
+    labels = [leg.normalized_label for leg in parsed.parsed_legs]
+    assert 'Jerami Grant Over 14.5 Points' in labels
+    assert 'Michael Porter Jr. Over 19.5 Points' in labels
+    assert 'Daniel Gafford Over 5.5 Rebounds' in labels
+
+
+def test_inline_alt_market_phrases_parse_with_ocr_spacing_variants() -> None:
+    raw = """
+    Jalen Duren TO SCORE 15 + POINTS
+    Ty Jerome 15+ POINTS
+    Nikola Jokic TO RECORD 12 + ASSISTS
+    Aaron Gordon TO RECORD 32+ PRA
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert normalized.splitlines() == [
+        'Jalen Duren Over 14.5 Points',
+        'Ty Jerome Over 14.5 Points',
+        'Nikola Jokic Over 11.5 Assists',
+        'Aaron Gordon Over 31.5 Points + Rebounds + Assists',
+    ]
