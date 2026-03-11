@@ -1,3 +1,4 @@
+import json
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -638,7 +639,8 @@ def test_check_slip_public_page_retains_manual_selection_context(monkeypatch):
 
     page = client.get(body['public_url'])
     assert page.status_code == 200
-    assert 'Using selected player: Jalen Brunson' in page.text
+    assert 'Selected player:' in page.text
+    assert 'Jalen Brunson' in page.text
 
 
 def test_check_selected_player_leg_id_keys_are_normalized_to_strings(monkeypatch):
@@ -747,3 +749,110 @@ def test_check_review_reason_text_uses_specific_message_not_generic(monkeypatch)
     reason = body['legs'][0]['review_reason_text']
     assert reason == 'Multiple plausible player matches found; select the correct player.'
     assert reason != 'Review: player/event validation failed'
+
+
+def test_check_slip_public_page_persists_override_player_and_event_state(monkeypatch):
+    from app.db.session import SessionLocal
+    from app.models import GradeResponse, GradedLeg, Leg
+    from app.services.repository import get_public_slip_result
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        selected_player = (kwargs.get('selected_player_by_leg_id') or {}).get('0')
+        selected_event = (kwargs.get('selected_event_by_leg_id') or {}).get('0')
+        leg = Leg(
+            raw_text='Jalen over 20.5 points',
+            sport='NBA',
+            market_type='player_points',
+            player='Jalen',
+            selected_player_name='Jalen Brunson' if selected_player else None,
+            selected_player_id='nba-jalen-brunson' if selected_player else None,
+            selection_source='user_selected' if selected_player else None,
+            selection_explanation='Used user-selected player: Jalen Brunson' if selected_player else None,
+            event_selection_applied=bool(selected_event),
+            selected_event_id='evt-123' if selected_event else None,
+            selected_event_label='Knicks @ Celtics' if selected_event else None,
+            override_used_for_grading=bool(selected_player or selected_event),
+            event_review_reason_text='Multiple possible games matched this leg' if not selected_event else None,
+            confidence=0.9,
+        )
+        return GradeResponse(
+            overall='pending',
+            legs=[
+                GradedLeg(
+                    leg=leg,
+                    settlement='pending',
+                    reason='ok',
+                    selection_applied=bool(selected_player),
+                    event_selection_applied=bool(selected_event),
+                    selected_player_name='Jalen Brunson' if selected_player else None,
+                    selected_player_id='nba-jalen-brunson' if selected_player else None,
+                    selected_event_id='evt-123' if selected_event else None,
+                    selected_event_label='Knicks @ Celtics' if selected_event else None,
+                    override_used_for_grading=bool(selected_player or selected_event),
+                )
+            ],
+        )
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={
+        'text': 'Jalen over 20.5 points',
+        'selected_player_by_leg_id': {'0': 'nba-jalen-brunson'},
+        'selected_event_by_leg_id': {'0': 'evt-123'},
+    }).json()
+
+    assert body['legs'][0]['override_used_for_grading'] is True
+    assert body['legs'][0]['override_grading_explanation'] == 'Used selected player and selected game for grading.'
+
+    db = SessionLocal()
+    try:
+        saved = get_public_slip_result(db, body['public_id'])
+        assert saved is not None
+        persisted_leg = json.loads(saved.legs_json)[0]
+    finally:
+        db.close()
+
+    assert persisted_leg['selected_player_name'] == 'Jalen Brunson'
+    assert persisted_leg['selected_player_id'] == 'nba-jalen-brunson'
+    assert persisted_leg['player_selection_applied'] is True
+    assert persisted_leg['selected_event_id'] == 'evt-123'
+    assert persisted_leg['selected_event_label'] == 'Knicks @ Celtics'
+    assert persisted_leg['event_selection_applied'] is True
+    assert persisted_leg['override_used_for_grading'] is True
+    assert persisted_leg['override_grading_explanation'] == 'Used selected player and selected game for grading.'
+    assert persisted_leg['selection_source'] == 'user_selected'
+    assert persisted_leg['selection_explanation'] == 'Used user-selected player: Jalen Brunson'
+
+    page = client.get(body['public_url'])
+    assert page.status_code == 200
+    assert 'Used selected player and selected game for grading.' in page.text
+    assert 'Selected player:' in page.text
+    assert 'Selected game:' in page.text
+
+
+def test_check_slip_public_page_preserves_specific_review_reason_on_reopen(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        leg = Leg(
+            raw_text='Denver ML',
+            sport='NBA',
+            market_type='moneyline',
+            team='Denver Nuggets',
+            confidence=0.9,
+            event_review_reason_text='No games found for the selected date window',
+        )
+        return GradeResponse(
+            overall='needs_review',
+            legs=[GradedLeg(leg=leg, settlement='unmatched', reason='x', review_reason='No games found for the selected date window')],
+        )
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Denver ML'}).json()
+    page = client.get(body['public_url'])
+    assert page.status_code == 200
+    assert 'No games found for the selected date window' in page.text
+    assert 'needs manual review' not in page.text.lower()
