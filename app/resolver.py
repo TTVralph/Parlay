@@ -484,7 +484,8 @@ def resolve_leg_events(
             selected_for_leg = selected_event_id
 
         updates['event_selection_applied'] = False
-        updates['override_used_for_grading'] = False
+        # Preserve player override state when event override handling runs.
+        updates['override_used_for_grading'] = bool(updates.get('override_used_for_grading'))
         updates['selected_event_id'] = selected_for_leg or None
         updates['selected_event_label'] = None
         updates['event_selection_source'] = 'auto'

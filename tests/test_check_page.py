@@ -118,6 +118,17 @@ def test_check_page_reset_selection_is_available_via_auto_match_option() -> None
     assert 'delete nextSelection[legId];' in html
 
 
+def test_check_page_can_reset_player_and_game_selection_independently() -> None:
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "resetPlayerBtn.textContent='Reset selected player'" in html
+    assert 'const nextSelection={...selectedPlayerByLegId};' in html
+    assert 'delete nextSelection[legId];' in html
+    assert 'const nextSelection={...selectedGameByLegId};' in html
+
+
 def test_check_page_share_actions_have_explicit_success_and_failure_feedback():
     client = TestClient(app)
     page = client.get('/check')
