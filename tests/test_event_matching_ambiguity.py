@@ -8,6 +8,7 @@ import app.main as main_module
 from app.grader import grade_text
 from app.providers.base import EventInfo
 from app.providers.sample_provider import SampleResultsProvider
+from app.identity_resolution import PlayerResolutionResult
 
 
 client = TestClient(main_module.app)
@@ -168,6 +169,13 @@ class _PerLegSelectionProvider:
 
     def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
         return 10.0
+
+    def is_player_on_event_roster(self, player: str, event_id: str | None = None):
+        roster = {
+            ('Cam Spencer', 'evt-a'): True,
+            ('Cam Spencer', 'evt-b'): False,
+        }
+        return roster.get((player, event_id), True)
 
 
 def test_selected_candidate_event_applies_only_to_target_leg(monkeypatch) -> None:
@@ -334,3 +342,124 @@ def test_selected_event_override_preserves_original_leg_text(monkeypatch) -> Non
     )
     assert resp.status_code == 200
     assert resp.json()['legs'][0]['leg'] == text
+
+
+def test_combined_selected_player_and_event_settles_leg(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, '_public_check_provider', _PerLegSelectionProvider())
+    monkeypatch.setattr('app.resolver.get_canonical_player_identity', lambda player_id, sport='NBA': type('Identity', (), {
+        'full_name': 'Cam Spencer',
+        'canonical_player_id': 'nba-cam-spencer',
+    })() if player_id == 'nba-cam-spencer' else None)
+    monkeypatch.setattr('app.resolver.resolve_player_identity', lambda player_name, sport='NBA': PlayerResolutionResult(
+        sport=sport,
+        resolved_player_name='Cam Spencer',
+        resolved_player_id='nba-cam-spencer',
+        resolved_team=None,
+        confidence=1.0,
+        ambiguity_reason=None,
+        confidence_level='HIGH',
+    ))
+
+    resp = client.post('/check-slip', json={
+        'text': 'Cam Spencer over 9.5 points',
+        'date_of_slip': '2026-03-09',
+        'search_historical': True,
+        'selected_player_by_leg_id': {'0': 'nba-cam-spencer'},
+        'selected_event_by_leg_id': {'0': 'evt-a'},
+    })
+    leg = resp.json()['legs'][0]
+    assert resp.status_code == 200
+    assert leg['result'] == 'win'
+    assert leg['player_selection_applied'] is True
+    assert leg['event_selection_applied'] is True
+    assert leg['override_used_for_grading'] is True
+    assert leg['override_grading_explanation'] == 'Used selected player and selected game for grading.'
+
+
+def test_combined_selected_player_valid_and_selected_event_invalid_is_safe_review(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, '_public_check_provider', _PerLegSelectionProvider())
+    monkeypatch.setattr('app.resolver.get_canonical_player_identity', lambda player_id, sport='NBA': type('Identity', (), {
+        'full_name': 'Cam Spencer',
+        'canonical_player_id': 'nba-cam-spencer',
+    })() if player_id == 'nba-cam-spencer' else None)
+    monkeypatch.setattr('app.resolver.resolve_player_identity', lambda player_name, sport='NBA': PlayerResolutionResult(
+        sport=sport,
+        resolved_player_name='Cam Spencer',
+        resolved_player_id='nba-cam-spencer',
+        resolved_team=None,
+        confidence=1.0,
+        ambiguity_reason=None,
+        confidence_level='HIGH',
+    ))
+
+    resp = client.post('/check-slip', json={
+        'text': 'Cam Spencer over 9.5 points',
+        'date_of_slip': '2026-03-09',
+        'search_historical': True,
+        'selected_player_by_leg_id': {'0': 'nba-cam-spencer'},
+        'selected_event_by_leg_id': {'0': 'bad-event'},
+    })
+    leg = resp.json()['legs'][0]
+    assert resp.status_code == 200
+    assert leg['result'] == 'review'
+    assert leg['selection_error_code'] == 'INVALID_SELECTED_EVENT_ID'
+    assert leg['override_grading_explanation'] == 'Used selected player for grading, but selected game could not be applied.'
+
+
+def test_combined_selected_event_valid_and_selected_player_invalid_is_safe_review(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, '_public_check_provider', _PerLegSelectionProvider())
+    monkeypatch.setattr('app.resolver.get_canonical_player_identity', lambda player_id, sport='NBA': None)
+    monkeypatch.setattr('app.resolver.resolve_player_identity', lambda player_name, sport='NBA': PlayerResolutionResult(
+        sport=sport,
+        resolved_player_name=None,
+        resolved_player_id=None,
+        resolved_team=None,
+        confidence=0.0,
+        ambiguity_reason='player identity ambiguous',
+        confidence_level='LOW',
+    ))
+
+    resp = client.post('/check-slip', json={
+        'text': 'Cam Spencer over 9.5 points',
+        'date_of_slip': '2026-03-09',
+        'search_historical': True,
+        'selected_player_by_leg_id': {'0': 'bad-player'},
+        'selected_event_by_leg_id': {'0': 'evt-a'},
+    })
+    leg = resp.json()['legs'][0]
+    assert resp.status_code == 200
+    assert leg['result'] == 'review'
+    assert leg['selection_error_code'] == 'INVALID_SELECTED_PLAYER_ID'
+    assert leg['event_selection_applied'] is True
+    assert leg['override_grading_explanation'] == 'Used selected game for grading, but player selection was not applied.'
+
+
+def test_combined_selected_player_not_on_selected_event_roster_returns_specific_review_reason(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, '_public_check_provider', _PerLegSelectionProvider())
+    monkeypatch.setattr('app.resolver._resolve_player_team', lambda *args, **kwargs: None)
+    monkeypatch.setattr('app.resolver.get_canonical_player_identity', lambda player_id, sport='NBA': type('Identity', (), {
+        'full_name': 'Cam Spencer',
+        'canonical_player_id': 'nba-cam-spencer',
+    })() if player_id == 'nba-cam-spencer' else None)
+    monkeypatch.setattr('app.resolver.resolve_player_identity', lambda player_name, sport='NBA': PlayerResolutionResult(
+        sport=sport,
+        resolved_player_name='Cam Spencer',
+        resolved_player_id='nba-cam-spencer',
+        resolved_team=None,
+        confidence=1.0,
+        ambiguity_reason=None,
+        confidence_level='HIGH',
+    ))
+
+    resp = client.post('/check-slip', json={
+        'text': 'Cam Spencer over 9.5 points',
+        'date_of_slip': '2026-03-09',
+        'search_historical': True,
+        'selected_player_by_leg_id': {'0': 'nba-cam-spencer'},
+        'selected_event_by_leg_id': {'0': 'evt-b'},
+    })
+    leg = resp.json()['legs'][0]
+    assert resp.status_code == 200
+    assert leg['result'] == 'review'
+    assert leg['review_reason_text'] == 'Matched game does not contain the resolved player on the roster.'
+    assert leg['event_review_reason_code'] == 'matched_event_rejected_by_roster_validation'

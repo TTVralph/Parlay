@@ -1163,7 +1163,7 @@ Murray over 2.5 threes'></textarea>
         const overrideUsedForGrading=Boolean(item.override_used_for_grading);
         const eventSelectionApplied=Boolean(item.event_selection_applied||item.event_selection_source==='user_selected'||selectedGameByLegId[legId]);
         const selectedPlayerLabel=item.selected_player_name||item.canonical_player_name||details?.selected_player_name||details?.canonical_matched_player_name||null;
-        const selectedEventLabel=item.selected_event_label||item.matched_event||null;
+        const selectedEventLabel=item.selected_event_label||item.matched_event||((selectedGameByLegId[legId]&&((item.candidate_games||[]).find((game)=>game.event_id===selectedGameByLegId[legId])?.event_label))||null);
         const overrideStatusLabel=overrideStatusText(item,{playerSelectionApplied,eventSelectionApplied,overrideUsedForGrading});
         const possibleGames=(item.candidate_events||[]).length?`<div style="margin-top:4px"><strong>Possible games:</strong> ${(item.candidate_events||[]).map((e)=>`${e.event_label||e.event_id} (${e.event_date||'—'})`).join(' • ')}</div>`:'';
         detailsBody.innerHTML=`
@@ -1439,6 +1439,19 @@ Murray over 2.5 threes'></textarea>
               manualNote.style.color='#1d4ed8';
               manualNote.textContent='Manual player selection applied';
               eventCell.appendChild(manualNote);
+
+              const resetPlayerBtn=document.createElement('button');
+              resetPlayerBtn.type='button';
+              resetPlayerBtn.className='secondary';
+              resetPlayerBtn.style.marginTop='6px';
+              resetPlayerBtn.textContent='Reset selected player';
+              resetPlayerBtn.addEventListener('click',()=>{
+                const nextSelection={...selectedPlayerByLegId};
+                delete nextSelection[legId];
+                selectedPlayerByLegId=nextSelection;
+                submitCheck();
+              });
+              eventCell.appendChild(resetPlayerBtn);
             }
           }
         }
@@ -2081,26 +2094,31 @@ def _build_review_details(item: GradedLeg, *, result: str, did_you_mean: str | N
 
 def _override_grading_explanation(item: GradedLeg, *, result: str) -> str | None:
     override_used = bool(item.override_used_for_grading or item.leg.override_used_for_grading)
-    player_selected = bool(item.selection_applied or item.leg.selection_applied or (item.selection_source or item.leg.selection_source) == 'user_selected')
-    event_selected = bool(item.event_selection_applied or item.leg.event_selection_applied or (item.event_selection_source or item.leg.event_selection_source) == 'user_selected')
+    player_applied = bool(item.selection_applied or item.leg.selection_applied)
+    event_applied = bool(item.event_selection_applied or item.leg.event_selection_applied)
+    player_selected = bool(player_applied or (item.selection_source or item.leg.selection_source) == 'user_selected' or (item.selected_player_id or item.leg.selected_player_id))
+    event_selected = bool(event_applied or (item.event_selection_source or item.leg.event_selection_source) == 'user_selected' or (item.selected_event_id or item.leg.selected_event_id))
+
+    if player_applied and event_applied:
+        return 'Used selected player and selected game for grading.'
+    if player_applied and event_selected and not event_applied:
+        return 'Used selected player for grading, but selected game could not be applied.'
+    if event_applied and player_selected and not player_applied:
+        return 'Used selected game for grading, but player selection was not applied.'
+    if event_applied:
+        return 'Used selected game for grading.'
+    if player_applied:
+        return 'Used selected player for grading.'
 
     if override_used:
-        if event_selected:
-            return 'Used selected game for grading.'
-        if player_selected:
-            return 'Used selected player for grading.'
         return 'Manual selection used for grading.'
 
+    if player_selected and event_selected:
+        return 'Selected player and game were recorded, but could not both be applied for final grading.'
     if event_selected:
-        if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_EVENT_ID':
-            return 'Selected game could not be applied.'
-        return 'Selected game was recorded, but final grading still used auto-matched event.'
-
+        return 'Selected game could not be applied.' if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_EVENT_ID' else 'Selected game was recorded, but final grading still used auto-matched event.'
     if player_selected:
-        if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_PLAYER_ID':
-            return 'Selected player could not be applied.'
-        return 'Selected player was recorded, but final grading still used auto-matched player.'
-
+        return 'Selected player could not be applied.' if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_PLAYER_ID' else 'Selected player was recorded, but final grading still used auto-matched player.'
     return None
 
 
