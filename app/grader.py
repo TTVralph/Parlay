@@ -9,6 +9,7 @@ from .services.settlement_explainer import build_settlement_explanation, with_ex
 from .services.market_registry import MARKET_REGISTRY, player_market_to_canonical
 from .services.play_by_play_provider import ESPNPlayByPlayProvider, PlayByPlayEvent
 from .services.provider_router import ProviderRouter
+from .services.event_snapshot import EventSnapshot, EventSnapshotService
 from .providers.base import ResultsProvider
 from .providers.factory import get_results_provider
 from .event_matcher import resolve_leg_events
@@ -344,6 +345,7 @@ def settle_leg(
     provider: ResultsProvider,
     *,
     play_by_play_provider: ESPNPlayByPlayProvider | None = None,
+    event_snapshot: EventSnapshot | None = None,
     code_path: str = 'manual_text_slip_grading',
     input_source_path: str = 'manual_text',
 ) -> GradedLeg:
@@ -539,7 +541,9 @@ def settle_leg(
                 review_reason='Play-by-play provider unavailable',
                 explanation_reason='stat unavailable',
             )
-        events = route.provider.get_normalized_events(leg.event_id)
+        events = event_snapshot.normalized_play_by_play if event_snapshot is not None else None
+        if events is None:
+            events = route.provider.get_normalized_events(leg.event_id)
         if not events:
             settlement_diagnostics['settlement_failure_reason'] = 'missing play-by-play payload'
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.MISSING_STAT_SOURCE
@@ -578,7 +582,10 @@ def settle_leg(
             player_found_in_boxscore=True,
         )
 
-    event_info = _event_info_for_leg(leg, provider)
+    event_info = {
+        'home_team': (event_snapshot.home_team or {}).get('name'),
+        'away_team': (event_snapshot.away_team or {}).get('name'),
+    } if event_snapshot is not None else _event_info_for_leg(leg, provider)
     settlement_diagnostics['final_matched_event'] = leg.event_label
     validation = validate_player_event_match(player_lookup_name, event_info, leg.resolved_team, provider, event_id=leg.event_id)
     settlement_diagnostics['roster_validation_result'] = 'pass' if validation.is_valid else 'fail'
@@ -750,11 +757,38 @@ def grade_text(
             screenshot_default_date=screenshot_default_date,
         )
     input_source_path = _input_source_from_code_path(code_path)
+
+    snapshots_by_event_id: dict[str, EventSnapshot] = {}
+    from .providers.espn_provider import ESPNNBAResultsProvider
+    if isinstance(provider, ESPNNBAResultsProvider):
+        router = ProviderRouter(box_score_provider=provider, play_by_play_provider=play_by_play_provider)
+        event_to_legs: dict[str, list[Leg]] = {}
+        for leg in resolved_legs:
+            if leg.event_id:
+                event_to_legs.setdefault(leg.event_id, []).append(leg)
+        if event_to_legs:
+            snapshot_service = EventSnapshotService(play_by_play_provider=play_by_play_provider)
+            event_dates = {
+                event_id: next((leg.matched_event_date for leg in legs if leg.matched_event_date), '')
+                for event_id, legs in event_to_legs.items()
+            }
+            include_play_by_play_event_ids = {
+                event_id
+                for event_id, legs in event_to_legs.items()
+                if any(router.route(leg.market_type).data_source == 'play_by_play' for leg in legs)
+            }
+            snapshots_by_event_id = snapshot_service.get_many_event_snapshots(
+                list(event_to_legs.keys()),
+                event_dates={k: v for k, v in event_dates.items() if v},
+                include_play_by_play_event_ids=include_play_by_play_event_ids,
+            )
+
     graded = [
         settle_leg(
             leg,
             provider,
             play_by_play_provider=play_by_play_provider,
+            event_snapshot=snapshots_by_event_id.get(leg.event_id or ''),
             code_path=code_path,
             input_source_path=input_source_path,
         )
