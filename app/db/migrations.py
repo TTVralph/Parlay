@@ -157,7 +157,17 @@ MIGRATIONS: tuple[Migration, ...] = (
             )
             '''.strip(),
         ),
-    )
+    ),
+
+    Migration(
+        version='20260311_009_public_slip_tracking',
+        description='add tracker key and checked timestamp to public slip results',
+        statements=(
+            'ALTER TABLE public_slip_results ADD COLUMN tracker_key VARCHAR(64)',
+            'ALTER TABLE public_slip_results ADD COLUMN checked_at DATETIME',
+            'CREATE INDEX IF NOT EXISTS ix_public_slip_results_tracker_key ON public_slip_results (tracker_key)',
+        ),
+    ),
 )
 
 def _table_exists(engine: Engine, table_name: str) -> bool:
@@ -251,6 +261,14 @@ def apply_migrations(engine: Engine) -> list[str]:
             '''.strip())
         elif migration.version == '20260310_008_public_slip_results':
             statements = list(migration.statements)
+        elif migration.version == '20260311_009_public_slip_tracking':
+            statements = []
+            if _table_exists(engine, 'public_slip_results') and not _column_exists(engine, 'public_slip_results', 'tracker_key'):
+                statements.append('ALTER TABLE public_slip_results ADD COLUMN tracker_key VARCHAR(64)')
+            if _table_exists(engine, 'public_slip_results') and not _column_exists(engine, 'public_slip_results', 'checked_at'):
+                statements.append('ALTER TABLE public_slip_results ADD COLUMN checked_at DATETIME')
+            if _table_exists(engine, 'public_slip_results'):
+                statements.append('CREATE INDEX IF NOT EXISTS ix_public_slip_results_tracker_key ON public_slip_results (tracker_key)')
         with engine.begin() as conn:
             for stmt in statements:
                 conn.execute(text(stmt))
