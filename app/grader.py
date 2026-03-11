@@ -157,6 +157,11 @@ def _base_leg_kwargs(leg: Leg, *, input_source_path: str = 'manual_text') -> dic
         'selection_applied': leg.selection_applied,
         'selection_error_code': leg.selection_error_code,
         'canonical_player_name': leg.canonical_player_name,
+        'event_selection_applied': leg.event_selection_applied,
+        'selected_event_id': leg.selected_event_id,
+        'selected_event_label': leg.selected_event_label,
+        'event_selection_source': leg.event_selection_source,
+        'event_selection_explanation': leg.event_selection_explanation,
     }
 
 
@@ -245,6 +250,7 @@ def _review_reason_text(review_reason: str | None, reason_code: str) -> str | No
     explicit = {
         reason_codes.IDENTITY_MATCH_AMBIGUOUS: 'Review: Multiple plausible player matches found; select the correct player.',
         reason_codes.INVALID_SELECTED_PLAYER_ID: 'Review: Selected player could not be applied; please choose again.',
+        'invalid_selected_event_id': 'Review: Selected game could not be applied; choose a listed game for this leg.',
         reason_codes.PLAYER_NOT_ON_EVENT_ROSTER: 'Review: Matched game does not contain the resolved player on the roster.',
         reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER: 'Review: Matched game does not contain the resolved player on the roster.',
         reason_codes.EVENT_UNRESOLVED: 'Review: No matching game was found for the resolved team/date.',
@@ -348,6 +354,16 @@ def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_
             reason_message='Selected player could not be applied because the player ID was not found in the active directory.',
             review_reason='Selected player could not be applied because the player ID was not found in the active directory.',
             explanation_reason='Selected player could not be applied because the player ID was not found in the active directory.',
+        )
+
+    if leg.selection_error_code == 'INVALID_SELECTED_EVENT_ID':
+        return explained(
+            settlement='unmatched',
+            reason='Selected event override is invalid',
+            reason_code='invalid_selected_event_id',
+            reason_message='Selected game could not be applied because the event ID was not found for this leg.',
+            review_reason='Selected game could not be applied because the event ID was not found for this leg.',
+            explanation_reason='Selected game could not be applied because the event ID was not found for this leg.',
         )
 
     if leg.confidence < 0.75:

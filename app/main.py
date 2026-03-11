@@ -1231,9 +1231,30 @@ Murray over 2.5 threes'></textarea>
         const candidateGames=(item.candidate_games||[]).length
           ?(item.candidate_games||[])
           :(nextState.wasManuallySelected ? (nextState.originalCandidateEvents||[]) : []);
+        const eventSelectionApplied=Boolean(item.event_selection_applied||item.event_selection_source==='user_selected'||selectedGameByLegId[legId]);
+        const selectedEventLabel=item.selected_event_label||item.matched_event||null;
 
-        if(candidateGames.length>0){
+        if(item.matched_event){
+          eventCell.textContent=item.matched_event;
+        }
+
+        const canPickGame=item.result==='review'&&candidateGames.length>0;
+        if(canPickGame){
+          const pickerWrap=document.createElement('div');
+          pickerWrap.style.marginTop='8px';
+          pickerWrap.style.padding='8px';
+          pickerWrap.style.border='1px solid #e2e8f0';
+          pickerWrap.style.borderRadius='8px';
+          pickerWrap.style.background='#f8fafc';
+
+          const pickerLabel=document.createElement('div');
+          pickerLabel.style.fontSize='12px';
+          pickerLabel.style.fontWeight='600';
+          pickerLabel.textContent='Pick a game';
+          pickerWrap.appendChild(pickerLabel);
+
           const select=document.createElement('select');
+          select.style.marginTop='6px';
           const prompt=document.createElement('option');
           prompt.value='';
           prompt.textContent='Auto-match (clear manual selection)';
@@ -1250,74 +1271,46 @@ Murray over 2.5 threes'></textarea>
             const nextValue=select.value||'';
             if(nextValue){
               selectedGameByLegId={...selectedGameByLegId,[legId]:nextValue};
-              legUiStateByLegId={
-                ...legUiStateByLegId,
-                [legId]:{
-                  ...nextState,
-                  originalCandidateEvents:nextState.originalCandidateEvents||(item.candidate_games||[]),
-                  originalReviewReason:nextState.originalReviewReason||(item.review_reason||item.explanation_reason||null),
-                  originalResult:nextState.originalResult||(item.result||null),
-                  autoMatchedEventId:nextState.autoMatchedEventId||(item.matched_event||null),
-                  wasManuallySelected:true,
-                },
-              };
+              legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,wasManuallySelected:true}};
             }else{
               const nextSelection={...selectedGameByLegId};
               delete nextSelection[legId];
               selectedGameByLegId=nextSelection;
-              legUiStateByLegId={
-                ...legUiStateByLegId,
-                [legId]:{...nextState,wasManuallySelected:false},
-              };
+              legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,wasManuallySelected:false}};
             }
             submitCheck();
           });
-          eventCell.appendChild(select);
-          if(nextState.wasManuallySelected){
-            const manualNote=document.createElement('div');
-            manualNote.style.marginTop='6px';
-            manualNote.style.fontSize='12px';
-            manualNote.style.color='#1d4ed8';
-            manualNote.textContent='Manual selection applied';
-            eventCell.appendChild(manualNote);
-          }
-          if(item.explanation_reason){
-            const reviewNote=document.createElement('div');
-            reviewNote.style.marginTop='6px';
-            reviewNote.style.fontSize='12px';
-            reviewNote.style.color='#475569';
-            reviewNote.textContent=`Review reason: ${bestReviewReason(item)}`;
-            eventCell.appendChild(reviewNote);
-          }
-          if(item.matched_event){
-            const matched=document.createElement('div');
-            matched.style.marginTop='6px';
-            matched.style.fontSize='12px';
-            matched.style.color='#475569';
-            matched.textContent=`Matched: ${item.matched_event}`;
-            eventCell.appendChild(matched);
-          }
+          pickerWrap.appendChild(select);
+          detailsBody.appendChild(pickerWrap);
+        }
 
-          if(nextState.wasManuallySelected){
-            const resetBtn=document.createElement('button');
-            resetBtn.type='button';
-            resetBtn.className='secondary';
-            resetBtn.style.marginTop='6px';
-            resetBtn.textContent='Reset selection';
-            resetBtn.disabled=false;
-            resetBtn.addEventListener('click',()=>{
-              const nextSelection={...selectedGameByLegId};
-              delete nextSelection[legId];
-              selectedGameByLegId=nextSelection;
-              legUiStateByLegId={
-                ...legUiStateByLegId,
-                [legId]:{...nextState,wasManuallySelected:false},
-              };
-              submitCheck();
-            });
-            eventCell.appendChild(resetBtn);
+        if(eventSelectionApplied&&selectedEventLabel){
+          const selectedEventBadge=document.createElement('div');
+          selectedEventBadge.style.marginTop='6px';
+          selectedEventBadge.style.fontSize='11px';
+          selectedEventBadge.style.color='#334155';
+          selectedEventBadge.textContent=`Using selected game: ${selectedEventLabel}`;
+          eventCell.appendChild(selectedEventBadge);
+        }
+
+        if(item.result==='review'&&eventSelectionApplied){
+          const downstreamNote=document.createElement('div');
+          downstreamNote.style.marginTop='4px';
+          downstreamNote.style.fontSize='11px';
+          downstreamNote.style.color='#475569';
+          if((item.selection_error_code||'')==='INVALID_SELECTED_EVENT_ID'){
+            downstreamNote.textContent='Selected game could not be applied; choose one of the listed games.';
+          }else if((item.event_review_reason_code||'')==='matched_event_rejected_by_roster_validation'||(item.review_reason||'').toLowerCase().includes('roster')){
+            downstreamNote.textContent='Player selection succeeded, but selected game did not contain the player on roster/stat validation.';
+          }else if((item.review_reason||'').toLowerCase().includes('roster')){
+            downstreamNote.textContent='Selected game did not contain the player.';
+          }else{
+            downstreamNote.textContent='Player selection succeeded, but another downstream grading validation still requires review.';
           }
-        }else if(item.matched_event){
+          eventCell.appendChild(downstreamNote);
+        }
+
+        if(item.matched_event&&!(item.result==='review'&&eventSelectionApplied)){
           eventCell.textContent=item.matched_event;
           if(playerSelectionApplied&&selectedPlayerLabel){
             const selectionBadge=document.createElement('div');
@@ -1938,6 +1931,7 @@ _REVIEW_REASON_TEXT_BY_CODE: dict[str, str] = {
     'PLAYER_AMBIGUOUS': 'Multiple plausible player matches found; select the correct player.',
     'PLAYER_UNRESOLVED': 'Player name could not be resolved confidently.',
     'INVALID_SELECTED_PLAYER_ID': 'Selected player could not be applied; please choose again.',
+    'INVALID_SELECTED_EVENT_ID': 'Selected game could not be applied; choose a listed game for this leg.',
     'PLAYER_NOT_ON_EVENT_ROSTER': 'Matched game does not contain the resolved player on the roster.',
     'EVENT_NOT_FOUND': 'No matching game was found for the resolved team/date.',
     'MULTIPLE_GAMES_MATCHED': 'Multiple plausible games were found for this player/date.',
@@ -1977,6 +1971,8 @@ def _review_reason_code(item: GradedLeg, *, did_you_mean: str | None) -> str | N
     identity_confidence = item.identity_match_confidence or item.leg.identity_match_confidence
     if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_PLAYER_ID':
         return 'INVALID_SELECTED_PLAYER_ID'
+    if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_EVENT_ID':
+        return 'INVALID_SELECTED_EVENT_ID'
     if 'player_not_on_event_roster' in unmatched_reason_code or 'player not found on event roster' in reason_text or 'does not include player team' in notes:
         return 'PLAYER_NOT_ON_EVENT_ROSTER'
     if identity_method == 'ambiguous' or identity_confidence == 'LOW' or 'identity ambiguous' in reason_text:
@@ -2177,6 +2173,11 @@ def _process_public_check_text(
             'selection_applied': bool(item.selection_applied or item.leg.selection_applied),
             'selection_error_code': item.selection_error_code or item.leg.selection_error_code,
             'canonical_player_name': item.canonical_player_name or item.leg.canonical_player_name,
+            'event_selection_applied': bool(item.event_selection_applied or item.leg.event_selection_applied),
+            'selected_event_id': item.selected_event_id or item.leg.selected_event_id,
+            'selected_event_label': item.selected_event_label or item.leg.selected_event_label,
+            'event_selection_source': item.event_selection_source or item.leg.event_selection_source,
+            'event_selection_explanation': item.event_selection_explanation or item.leg.event_selection_explanation,
             'parsed_player_name': item.parsed_player_name or item.leg.parsed_player_name,
             'normalized_stat_type': item.normalized_stat_type or item.leg.normalized_stat_type,
             'resolution_confidence': item.resolution_confidence or item.leg.resolution_confidence,
@@ -2184,6 +2185,8 @@ def _process_public_check_text(
             'matched_team': item.matched_team or item.leg.matched_team,
             'event_resolution_confidence': item.event_resolution_confidence or item.leg.event_resolution_confidence,
             'event_resolution_warnings': item.event_resolution_warnings or item.leg.event_resolution_warnings,
+            'event_review_reason_code': item.event_review_reason_code or item.leg.event_review_reason_code,
+            'event_review_reason_text': item.event_review_reason_text or item.leg.event_review_reason_text,
             'parse_confidence': item.parse_confidence or item.leg.parse_confidence,
             'matched_boxscore_player_name': item.matched_boxscore_player_name,
             'selected_bet_date': item.selected_bet_date or item.leg.selected_bet_date,

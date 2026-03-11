@@ -17,14 +17,14 @@ def test_ambiguous_player_prop_goes_to_needs_review() -> None:
     result = grade_text('Jamal Murray over 2.5 threes', provider=SampleResultsProvider(), include_historical=True)
     assert result.overall == 'needs_review'
     assert result.legs[0].settlement == 'unmatched'
-    assert any('multiple possible games' in note.lower() for note in result.legs[0].leg.notes)
+    assert any(('multiple possible games' in note.lower() or 'multiple games found for resolved team on date' in note.lower()) for note in result.legs[0].leg.notes)
 
 
 def test_ambiguous_team_moneyline_goes_to_needs_review() -> None:
     result = grade_text('Denver ML', provider=SampleResultsProvider(), include_historical=True)
     assert result.overall == 'needs_review'
     assert result.legs[0].settlement == 'unmatched'
-    assert any('multiple possible games' in note.lower() for note in result.legs[0].leg.notes)
+    assert any(('multiple possible games' in note.lower() or 'multiple games found for resolved team on date' in note.lower()) for note in result.legs[0].leg.notes)
 
 
 def test_posted_at_context_allows_confident_match() -> None:
@@ -270,3 +270,61 @@ def test_single_candidate_on_explicit_slip_date_auto_matches(monkeypatch) -> Non
     assert body['legs'][2]['matched_event'] == 'New York Knicks @ Denver Nuggets'
     assert all(leg['result'] != 'review' for leg in body['legs'])
     assert all(len(leg['candidate_games']) == 0 for leg in body['legs'])
+
+
+def test_selected_event_override_regrades_target_leg_and_sets_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, '_public_check_provider', _PerLegSelectionProvider())
+    resp = client.post(
+        '/check-slip',
+        json={
+            'text': 'Cam Spencer over 9.5 points',
+            'date_of_slip': '2026-03-09',
+            'search_historical': True,
+            'selected_event_by_leg_id': {'0': 'evt-a'},
+        },
+    )
+    assert resp.status_code == 200
+    leg = resp.json()['legs'][0]
+    assert leg['matched_event'] == 'LA Clippers @ Memphis Grizzlies'
+    assert leg['event_selection_applied'] is True
+    assert leg['selected_event_id'] == 'evt-a'
+    assert leg['selected_event_label'] == 'LA Clippers @ Memphis Grizzlies'
+    assert leg['event_selection_source'] == 'user_selected'
+    assert 'user-selected game override' in (leg['event_selection_explanation'] or '')
+
+
+def test_invalid_selected_event_id_is_non_fatal_and_returns_review(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, '_public_check_provider', _PerLegSelectionProvider())
+    resp = client.post(
+        '/check-slip',
+        json={
+            'text': 'Cam Spencer over 9.5 points',
+            'date_of_slip': '2026-03-09',
+            'search_historical': True,
+            'selected_event_by_leg_id': {'0': 'does-not-exist'},
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['ok'] is True
+    assert body['parlay_result'] == 'needs_review'
+    leg = body['legs'][0]
+    assert leg['result'] == 'review'
+    assert leg['selection_error_code'] == 'INVALID_SELECTED_EVENT_ID'
+    assert leg['review_details']['review_reason_code'] == 'INVALID_SELECTED_EVENT_ID'
+
+
+def test_selected_event_override_preserves_original_leg_text(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, '_public_check_provider', _PerLegSelectionProvider())
+    text = 'Cam Spencer over 9.5 points'
+    resp = client.post(
+        '/check-slip',
+        json={
+            'text': text,
+            'date_of_slip': '2026-03-09',
+            'search_historical': True,
+            'selected_event_by_leg_id': {'0': 'evt-a'},
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()['legs'][0]['leg'] == text
