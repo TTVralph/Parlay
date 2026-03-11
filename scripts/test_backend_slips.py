@@ -117,6 +117,67 @@ TEST_CASES: list[TestCase] = [
     TestCase('unsupported mixed sport', 'Nikola Jokic over 24.5 points\nPatrick Mahomes over 1.5 passing touchdowns', check=_expect_min_legs(1)),
     TestCase('nonsense input', 'asdf qwer zxcv\nnot a real betting slip\n???', check=_expect_nonsense_or_review),
     TestCase('blank input', '   ', check=_expect_blank_input),
+    # Initials-only / same last-name ambiguity stress cases.
+    TestCase('initials only J Brown points', 'J Brown over 19.5 points', check=_expect_review_or_warning),
+    TestCase('initials only J Brown rebounds', 'J Brown over 5.5 rebounds', check=_expect_review_or_warning),
+    TestCase('initials only J Williams assists', 'J Williams over 4.5 assists', check=_expect_review_or_warning),
+    TestCase('initials only J Williams threes', 'J Williams over 1.5 threes', check=_expect_review_or_warning),
+    TestCase('same last name Jalen and Jaylin Williams', 'Jalen Williams over 20.5 points\nJaylin Williams over 6.5 rebounds', check=_expect_min_legs(2)),
+    TestCase('same last name Brown full names', 'Jaylen Brown over 24.5 points\nBruce Brown over 11.5 points', check=_expect_min_legs(2)),
+    TestCase('same last name bridges', 'Mikal Bridges over 19.5 points\nMiles Bridges over 21.5 points', check=_expect_min_legs(2)),
+    TestCase('same last name Martin', 'Caleb Martin over 10.5 points\nCody Martin over 7.5 points', check=_expect_min_legs(2)),
+    # Abbreviation-heavy formats.
+    TestCase('all abbreviation tokens PTS AST REB PRA', 'Nikola Jokic o26.5 PTS\nNikola Jokic o9.5 AST\nNikola Jokic o11.5 REB\nNikola Jokic o46.5 PRA', check=_expect_min_legs(4)),
+    TestCase('abbrev lowercase stats', 'jayson tatum o28.5 pts\njayson tatum o7.5 reb\njayson tatum o4.5 ast', check=_expect_min_legs(3)),
+    TestCase('abbrev with commas and spaces', 'Luka Doncic o31.5 PTS, Kyrie Irving o4.5 AST', check=_expect_min_legs(1)),
+    TestCase('PRA abbreviation lowercase', 'anthony davis over 39.5 pra', check=_expect_min_legs(1)),
+    # Weird separators.
+    TestCase('colon separators', 'LeBron James: over 27.5 points\nAnthony Davis: over 11.5 rebounds', check=_expect_min_legs(2)),
+    TestCase('dash separators', 'LeBron James - over 27.5 points\nAustin Reaves - over 4.5 assists', check=_expect_min_legs(2)),
+    TestCase('pipe separators', 'Jokic | over 25.5 points\nMurray | over 2.5 threes', check=_expect_min_legs(2)),
+    TestCase('mixed separators and team side', 'Boston ML : -110\nTatum - over 29.5 points | alt line', check=_expect_min_legs(1)),
+    # Extra spaces / messy whitespace.
+    TestCase('leading trailing spaces', '   Nikola Jokic over 24.5 points   \n   Jamal Murray over 2.5 threes   ', check=_expect_min_legs(2)),
+    TestCase('multiple internal spaces', 'Nikola   Jokic   over   24.5   points\nDenver    ML', check=_expect_min_legs(2)),
+    TestCase('tabs and spaces', '\tNikola Jokic over 24.5 points\n\tJamal Murray over 2.5 threes', check=_expect_min_legs(2)),
+    TestCase('blank lines between legs', 'Nikola Jokic over 24.5 points\n\n\nJamal Murray over 2.5 threes\n\nDenver ML', check=_expect_min_legs(3)),
+    # Lowercase input variants.
+    TestCase('all lowercase normal slip', 'nikola jokic over 24.5 points\njamal murray over 2.5 threes\ndenver ml', check=_expect_min_legs(3)),
+    TestCase('all lowercase abbreviations', 'jokic o24.5 pts\nmurray o2.5 3pm\nden ml', check=_expect_min_legs(2)),
+    TestCase('lowercase with vs hint', 'j brown over 21.5 points vs lakers', check=_expect_review_or_warning),
+    TestCase('lowercase noisy punctuation', 'jokic over 25.5 points...\nmurray over 2.5 threes!!!', check=_expect_min_legs(2)),
+    # Duplicate legs and near-duplicates.
+    TestCase('duplicate player prop exact', 'Nikola Jokic over 24.5 points\nNikola Jokic over 24.5 points', check=_expect_min_legs(2)),
+    TestCase('duplicate team side exact', 'BOS ML\nBOS ML\nBOS ML', check=_expect_min_legs(3)),
+    TestCase('near-duplicate alt lines', 'Nikola Jokic over 24.5 points\nNikola Jokic over 25.5 points', check=_expect_min_legs(2)),
+    TestCase('duplicate with spacing differences', 'Denver ML\n  Denver ML  ', check=_expect_min_legs(2)),
+    # Opponent hints.
+    TestCase('opponent hint vs team abbreviation', 'Jayson Tatum over 29.5 points vs LAL', check=_expect_min_legs(1)),
+    TestCase('opponent hint full team name', 'Jaylen Brown over 23.5 points vs Los Angeles Lakers', check=_expect_min_legs(1)),
+    TestCase('opponent hint with at symbol', 'Trae Young over 9.5 assists @ Heat', check=_expect_min_legs(1)),
+    TestCase('opponent hint with matchup string', 'Donovan Mitchell over 27.5 points (CLE vs BOS)', check=_expect_min_legs(1)),
+    # DNP / did-not-play style inputs.
+    TestCase('player did not play explicit DNP', 'LeBron James over 27.5 points - DNP', check=_expect_review_or_warning),
+    TestCase('player ruled out', 'Anthony Davis over 11.5 rebounds (OUT)', check=_expect_review_or_warning),
+    TestCase('minutes restriction no action hint', 'Kawhi Leonard over 22.5 points - no action if DNP', check=_expect_review_or_warning),
+    TestCase('void wording', 'Jimmy Butler over 21.5 points VOID', check=_expect_review_or_warning),
+    # Empty lines and garbage-heavy layouts.
+    TestCase('mostly empty lines', '\n\n\nNikola Jokic over 24.5 points\n\n\n', check=_expect_min_legs(1)),
+    TestCase('empty lines with bullets', '\n-\nNikola Jokic over 24.5 points\n-\nJamal Murray over 2.5 threes\n', check=_expect_min_legs(2)),
+    TestCase('garbage with one parseable leg', '###ticket###\n$%^&*\nNikola Jokic over 24.5 points\nrandom trailing text', check=_expect_min_legs(1)),
+    TestCase('unicode garbage and emoji', '🔥🔥🔥\nJokic over 24.5 points\n🤷\n', check=_expect_min_legs(1)),
+    TestCase('totally garbage single line', 'lorem ipsum 12345 !!! not-a-slip', check=_expect_nonsense_or_review),
+    TestCase('csv like garbage', 'player,prop,line\nfoo,bar,baz\nJokic,points,24.5', check=_expect_nonsense_or_review),
+    # Mixed sports in one slip.
+    TestCase('NBA + NFL + NHL mix', 'Jokic over 24.5 points\nPatrick Mahomes over 1.5 passing touchdowns\nConnor McDavid over 1.5 points', check=_expect_min_legs(1)),
+    TestCase('NBA + MLB mix', 'Aaron Judge over 1.5 total bases\nJayson Tatum over 28.5 points', check=_expect_min_legs(1)),
+    TestCase('soccer and basketball mix', 'Lionel Messi over 0.5 goals\nLuka Doncic over 30.5 points', check=_expect_min_legs(1)),
+    TestCase('ufc and nba mix with separators', 'Israel Adesanya by KO - yes\nGiannis Antetokounmpo over 29.5 points', check=_expect_min_legs(1)),
+    # Additional parser robustness edge cases.
+    TestCase('number first notation', '24.5+ points Nikola Jokic', check=_expect_min_legs(1)),
+    TestCase('odds included inline', 'Nikola Jokic over 24.5 points (-115)', check=_expect_min_legs(1)),
+    TestCase('book style with over keyword abbreviated', 'Nikola Jokic O 24.5 PTS', check=_expect_min_legs(1)),
+    TestCase('under bet style', 'Nikola Jokic under 24.5 points', check=_expect_min_legs(1)),
 ]
 
 
