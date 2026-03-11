@@ -123,6 +123,7 @@ def test_check_page_can_reset_player_and_game_selection_independently() -> None:
     page = client.get('/check')
     assert page.status_code == 200
     html = page.text
+    assert "changePlayerBtn.textContent='Change player'" in html
     assert "resetPlayerBtn.textContent='Reset selected player'" in html
     assert 'const nextSelection={...selectedPlayerByLegId};' in html
     assert 'delete nextSelection[legId];' in html
@@ -292,8 +293,8 @@ def test_check_page_shows_unresolved_typo_explanation_and_structured_details():
     page = client.get('/check')
     assert page.status_code == 200
     html = page.text
-    assert "const canPickPlayer=!playerSelectionApplied&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';" in html
-    assert "const shouldShowPicker=item.result==='review'&&!playerSelectionApplied&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';" in html
+    assert "const canPickPlayer=(item.result==='review'||showPlayerPicker)&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA'&&(!playerSelectionApplied||showPlayerPicker);" in html
+    assert "const shouldShowPicker=(item.result==='review'||showPlayerPicker)&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA'&&(!playerSelectionApplied||showPlayerPicker);" in html
     assert 'Player resolution method:' in html
     assert 'Player resolution confidence:' in html
     assert 'Player resolution mode:' in html

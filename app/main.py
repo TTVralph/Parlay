@@ -1113,16 +1113,20 @@ Murray over 2.5 threes'></textarea>
         const legId=String(item.leg_id ?? index);
         const existingState=legUiStateByLegId[legId]||{};
         const hasCurrentCandidates=(item.candidate_games||[]).length>0;
+        const hasCurrentPlayerCandidates=(item.candidate_players||[]).length>0;
         const nextState={
           ...existingState,
           originalCandidateEvents:existingState.originalCandidateEvents||(item.candidate_games||[]),
+          originalCandidatePlayers:existingState.originalCandidatePlayers||(item.candidate_players||[]),
           originalReviewReason:existingState.originalReviewReason||(item.review_reason||item.explanation_reason||null),
           originalResult:existingState.originalResult||(item.result||null),
           autoMatchedEventId:existingState.autoMatchedEventId||(item.matched_event||null),
           wasManuallySelected:Boolean(selectedGameByLegId[legId]),
+          showPlayerPicker:Boolean(existingState.showPlayerPicker),
         };
         if(hasCurrentCandidates&&!existingState.wasManuallySelected){
           nextState.originalCandidateEvents=item.candidate_games||[];
+          if(hasCurrentPlayerCandidates){ nextState.originalCandidatePlayers=item.candidate_players||[]; }
           nextState.originalReviewReason=item.review_reason||item.explanation_reason||null;
           nextState.originalResult=item.result||null;
           nextState.autoMatchedEventId=item.matched_event||null;
@@ -1250,7 +1254,10 @@ Murray over 2.5 threes'></textarea>
           badge.textContent=`${statusBadge}`;
           resultCell.appendChild(badge);
         }
-        const candidatePlayers=(item.candidate_players||[]).filter((candidate)=>candidate&&candidate.player_name);
+        const selectedPlayerId=selectedPlayerByLegId[legId]||item.selected_player_id||'';
+        const showPlayerPicker=Boolean(nextState.showPlayerPicker);
+        const visibleCandidatePlayers=((item.candidate_players||[]).length?(item.candidate_players||[]):((playerSelectionApplied||showPlayerPicker)?(nextState.originalCandidatePlayers||[]):[]));
+        const candidatePlayers=visibleCandidatePlayers.filter((candidate)=>candidate&&candidate.player_name);
         const candidateGames=(item.candidate_games||[]).length
           ?(item.candidate_games||[])
           :(nextState.wasManuallySelected ? (nextState.originalCandidateEvents||[]) : []);
@@ -1349,8 +1356,33 @@ Murray over 2.5 threes'></textarea>
             selectionBadge.style.color='#334155';
             selectionBadge.textContent=`Using selected player: ${selectedPlayerLabel}`;
             eventCell.appendChild(selectionBadge);
+            const changePlayerBtn=document.createElement('button');
+            changePlayerBtn.type='button';
+            changePlayerBtn.className='secondary';
+            changePlayerBtn.style.marginTop='6px';
+            changePlayerBtn.style.marginRight='6px';
+            changePlayerBtn.textContent='Change player';
+            changePlayerBtn.addEventListener('click',()=>{
+              legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showPlayerPicker:true}};
+              renderRows(legs||[]);
+            });
+            eventCell.appendChild(changePlayerBtn);
+
+            const resetPlayerBtn=document.createElement('button');
+            resetPlayerBtn.type='button';
+            resetPlayerBtn.className='secondary';
+            resetPlayerBtn.style.marginTop='6px';
+            resetPlayerBtn.textContent='Reset selected player';
+            resetPlayerBtn.addEventListener('click',()=>{
+              const nextSelection={...selectedPlayerByLegId};
+              delete nextSelection[legId];
+              selectedPlayerByLegId=nextSelection;
+              legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showPlayerPicker:true}};
+              submitCheck();
+            });
+            eventCell.appendChild(resetPlayerBtn);
           }
-          const shouldShowPicker=item.result==='review'&&!playerSelectionApplied&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';
+          const shouldShowPicker=(item.result==='review'||showPlayerPicker)&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA'&&(!playerSelectionApplied||showPlayerPicker);
           if(shouldShowPicker){
             const pickerLabel=document.createElement('div');
             pickerLabel.style.marginTop='8px';
@@ -1369,6 +1401,7 @@ Murray over 2.5 threes'></textarea>
               pickBtn.addEventListener('click',()=>{
                 if(!candidate.player_id){return;}
                 selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:candidate.player_id};
+                legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showPlayerPicker:false}};
                 submitCheck();
               });
               eventCell.appendChild(pickBtn);
@@ -1405,7 +1438,7 @@ Murray over 2.5 threes'></textarea>
               eventCell.appendChild(pendingAfterSelection);
             }
           }
-          const canPickPlayer=!playerSelectionApplied&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';
+          const canPickPlayer=(item.result==='review'||showPlayerPicker)&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA'&&(!playerSelectionApplied||showPlayerPicker);
           if(canPickPlayer){
             const pickerLabel=document.createElement('div');
             pickerLabel.style.marginTop='8px';
@@ -1414,7 +1447,6 @@ Murray over 2.5 threes'></textarea>
             pickerLabel.textContent='Did you mean?';
             eventCell.appendChild(pickerLabel);
 
-            const selectedPlayerId=selectedPlayerByLegId[legId]||'';
             candidatePlayers.forEach((candidate)=>{
               const pickBtn=document.createElement('button');
               pickBtn.type='button';
@@ -1427,32 +1459,12 @@ Murray over 2.5 threes'></textarea>
               pickBtn.addEventListener('click',()=>{
                 if(!candidate.player_id){return;}
                 selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:candidate.player_id};
+                legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showPlayerPicker:false}};
                 submitCheck();
               });
               eventCell.appendChild(pickBtn);
             });
 
-            if(selectedPlayerId){
-              const manualNote=document.createElement('div');
-              manualNote.style.marginTop='6px';
-              manualNote.style.fontSize='12px';
-              manualNote.style.color='#1d4ed8';
-              manualNote.textContent='Manual player selection applied';
-              eventCell.appendChild(manualNote);
-
-              const resetPlayerBtn=document.createElement('button');
-              resetPlayerBtn.type='button';
-              resetPlayerBtn.className='secondary';
-              resetPlayerBtn.style.marginTop='6px';
-              resetPlayerBtn.textContent='Reset selected player';
-              resetPlayerBtn.addEventListener('click',()=>{
-                const nextSelection={...selectedPlayerByLegId};
-                delete nextSelection[legId];
-                selectedPlayerByLegId=nextSelection;
-                submitCheck();
-              });
-              eventCell.appendChild(resetPlayerBtn);
-            }
           }
         }
         tr.appendChild(legCell);
