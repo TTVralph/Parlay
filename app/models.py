@@ -27,6 +27,13 @@ MarketType = Literal[
     "player_hits",
     "player_triple_double",
     "player_double_double",
+    "player_first_basket",
+    "player_first_rebound",
+    "player_first_assist",
+    "player_first_three",
+    "player_last_basket",
+    "player_first_steal",
+    "player_first_block",
 ]
 Direction = Literal["over", "under", "yes", "no"]
 Settlement = Literal["win", "loss", "pending", "push", "void", "unmatched"]
