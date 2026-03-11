@@ -237,7 +237,7 @@ def test_snapshot_native_grading_uses_snapshot_before_provider(monkeypatch) -> N
                         'nikolajokic': {
                             'player_id': '15',
                             'display_name': 'Nikola Jokic',
-                            'stats': {'PTS': 31.0, 'REB': 12.0, 'AST': 9.0, 'PR': 43.0, 'PA': 40.0, 'RA': 21.0, 'PRA': 52.0},
+                            'stats': {'PTS': 31.0, 'REB': 12.0, 'AST': 9.0, '3PM': 3.0, 'STL': 2.0, 'BLK': 2.0, 'TOV': 3.0, 'PR': 43.0, 'PA': 40.0, 'RA': 21.0, 'PRA': 52.0},
                         }
                     },
                 )
@@ -247,9 +247,12 @@ def test_snapshot_native_grading_uses_snapshot_before_provider(monkeypatch) -> N
     monkeypatch.setattr('app.grader.EventSnapshotService', _SnapshotService)
 
     provider = _FakeESPNProvider()
-    result = grade_text('Nikola Jokic over 29.5 points\nNikola Jokic over 39.5 pa', provider=provider)
+    result = grade_text(
+        'Nikola Jokic over 29.5 points\nNikola Jokic over 2.5 threes\nNikola Jokic over 39.5 pa',
+        provider=provider,
+    )
 
-    assert [leg.settlement for leg in result.legs] == ['win', 'win']
+    assert [leg.settlement for leg in result.legs] == ['win', 'win', 'win']
     assert provider.player_result_calls == 0
     assert provider.player_result_detail_calls == 0
 
@@ -279,9 +282,10 @@ def test_snapshot_fallback_keeps_provider_behavior_when_stat_missing(monkeypatch
     monkeypatch.setattr('app.grader.EventSnapshotService', _SnapshotService)
 
     provider = _FakeESPNProvider()
-    result = grade_text('Nikola Jokic over 29.5 points', provider=provider)
+    result = grade_text('Nikola Jokic over 29.5 points\nNikola Jokic over 2.5 threes', provider=provider)
 
     assert result.legs[0].settlement == 'win'
+    assert result.legs[1].settlement in {'unmatched', 'pending'}
     assert provider.player_result_calls > 0
 
 def test_non_espn_provider_path_is_unchanged_without_snapshot() -> None:
