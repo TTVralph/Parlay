@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import base64
-import imghdr
 import os
 import re
+from io import BytesIO
 
 import httpx
+
+try:
+    from PIL import Image, UnidentifiedImageError
+except ModuleNotFoundError:  # pragma: no cover
+    Image = None
+    UnidentifiedImageError = OSError
 
 from .base import OCRProvider, OCRResult
 from ..ingestion import strip_social_noise
@@ -55,7 +61,49 @@ class MockOCRProvider:
 def validate_image_upload(filename: str, content: bytes) -> None:
     if not content:
         raise RuntimeError('Uploaded file is empty.')
-    kind = imghdr.what(None, h=content)
+
+    kind = None
+    if Image is not None:
+        try:
+            with Image.open(BytesIO(content)) as image:
+                detected = image.format
+                kind = detected.lower() if detected else None
+        except (UnidentifiedImageError, OSError):
+            pass
+
+    if kind is None:
+        extension = os.path.splitext((filename or '').lower())[1]
+        extension_map = {
+            '.jpg': 'jpeg',
+            '.jpeg': 'jpeg',
+            '.png': 'png',
+            '.gif': 'gif',
+            '.bmp': 'bmp',
+            '.webp': 'webp',
+            '.tif': 'tiff',
+            '.tiff': 'tiff',
+        }
+        kind = extension_map.get(extension)
+
+    if kind is None:
+        signatures: tuple[tuple[bytes, str], ...] = (
+            (b'\x89PNG\r\n\x1a\n', 'png'),
+            (b'\xff\xd8\xff', 'jpeg'),
+            (b'GIF87a', 'gif'),
+            (b'GIF89a', 'gif'),
+            (b'BM', 'bmp'),
+            (b'RIFF', 'webp'),
+            (b'II*\x00', 'tiff'),
+            (b'MM\x00*', 'tiff'),
+        )
+        for prefix, detected_kind in signatures:
+            if content.startswith(prefix):
+                kind = detected_kind
+                break
+
+        if kind == 'webp' and content[8:12] != b'WEBP':
+            kind = None
+
     if kind not in {'png', 'jpeg', 'gif', 'bmp', 'webp', 'tiff'}:
         raise RuntimeError(f'Unsupported screenshot format for {filename or "upload"}. Please upload a valid image file.')
 
@@ -75,8 +123,6 @@ class TesseractOCRProvider:
         self._image_mod = Image
 
     def extract_text(self, filename: str, content: bytes) -> OCRResult:
-        from io import BytesIO
-
         image = self._image_mod.open(BytesIO(content))
         raw_text = self._pytesseract.image_to_string(image)
         cleaned, unusable = _normalize_sportsbook_ocr_text(raw_text)
