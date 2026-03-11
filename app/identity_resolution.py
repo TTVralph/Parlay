@@ -247,6 +247,50 @@ def _single_strong_candidate_score(input_name: str, candidate: CanonicalPlayerId
     return (first_score * 0.55) + (surname_score * 0.35) + (full_score * 0.10) + team_bonus
 
 
+_SAFE_SINGLE_TOKEN_AUTORESOLVE_NAMES = {'shai', 'luka', 'jokic'}
+
+
+_COLLISION_PRONE_SINGLE_TOKEN_NAMES = {
+    'brown',
+    'jaden',
+    'jalen',
+    'jaylen',
+    'smith',
+    'williams',
+}
+
+
+def _active_player(player: CanonicalPlayerIdentity) -> bool:
+    return player.active_status.lower() in {'active', 'a', '1', 'true'}
+
+
+def _single_token_ambiguity_result(
+    sport: SportCode,
+    token: str,
+    ranked_candidates: list[tuple[float, CanonicalPlayerIdentity]],
+    metadata: dict[str, str | None],
+) -> PlayerResolutionResult:
+    top_candidates = ranked_candidates[:5]
+    names = tuple(player.full_name for _, player in top_candidates)
+    return PlayerResolutionResult(
+        sport,
+        None,
+        None,
+        None,
+        round(top_candidates[0][0], 2) if top_candidates else 0.0,
+        ambiguity_reason=f'single-token name "{token}" is ambiguous; include last name for review',
+        candidate_players=names,
+        candidate_player_details=tuple(
+            _candidate_match(player, rank=idx + 1, score=score, reason='single-token ambiguity')
+            for idx, (score, player) in enumerate(top_candidates)
+        ),
+        identity_source=metadata['identity_source'],
+        identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
+        match_method='ambiguous',
+        confidence_level='LOW',
+    )
+
+
 def _fetch_json(url: str, *, timeout: int = _NBA_REFRESH_TIMEOUT_SECONDS, urlopen: Any = request.urlopen) -> dict[str, Any]:
     with urlopen(url, timeout=timeout) as response:
         payload = json.load(response)
@@ -743,7 +787,7 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
             name_parts = [part for part in player.normalized_name.split() if part]
             if len(name_parts) < 2:
                 continue
-            if player.active_status.lower() not in {'active', 'a', '1', 'true'}:
+            if not _active_player(player):
                 continue
             if token == name_parts[-1]:
                 surname_matches.append(player)
@@ -780,7 +824,7 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
                 confidence_level='LOW',
             )
 
-        if len(first_matches) == 1:
+        if len(first_matches) == 1 and token not in _COLLISION_PRONE_SINGLE_TOKEN_NAMES:
             pick = first_matches[0]
             return PlayerResolutionResult(
                 sport,
@@ -793,19 +837,28 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
                 match_method='single_token_first_name',
                 confidence_level='MEDIUM',
             )
-        if len(first_matches) > 1 and len(token) >= 4:
+        if len(first_matches) > 1 and token in _SAFE_SINGLE_TOKEN_AUTORESOLVE_NAMES:
             pick = sorted(first_matches, key=lambda item: item.full_name)[0]
             return PlayerResolutionResult(
                 sport,
                 pick.full_name,
                 pick.canonical_player_id,
                 pick.team_name,
-                0.76,
+                0.78,
                 identity_source=metadata['identity_source'],
                 identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
                 match_method='single_token_first_name_heuristic',
                 confidence_level='MEDIUM',
             )
+
+        if len(first_matches) > 1 and token in _COLLISION_PRONE_SINGLE_TOKEN_NAMES:
+            ranked_single = sorted(
+                ((0.8 if token == _split_name_tokens(player.full_name)[0] else 0.6, player) for player in first_matches),
+                key=lambda item: (item[0], item[1].full_name),
+                reverse=True,
+            )
+            if ranked_single:
+                return _single_token_ambiguity_result(sport, token, ranked_single, metadata)
 
     ranked_all: list[tuple[float, CanonicalPlayerIdentity]] = []
     ranked_viable: list[tuple[float, CanonicalPlayerIdentity]] = []
@@ -853,6 +906,36 @@ def resolve_player_identity(player_name: str | None, sport: SportCode = 'NBA') -
     ranked = ranked_viable or ranked_all
 
     if sport == 'NBA':
+        if len(input_parts) == 1:
+            token = input_parts[0]
+            top_score, top_player = ranked[0]
+            strong_active_candidates = [entry for entry in ranked if entry[0] >= 0.9 and _active_player(entry[1])]
+            runner_up_score = ranked[1][0] if len(ranked) > 1 else 0.0
+            close_competitors = [entry for entry in ranked[1:] if (top_score - entry[0]) < 0.06]
+            auto_resolve_min = 0.78 if token in _SAFE_SINGLE_TOKEN_AUTORESOLVE_NAMES else 0.86
+            auto_resolve_gap = 0.05 if token in _SAFE_SINGLE_TOKEN_AUTORESOLVE_NAMES else 0.08
+            if (
+                token not in _COLLISION_PRONE_SINGLE_TOKEN_NAMES
+                and _active_player(top_player)
+                and len(strong_active_candidates) == 1
+                and top_score >= auto_resolve_min
+                and (top_score - runner_up_score) >= auto_resolve_gap
+                and not close_competitors
+            ):
+                return PlayerResolutionResult(
+                    sport,
+                    top_player.full_name,
+                    top_player.canonical_player_id,
+                    top_player.team_name,
+                    round(top_score, 2),
+                    identity_source=metadata['identity_source'],
+                    identity_last_refreshed_at=metadata['identity_last_refreshed_at'],
+                    match_method='single_token_strong_unique',
+                    confidence_level='MEDIUM',
+                )
+            if token in _COLLISION_PRONE_SINGLE_TOKEN_NAMES or top_score >= 0.82:
+                return _single_token_ambiguity_result(sport, token, ranked, metadata)
+
         top_score, top_player = ranked[0]
         strong_single_score = _single_strong_candidate_score(player_name, top_player)
         runner_up_score = ranked[1][0] if len(ranked) > 1 else 0.0

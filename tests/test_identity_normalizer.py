@@ -29,10 +29,24 @@ def test_single_token_shorthand_resolves_unique_player() -> None:
     tatum = resolve_player_identity('Tatum', sport='NBA')
 
     assert luka.resolved_player_name == 'Luka Doncic'
-    assert luka.match_method in {'single_token_shorthand', 'single_token_first_name', 'single_token_first_name_heuristic'}
+    assert luka.match_method in {'single_token_shorthand', 'single_token_first_name', 'single_token_first_name_heuristic', 'single_token_strong_unique'}
     assert tatum.resolved_player_name == 'Jayson Tatum'
     assert tatum.match_method in {'alias', 'single_token_shorthand'}
 
+
+
+def test_jalen_single_token_remains_ambiguous_with_candidates() -> None:
+    result = resolve_player_identity('Jalen', sport='NBA')
+    assert result.resolved_player_id is None
+    assert result.match_method == 'ambiguous'
+    assert result.ambiguity_reason and 'single-token name "jalen" is ambiguous' in result.ambiguity_reason
+    assert len(result.candidate_players) >= 2
+
+
+def test_shai_single_token_still_auto_resolves() -> None:
+    result = resolve_player_identity('Shai', sport='NBA')
+    assert result.resolved_player_name == 'Shai Gilgeous-Alexander'
+    assert result.match_method in {'single_token_first_name', 'single_token_strong_unique'}
 
 def test_shai_gilly_alexander_single_strong_candidate_resolves() -> None:
     result = resolve_player_identity('shai gilly alexander', sport='NBA')

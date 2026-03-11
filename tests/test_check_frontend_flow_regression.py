@@ -60,4 +60,5 @@ def test_manual_player_selection_ui_signals_are_rendered() -> None:
     assert "original_typed_player_name" in script
     assert "Player selected, but not used in final grading" in script
     assert "Game selected, but not used in final grading" in script
-    assert "const canPickPlayer=!playerSelectionApplied" in script
+    assert "const canPickPlayer=(item.result==='review'||showPlayerPicker)&&candidatePlayers.length>0" in script
+    assert "changePlayerBtn.textContent='Change player'" in script
