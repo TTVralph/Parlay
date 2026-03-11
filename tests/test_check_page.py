@@ -80,7 +80,9 @@ def test_check_page_only_renders_manual_override_controls_when_candidates_exist(
     assert "const canPickGame=item.result==='review'&&candidateGames.length>0;" in html
     assert 'wasManuallySelected:Boolean(selectedGameByLegId[legId])' in html
     assert 'Pick a game' in html
-    assert 'Using selected game:' in html
+    assert 'Manual selection used for grading' in html
+    assert 'Player selected, but not used in final grading' in html
+    assert 'Game selected, but not used in final grading' in html
     assert 'selected_event_by_leg_id=selectedGameByLegId' in html
 
 
@@ -259,6 +261,10 @@ def test_check_page_renders_structured_review_reason_fallback_ui():
     assert "suggestion.textContent=didYouMeanText;" in html
     assert 'Player selection succeeded, but another downstream grading validation still requires review.' in html
     assert 'Selected game could not be applied; choose one of the listed games.' in html
+    assert '<strong>Original typed leg:</strong>' in html
+    assert '<strong>Override used for grading:</strong>' in html
+    assert '<strong>Override outcome:</strong>' in html
+    assert '<strong>Final settlement:</strong>' in html
 
 
 def test_check_page_renders_subtle_fuzzy_resolution_message_in_main_table():

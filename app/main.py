@@ -1094,6 +1094,19 @@ Murray over 2.5 threes'></textarea>
       return item.event_review_reason_text||item.review_reason_text||item.did_you_mean||item.review_reason||item.explanation_reason||'Needs manual review. We could not confidently resolve this leg.';
     }
 
+    function overrideStatusText(item,{playerSelectionApplied,eventSelectionApplied,overrideUsedForGrading}){
+      if(overrideUsedForGrading){
+        return 'Manual selection used for grading';
+      }
+      if(playerSelectionApplied){
+        return 'Player selected, but not used in final grading';
+      }
+      if(eventSelectionApplied){
+        return 'Game selected, but not used in final grading';
+      }
+      return null;
+    }
+
     function renderRows(legs){
       legsBody.innerHTML='';
       for(const [index,item] of (legs||[]).entries()){
@@ -1146,8 +1159,21 @@ Murray over 2.5 threes'></textarea>
         const settlementDiag=item.settlement_diagnostics||{};
         const marketMapping=settlementDiag.market_mapping||{};
         const details=item.review_details||item.resolution_details||null;
+        const playerSelectionApplied=Boolean(item.player_selection_applied||item.selection_source==='user_selected');
+        const overrideUsedForGrading=Boolean(item.override_used_for_grading);
+        const eventSelectionApplied=Boolean(item.event_selection_applied||item.event_selection_source==='user_selected'||selectedGameByLegId[legId]);
+        const selectedPlayerLabel=item.selected_player_name||item.canonical_player_name||details?.selected_player_name||details?.canonical_matched_player_name||null;
+        const selectedEventLabel=item.selected_event_label||item.matched_event||null;
+        const overrideStatusLabel=overrideStatusText(item,{playerSelectionApplied,eventSelectionApplied,overrideUsedForGrading});
         const possibleGames=(item.candidate_events||[]).length?`<div style="margin-top:4px"><strong>Possible games:</strong> ${(item.candidate_events||[]).map((e)=>`${e.event_label||e.event_id} (${e.event_date||'—'})`).join(' • ')}</div>`:'';
         detailsBody.innerHTML=`
+          <div><strong>Original typed leg:</strong> ${item.leg||'—'}</div>
+          <div><strong>Selected player:</strong> ${selectedPlayerLabel||'—'}</div>
+          <div><strong>Selected game:</strong> ${selectedEventLabel||'—'}</div>
+          <div><strong>Override used for grading:</strong> ${overrideUsedForGrading?'Yes':'No'}</div>
+          <div><strong>Override outcome:</strong> ${item.override_grading_explanation||overrideStatusLabel||'No manual override applied.'}</div>
+          <div><strong>Final settlement:</strong> ${resultLabel[item.result]||String(item.result||'review')}</div>
+          <div><strong>Review status:</strong> ${item.result==='review'?(bestReviewReason(item)||'Needs manual review.'):'Settled'}</div>
           <div>Sport: ${item.leg?.sport||item.sport||'—'}</div>
           <div>Parsed: ${item.parsed_player_name||item.parsed_player_or_team||'—'} / ${item.normalized_stat_type||item.normalized_market||'—'}</div>
           <div>Matched player: ${item.matched_player||item.resolved_player_name||'—'}</div>
@@ -1224,15 +1250,19 @@ Murray over 2.5 threes'></textarea>
           badge.textContent=`${statusBadge}`;
           resultCell.appendChild(badge);
         }
-
-        const playerSelectionApplied=Boolean(item.player_selection_applied||item.selection_source==='user_selected');
-        const selectedPlayerLabel=item.selected_player_name||item.canonical_player_name||details?.selected_player_name||details?.canonical_matched_player_name||null;
         const candidatePlayers=(item.candidate_players||[]).filter((candidate)=>candidate&&candidate.player_name);
         const candidateGames=(item.candidate_games||[]).length
           ?(item.candidate_games||[])
           :(nextState.wasManuallySelected ? (nextState.originalCandidateEvents||[]) : []);
-        const eventSelectionApplied=Boolean(item.event_selection_applied||item.event_selection_source==='user_selected'||selectedGameByLegId[legId]);
-        const selectedEventLabel=item.selected_event_label||item.matched_event||null;
+
+        if(overrideStatusLabel){
+          const overrideNote=document.createElement('div');
+          overrideNote.style.marginTop='4px';
+          overrideNote.style.fontSize='11px';
+          overrideNote.style.color='#475569';
+          overrideNote.textContent=overrideStatusLabel;
+          resultCell.appendChild(overrideNote);
+        }
 
         if(item.matched_event){
           eventCell.textContent=item.matched_event;
@@ -2049,6 +2079,31 @@ def _build_review_details(item: GradedLeg, *, result: str, did_you_mean: str | N
     return details
 
 
+def _override_grading_explanation(item: GradedLeg, *, result: str) -> str | None:
+    override_used = bool(item.override_used_for_grading or item.leg.override_used_for_grading)
+    player_selected = bool(item.selection_applied or item.leg.selection_applied or (item.selection_source or item.leg.selection_source) == 'user_selected')
+    event_selected = bool(item.event_selection_applied or item.leg.event_selection_applied or (item.event_selection_source or item.leg.event_selection_source) == 'user_selected')
+
+    if override_used:
+        if event_selected:
+            return 'Used selected game for grading.'
+        if player_selected:
+            return 'Used selected player for grading.'
+        return 'Manual selection used for grading.'
+
+    if event_selected:
+        if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_EVENT_ID':
+            return 'Selected game could not be applied.'
+        return 'Selected game was recorded, but final grading still used auto-matched event.'
+
+    if player_selected:
+        if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_PLAYER_ID':
+            return 'Selected player could not be applied.'
+        return 'Selected player was recorded, but final grading still used auto-matched player.'
+
+    return None
+
+
 def _process_public_check_text(
     text: str,
     stake_amount: float | None = None,
@@ -2145,6 +2200,7 @@ def _process_public_check_text(
         resolution_details = _build_player_resolution_details(item, result=result, did_you_mean=did_you_mean)
         review_details = _build_review_details(item, result=result, did_you_mean=did_you_mean)
         effective_review_text = (review_details or {}).get('review_reason_text') if isinstance(review_details, dict) else None
+        override_grading_explanation = _override_grading_explanation(item, result=result)
 
         legs.append({
             'leg_id': str(index),
@@ -2179,6 +2235,7 @@ def _process_public_check_text(
             'event_selection_source': item.event_selection_source or item.leg.event_selection_source,
             'event_selection_explanation': item.event_selection_explanation or item.leg.event_selection_explanation,
             'override_used_for_grading': bool(item.override_used_for_grading or item.leg.override_used_for_grading),
+            'override_grading_explanation': override_grading_explanation,
             'parsed_player_name': item.parsed_player_name or item.leg.parsed_player_name,
             'normalized_stat_type': item.normalized_stat_type or item.leg.normalized_stat_type,
             'resolution_confidence': item.resolution_confidence or item.leg.resolution_confidence,

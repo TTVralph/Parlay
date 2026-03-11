@@ -293,6 +293,7 @@ def test_selected_event_override_regrades_target_leg_and_sets_metadata(monkeypat
     assert leg['event_selection_source'] == 'user_selected'
     assert 'user-selected game override' in (leg['event_selection_explanation'] or '')
     assert leg['override_used_for_grading'] is True
+    assert leg['override_grading_explanation'] == 'Used selected game for grading.'
     assert leg['event_review_reason_code'] is None
 
 
@@ -315,6 +316,7 @@ def test_invalid_selected_event_id_is_non_fatal_and_returns_review(monkeypatch) 
     assert leg['result'] == 'review'
     assert leg['selection_error_code'] == 'INVALID_SELECTED_EVENT_ID'
     assert leg['override_used_for_grading'] is False
+    assert leg['override_grading_explanation'] == 'Selected game could not be applied.'
     assert leg['review_details']['review_reason_code'] == 'INVALID_SELECTED_EVENT_ID'
 
 
