@@ -201,18 +201,20 @@ def test_alt_market_phrases_with_split_lines_normalize_and_parse() -> None:
     """
     normalized = normalize_sportsbook_ocr_text(raw)
     assert normalized.splitlines() == [
-        'Jerami Grant Over 14.5 Points',
-        'Michael Porter Jr. Over 19.5 Points',
-        'Daniel Gafford Over 5.5 Rebounds',
-        'Luka Doncic Over 7.5 Rebounds',
-        'Derrick White Over 3.5 Rebounds',
+        'Jerami Grant 15+ Points',
+        'Michael Porter Jr. 20+ Points',
+        'Daniel Gafford 6+ Rebounds',
+        'Luka Doncic 8+ Rebounds',
+        'Derrick White 4+ Rebounds',
     ]
 
     parsed = parse_screenshot_text(raw, raw)
     labels = [leg.normalized_label for leg in parsed.parsed_legs]
-    assert 'Jerami Grant Over 14.5 Points' in labels
-    assert 'Michael Porter Jr. Over 19.5 Points' in labels
-    assert 'Daniel Gafford Over 5.5 Rebounds' in labels
+    assert 'Jerami Grant Over 15+ Points' in labels
+    assert 'Michael Porter Jr. Over 20+ Points' in labels
+    assert 'Daniel Gafford Over 6+ Rebounds' in labels
+    assert 'Luka Doncic Over 8+ Rebounds' in labels
+    assert 'Derrick White Over 4+ Rebounds' in labels
 
 
 def test_inline_alt_market_phrases_parse_with_ocr_spacing_variants() -> None:
@@ -224,8 +226,8 @@ def test_inline_alt_market_phrases_parse_with_ocr_spacing_variants() -> None:
     """
     normalized = normalize_sportsbook_ocr_text(raw)
     assert normalized.splitlines() == [
-        'Jalen Duren Over 14.5 Points',
-        'Ty Jerome Over 14.5 Points',
-        'Nikola Jokic Over 11.5 Assists',
-        'Aaron Gordon Over 31.5 Points + Rebounds + Assists',
+        'Jalen Duren 15+ Points',
+        'Ty Jerome 15+ Points',
+        'Nikola Jokic 12+ Assists',
+        'Aaron Gordon 32+ Points + Rebounds + Assists',
     ]
