@@ -147,6 +147,8 @@ def test_request_cache_hit_miss_behavior_still_works_with_snapshot_service(monke
 class _FakeESPNProvider(ESPNNBAResultsProvider):
     def __init__(self) -> None:
         super().__init__()
+        self.player_result_calls = 0
+        self.player_result_detail_calls = 0
         self._event = EventInfo(
             event_id='evt-1',
             sport='NBA',
@@ -173,11 +175,21 @@ class _FakeESPNProvider(ESPNNBAResultsProvider):
     def is_player_on_event_roster(self, player: str, event_id: str | None = None) -> bool | None:
         return True
 
+    def get_player_result_details(self, player: str, market_type: str, event_id: str | None = None) -> dict[str, Any] | None:
+        self.player_result_detail_calls += 1
+        value = self.get_player_result(player, market_type, event_id)
+        if value is None:
+            return None
+        return {'actual_value': value, 'matched_boxscore_player_name': 'Nikola Jokic'}
+
     def get_player_result(self, player: str, market_type: str, event_id: str | None = None) -> float | None:
+        self.player_result_calls += 1
         if market_type == 'player_points':
             return 31.0
         if market_type == 'player_assists':
             return 9.0
+        if market_type == 'player_rebounds':
+            return 12.0
         return None
 
 
@@ -207,6 +219,70 @@ def test_grading_groups_legs_by_event_and_builds_snapshot_once(monkeypatch) -> N
     assert len(result.legs) == 2
     assert calls == ['evt-1']
 
+
+
+
+def test_snapshot_native_grading_uses_snapshot_before_provider(monkeypatch) -> None:
+    class _SnapshotService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def get_many_event_snapshots(self, event_ids, *, event_dates=None, include_play_by_play_event_ids=None):
+            return {
+                event_id: EventSnapshot(
+                    event_id=event_id,
+                    home_team={'name': 'Denver Nuggets'},
+                    away_team={'name': 'Boston Celtics'},
+                    normalized_player_stats={
+                        'nikolajokic': {
+                            'player_id': '15',
+                            'display_name': 'Nikola Jokic',
+                            'stats': {'PTS': 31.0, 'REB': 12.0, 'AST': 9.0, 'PR': 43.0, 'PA': 40.0, 'RA': 21.0, 'PRA': 52.0},
+                        }
+                    },
+                )
+                for event_id in event_ids
+            }
+
+    monkeypatch.setattr('app.grader.EventSnapshotService', _SnapshotService)
+
+    provider = _FakeESPNProvider()
+    result = grade_text('Nikola Jokic over 29.5 points\nNikola Jokic over 39.5 pa', provider=provider)
+
+    assert [leg.settlement for leg in result.legs] == ['win', 'win']
+    assert provider.player_result_calls == 0
+    assert provider.player_result_detail_calls == 0
+
+
+def test_snapshot_fallback_keeps_provider_behavior_when_stat_missing(monkeypatch) -> None:
+    class _SnapshotService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def get_many_event_snapshots(self, event_ids, *, event_dates=None, include_play_by_play_event_ids=None):
+            return {
+                event_id: EventSnapshot(
+                    event_id=event_id,
+                    home_team={'name': 'Denver Nuggets'},
+                    away_team={'name': 'Boston Celtics'},
+                    normalized_player_stats={
+                        'nikolajokic': {
+                            'player_id': '15',
+                            'display_name': 'Nikola Jokic',
+                            'stats': {'REB': 12.0, 'AST': 9.0},
+                        }
+                    },
+                )
+                for event_id in event_ids
+            }
+
+    monkeypatch.setattr('app.grader.EventSnapshotService', _SnapshotService)
+
+    provider = _FakeESPNProvider()
+    result = grade_text('Nikola Jokic over 29.5 points', provider=provider)
+
+    assert result.legs[0].settlement == 'win'
+    assert provider.player_result_calls > 0
 
 def test_non_espn_provider_path_is_unchanged_without_snapshot() -> None:
     class _NonEspnProvider:
