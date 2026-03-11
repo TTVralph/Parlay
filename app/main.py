@@ -911,6 +911,9 @@ def public_check_page() -> HTMLResponse:
     button[disabled]{opacity:.6;cursor:not-allowed;}
     button.sample{margin-top:0;background:#fff;color:#0f172a;border:1px solid #cbd5e1;padding:8px 10px;}
     button.secondary{background:#fff;color:#0f172a;border-color:#cbd5e1;}
+    .candidate-btn{display:inline-flex;align-items:center;gap:4px;margin-top:6px;margin-right:6px;padding:7px 10px;border-radius:999px;border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;cursor:pointer;pointer-events:auto;font-size:12px;font-weight:600;}
+    .candidate-btn:hover{background:#eef2ff;border-color:#94a3b8;}
+    .candidate-btn:focus-visible{outline:2px solid #6366f1;outline-offset:2px;}
     #samples{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px;}
     #uploadWrap{margin-top:12px;padding:10px;border:1px dashed #cbd5e1;border-radius:10px;background:#fafafa;}
     #message{margin-top:12px;color:#334155;font-weight:600;}
@@ -1123,6 +1126,7 @@ Murray over 2.5 threes'></textarea>
           autoMatchedEventId:existingState.autoMatchedEventId||(item.matched_event||null),
           wasManuallySelected:Boolean(selectedGameByLegId[legId]),
           showPlayerPicker:Boolean(existingState.showPlayerPicker),
+          showGamePicker:Boolean(existingState.showGamePicker),
         };
         if(hasCurrentCandidates&&!existingState.wasManuallySelected){
           nextState.originalCandidateEvents=item.candidate_games||[];
@@ -1275,7 +1279,9 @@ Murray over 2.5 threes'></textarea>
           eventCell.textContent=item.matched_event;
         }
 
-        const canPickGame=item.result==='review'&&candidateGames.length>0;
+        const selectedGameId=selectedGameByLegId[legId]||item.selected_event_id||'';
+        const showGamePicker=Boolean(nextState.showGamePicker);
+        const canPickGame=(item.result==='review'||showGamePicker)&&candidateGames.length>0;
         if(canPickGame){
           const pickerWrap=document.createElement('div');
           pickerWrap.style.marginTop='8px';
@@ -1287,37 +1293,36 @@ Murray over 2.5 threes'></textarea>
           const pickerLabel=document.createElement('div');
           pickerLabel.style.fontSize='12px';
           pickerLabel.style.fontWeight='600';
-          pickerLabel.textContent='Pick a game';
+          pickerLabel.textContent='Possible games';
           pickerWrap.appendChild(pickerLabel);
 
-          const select=document.createElement('select');
-          select.style.marginTop='6px';
-          const prompt=document.createElement('option');
-          prompt.value='';
-          prompt.textContent='Auto-match (clear manual selection)';
-          select.appendChild(prompt);
-          select.value=selectedGameByLegId[legId]||'';
-          for(const game of candidateGames){
-            const opt=document.createElement('option');
-            opt.value=game.event_id;
-            opt.textContent=game.event_label;
-            if(game.event_id===selectedGameByLegId[legId]){ opt.selected=true; }
-            select.appendChild(opt);
-          }
-          select.addEventListener('change',()=>{
-            const nextValue=select.value||'';
-            if(nextValue){
-              selectedGameByLegId={...selectedGameByLegId,[legId]:nextValue};
-              legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,wasManuallySelected:true}};
-            }else{
-              const nextSelection={...selectedGameByLegId};
-              delete nextSelection[legId];
-              selectedGameByLegId=nextSelection;
-              legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,wasManuallySelected:false}};
-            }
+          const resetGameBtn=document.createElement('button');
+          resetGameBtn.type='button';
+          resetGameBtn.className='secondary candidate-btn';
+          resetGameBtn.textContent='Auto-match (clear manual selection)';
+          resetGameBtn.addEventListener('click',()=>{
+            const nextSelection={...selectedGameByLegId};
+            delete nextSelection[legId];
+            selectedGameByLegId=nextSelection;
+            legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,wasManuallySelected:false,showGamePicker:false}};
             submitCheck();
           });
-          pickerWrap.appendChild(select);
+          pickerWrap.appendChild(resetGameBtn);
+
+          candidateGames.forEach((game)=>{
+            const pickBtn=document.createElement('button');
+            pickBtn.type='button';
+            pickBtn.className='secondary candidate-btn';
+            pickBtn.textContent=game.event_label||game.event_id;
+            if(selectedGameId&&selectedGameId===game.event_id){pickBtn.disabled=true;}
+            pickBtn.addEventListener('click',()=>{
+              if(!game.event_id){return;}
+              selectedGameByLegId={...selectedGameByLegId,[legId]:game.event_id};
+              legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,wasManuallySelected:true,showGamePicker:false}};
+              submitCheck();
+            });
+            pickerWrap.appendChild(pickBtn);
+          });
           detailsBody.appendChild(pickerWrap);
         }
 
@@ -1328,6 +1333,31 @@ Murray over 2.5 threes'></textarea>
           selectedEventBadge.style.color='#334155';
           selectedEventBadge.textContent=`Using selected game: ${selectedEventLabel}`;
           eventCell.appendChild(selectedEventBadge);
+          const changeGameBtn=document.createElement('button');
+          changeGameBtn.type='button';
+          changeGameBtn.className='secondary';
+          changeGameBtn.style.marginTop='6px';
+          changeGameBtn.style.marginRight='6px';
+          changeGameBtn.textContent='Change game';
+          changeGameBtn.addEventListener('click',()=>{
+            legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showGamePicker:true}};
+            renderRows(legs||[]);
+          });
+          eventCell.appendChild(changeGameBtn);
+
+          const resetGameBtn=document.createElement('button');
+          resetGameBtn.type='button';
+          resetGameBtn.className='secondary';
+          resetGameBtn.style.marginTop='6px';
+          resetGameBtn.textContent='Reset selected game';
+          resetGameBtn.addEventListener('click',()=>{
+            const nextSelection={...selectedGameByLegId};
+            delete nextSelection[legId];
+            selectedGameByLegId=nextSelection;
+            legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showGamePicker:true,wasManuallySelected:false}};
+            submitCheck();
+          });
+          eventCell.appendChild(resetGameBtn);
         }
 
         if(item.result==='review'&&eventSelectionApplied){
@@ -1393,7 +1423,7 @@ Murray over 2.5 threes'></textarea>
             candidatePlayers.forEach((candidate)=>{
               const pickBtn=document.createElement('button');
               pickBtn.type='button';
-              pickBtn.className='secondary';
+              pickBtn.className='secondary candidate-btn';
               pickBtn.style.marginTop='6px';
               pickBtn.style.marginRight='6px';
               const teamText=candidate.team_name?` (${candidate.team_name})`:'';
@@ -1450,7 +1480,7 @@ Murray over 2.5 threes'></textarea>
             candidatePlayers.forEach((candidate)=>{
               const pickBtn=document.createElement('button');
               pickBtn.type='button';
-              pickBtn.className='secondary';
+              pickBtn.className='secondary candidate-btn';
               pickBtn.style.marginTop='6px';
               pickBtn.style.marginRight='6px';
               const teamText=candidate.team_name?` (${candidate.team_name})`:'';
