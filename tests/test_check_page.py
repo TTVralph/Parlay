@@ -77,9 +77,11 @@ def test_check_page_only_renders_manual_override_controls_when_candidates_exist(
     page = client.get('/check')
     assert page.status_code == 200
     html = page.text
-    assert 'if(candidateGames.length>0)' in html
+    assert "const canPickGame=item.result==='review'&&candidateGames.length>0;" in html
     assert 'wasManuallySelected:Boolean(selectedGameByLegId[legId])' in html
-    assert 'Manual selection applied' in html
+    assert 'Pick a game' in html
+    assert 'Using selected game:' in html
+    assert 'selected_event_by_leg_id=selectedGameByLegId' in html
 
 
 def test_check_page_shows_bet_date_input():
@@ -103,16 +105,15 @@ def test_check_page_form_submit_prevents_navigation_and_submits_in_place():
     assert "fetch('/check-slip'" in html
 
 
-def test_check_page_reset_selection_button_is_clickable() -> None:
+def test_check_page_reset_selection_is_available_via_auto_match_option() -> None:
     client = TestClient(app)
     page = client.get('/check')
     assert page.status_code == 200
     html = page.text
-    assert "resetBtn.disabled=false" in html
-    assert "resetBtn.addEventListener('click'" in html
-    assert 'if(nextState.wasManuallySelected)' in html
-    assert 'originalCandidateEvents' in html
-    assert 'originalReviewReason' in html
+    assert "prompt.textContent='Auto-match (clear manual selection)'" in html
+    assert "select.addEventListener('change'" in html
+    assert 'if(nextValue){' in html
+    assert 'delete nextSelection[legId];' in html
 
 
 def test_check_page_share_actions_have_explicit_success_and_failure_feedback():
@@ -256,6 +257,8 @@ def test_check_page_renders_structured_review_reason_fallback_ui():
     assert 'Needs manual review. We could not confidently resolve this leg.' in html
     assert "const statusBadge=reviewStatusLabel(details);" in html
     assert "suggestion.textContent=didYouMeanText;" in html
+    assert 'Player selection succeeded, but another downstream grading validation still requires review.' in html
+    assert 'Selected game could not be applied; choose one of the listed games.' in html
 
 
 def test_check_page_renders_subtle_fuzzy_resolution_message_in_main_table():

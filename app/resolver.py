@@ -414,7 +414,10 @@ def resolve_leg_events(
         elif leg.player:
             player_lookup_name = resolved_player_name or leg.player
             if leg.sport == 'NBA' and explicit_slip_date is not None:
-                resolved_game = resolve_player_game(player_lookup_name, explicit_slip_date.isoformat(), provider=provider)
+                try:
+                    resolved_game = resolve_player_game(player_lookup_name, explicit_slip_date.isoformat(), provider=provider)
+                except Exception:
+                    resolved_game = None
                 if resolved_game is not None:
                     candidates = [EventInfo(event_id=resolved_game.event_id, sport=resolved_game.sport, home_team=resolved_game.home_team, away_team=resolved_game.away_team, start_time=resolved_game.start_time)]
                     updates['matched_by'] = 'player_identity_team_schedule_lookup'
@@ -472,15 +475,41 @@ def resolve_leg_events(
             resolution_warnings.append('no_candidate_events')
 
         selected_for_leg = None
+        selected_from_map = False
         if selected_event_by_leg_id:
             selected_for_leg = selected_event_by_leg_id.get(leg_id)
+            selected_from_map = bool(selected_for_leg)
         if not selected_for_leg:
             selected_for_leg = selected_event_id
 
+        updates['event_selection_applied'] = False
+        updates['selected_event_id'] = selected_for_leg or None
+        updates['selected_event_label'] = None
+        updates['event_selection_source'] = 'auto'
+        updates['event_selection_explanation'] = 'Used automatically matched game candidate.'
+
         if selected_for_leg:
-            selected_only = [event for event in candidates if event.event_id == selected_for_leg]
+            selected_pool = all_candidates_before_date_filter or candidates
+            selected_only = [event for event in selected_pool if event.event_id == selected_for_leg]
             if selected_only:
-                candidates = selected_only
+                selected_event = selected_only[0]
+                candidates = [selected_event]
+                updates['event_selection_applied'] = True
+                updates['selected_event_id'] = selected_event.event_id
+                updates['selected_event_label'] = selected_event.label
+                updates['event_selection_source'] = 'user_selected' if selected_from_map else 'auto'
+                updates['event_selection_explanation'] = f"Used user-selected game override: {selected_event.label}" if selected_from_map else f"Used selected game override: {selected_event.label}"
+                resolution_warnings = [warning for warning in resolution_warnings if warning not in {'multiple_candidate_events', 'ambiguous_event_match'}]
+                notes.append(f'diagnostic: selected_event_override_applied={selected_event.event_id}')
+            elif selected_from_map:
+                updates['selection_error_code'] = 'INVALID_SELECTED_EVENT_ID'
+                updates['event_selection_source'] = 'user_selected'
+                updates['event_selection_explanation'] = 'Selected game could not be applied because the event ID was not found for this leg.'
+                updates['event_resolution_status'] = 'review'
+                updates['event_resolution_method'] = 'invalid_selected_event'
+                updates['event_review_reason_code'] = 'invalid_selected_event_id'
+                updates['event_review_reason_text'] = 'Selected game could not be applied; choose a listed game for this leg.'
+                notes.append('manual event selection invalid: selected event id not found for leg')
 
         if leg.player and leg.sport == 'NBA' and len(candidates) > 1:
             ranked = _rank_player_candidates_by_appearance(provider, resolved_player_name or leg.player, candidates)
@@ -501,6 +530,7 @@ def resolve_leg_events(
         updates['selection_error_code'] = updates.get('selection_error_code')
         notes.append(f"diagnostic: selection_applied={updates['selection_applied']}")
         notes.append(f"diagnostic: selection_error_code={updates.get('selection_error_code') or 'none'}")
+        notes.append(f"diagnostic: event_selection_applied={updates.get('event_selection_applied', False)}")
         updates['parsed_player_name'] = leg.parsed_player_name or leg.player
         updates['normalized_stat_type'] = leg.normalized_stat_type or leg.market_type
         updates['resolved_player_name'] = resolved_player_name
@@ -523,6 +553,15 @@ def resolve_leg_events(
         updates['candidate_player_details'] = list(updates.get('candidate_player_details', []))
         updates['notes'] = notes
 
+        if updates.get('selection_error_code') == 'INVALID_SELECTED_EVENT_ID':
+            resolution_warnings.append('invalid_selected_event_id')
+            updates['event_candidates'] = _build_candidate_events(candidates or all_candidates_before_date_filter, slip_value=slip_filter_value, reason='invalid selected game id')
+            updates['event_resolution_warnings'] = list(dict.fromkeys(resolution_warnings))
+            unresolved_leg = leg.model_copy(update=updates)
+            updates['event_resolution_confidence'] = _resolution_confidence_for_leg(unresolved_leg)
+            resolved.append(leg.model_copy(update=updates))
+            continue
+
         if len(candidates) == 1:
             event = candidates[0]
             resolved_event_ids.add(event.event_id)
@@ -535,6 +574,10 @@ def resolve_leg_events(
             updates['event_id'] = event.event_id
             updates['event_label'] = event.label
             updates['event_start_time'] = event.start_time
+            updates['selected_event_id'] = updates.get('selected_event_id') or event.event_id
+            updates['selected_event_label'] = updates.get('selected_event_label') or event.label
+            updates['event_selection_source'] = updates.get('event_selection_source') or 'auto'
+            updates['event_selection_explanation'] = updates.get('event_selection_explanation') or ('Used user-selected game override.' if updates.get('event_selection_applied') else 'Used automatically matched game candidate.')
             updates['event_candidates'] = []
             updates['matched_event_id'] = event.event_id
             updates['matched_event_label'] = event.label

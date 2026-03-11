@@ -95,6 +95,11 @@ class Leg(BaseModel):
     selection_applied: bool = False
     selection_error_code: Optional[str] = None
     canonical_player_name: Optional[str] = None
+    event_selection_applied: bool = False
+    selected_event_id: Optional[str] = None
+    selected_event_label: Optional[str] = None
+    event_selection_source: Optional[Literal['auto', 'user_selected']] = None
+    event_selection_explanation: Optional[str] = None
 
 
 class ParseResponse(BaseModel):
@@ -167,6 +172,11 @@ class GradedLeg(BaseModel):
     selection_applied: bool = False
     selection_error_code: Optional[str] = None
     canonical_player_name: Optional[str] = None
+    event_selection_applied: bool = False
+    selected_event_id: Optional[str] = None
+    selected_event_label: Optional[str] = None
+    event_selection_source: Optional[Literal['auto', 'user_selected']] = None
+    event_selection_explanation: Optional[str] = None
 
 
 class SettlementExplanation(BaseModel):
