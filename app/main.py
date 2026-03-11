@@ -976,6 +976,17 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .result-chip.win{border-color:#22c55e;color:#bbf7d0;}
     .result-chip.loss{border-color:#ef4444;color:#fecaca;}
     .result-chip.review{border-color:#f59e0b;color:#fde68a;}
+    .recent-slip-card{display:flex;justify-content:space-between;align-items:stretch;gap:14px;padding:12px;border:1px solid #273449;border-radius:14px;background:linear-gradient(180deg,#0f172a,#0c1322);}
+    .recent-slip-main{min-width:0;display:flex;flex-direction:column;gap:6px;}
+    .recent-slip-summary{font-weight:800;color:#f8fafc;font-size:15px;line-height:1.2;}
+    .recent-slip-meta{font-size:12px;color:#94a3b8;}
+    .recent-slip-preview{font-size:12px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .recent-slip-side{display:flex;flex-direction:column;gap:8px;align-items:flex-end;}
+    .recent-slip-progress{width:100%;height:6px;border-radius:999px;background:#1f2a40;overflow:hidden;position:relative;}
+    .recent-slip-progress-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#22c55e,#16a34a);}
+    .recent-slip-progress-fill.review{background:linear-gradient(90deg,#f59e0b,#d97706);}
+    .recent-slip-progress-fill.loss{background:linear-gradient(90deg,#f43f5e,#dc2626);}
+    @media (max-width:640px){.recent-slip-card{flex-direction:column;}.recent-slip-side{align-items:flex-start;}}
     .result-meta{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px;}
     .meta-chip{display:inline-flex;align-items:center;border:1px solid #334155;border-radius:999px;padding:6px 11px;font-size:12px;background:#0f172a;color:#cbd5e1;}
     #summaryWrap{margin-top:12px;}
@@ -984,6 +995,7 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     table,thead,tbody{display:block;} thead{display:none;} table{width:100%;}
     tr{display:block;margin-bottom:10px;border:1px solid #243244;border-radius:14px;background:#111827;padding:12px;}
     td{text-align:left;padding:4px 0;display:block;vertical-align:top;border:none;}
+    td.leg-result-cell{display:none;}
     code{background:#111827;padding:2px 6px;border-radius:6px;color:#bfdbfe;}
   </style>
 </head>
@@ -1137,11 +1149,19 @@ Murray over 2.5 threes'></textarea>
     // <span class='result-chip'>${counts.review} Review</span>
     // suggestion.textContent=didYouMeanText;
     // Possible games
+    // if(parsedLegs.length){slip.value=parsedLegs.join('\\n');}
+    // else if(body.cleaned_text){slip.value=body.cleaned_text;}
 
     function statusBadgeTone(status){
       if(status==='cashed'){return 'win';}
       if(status==='lost'){return 'loss';}
       return 'review';
+    }
+
+    function statusBadgeLabel(status){
+      if(status==='cashed'){return 'Won';}
+      if(status==='lost'){return 'Lost';}
+      return 'Needs review';
     }
 
     function renderRecentSlips(items){
@@ -1150,53 +1170,68 @@ Murray over 2.5 threes'></textarea>
       recentSlipsEmpty.style.display=rows.length?'none':'block';
       for(const item of rows){
         const row=document.createElement('div');
-        row.style.border='1px solid #243244';
-        row.style.background='#0f172a';
-        row.style.borderRadius='10px';
-        row.style.padding='10px';
-        row.style.display='flex';
-        row.style.justifyContent='space-between';
-        row.style.gap='8px';
-        row.style.alignItems='center';
+        row.className='recent-slip-card';
 
         const left=document.createElement('div');
-        left.style.minWidth='0';
+        left.className='recent-slip-main';
+
         const summary=document.createElement('div');
+        summary.className='recent-slip-summary';
         summary.textContent=item.summary||'Needs review';
-        summary.style.fontWeight='700';
+
         const meta=document.createElement('div');
-        meta.style.color='#94a3b8';
-        meta.style.fontSize='12px';
+        meta.className='recent-slip-meta';
         meta.textContent=`${item.bet_date||'No bet date'} · ${item.checked_at_label||'just now'}`;
+
         const preview=document.createElement('div');
-        preview.style.color='#cbd5e1';
-        preview.style.fontSize='12px';
-        preview.style.whiteSpace='nowrap';
-        preview.style.overflow='hidden';
-        preview.style.textOverflow='ellipsis';
+        preview.className='recent-slip-preview';
         preview.textContent=item.preview_text||'';
-        left.append(summary,meta,preview);
+
+        const progressWrap=document.createElement('div');
+        progressWrap.className='recent-slip-progress';
+        const progressFill=document.createElement('div');
+        const tone=statusBadgeTone(item.overall_result);
+        progressFill.className=`recent-slip-progress-fill ${tone}`;
+        const summaryText=String(item.summary||'');
+        const hitMatch=summaryText.match(/(\d+)\s*\/\s*(\d+)\s*hit/i);
+        const unresolvedMatch=summaryText.match(/(\d+)\s+leg(?:s)?\s+unresolved/i);
+        let progressRatio=0;
+        if(hitMatch){
+          const hits=Number(hitMatch[1]);
+          const total=Number(hitMatch[2]);
+          progressRatio=total>0?Math.max(0,Math.min(1,hits/total)):0;
+        }else if(unresolvedMatch){
+          const unresolved=Number(unresolvedMatch[1]);
+          const totalGuess=(item.preview_text||'').split(' · ')[0].split('|').length;
+          progressRatio=totalGuess>0?Math.max(0,Math.min(1,(totalGuess-unresolved)/totalGuess)):0.5;
+        }else{
+          progressRatio=tone==='win'?1:(tone==='loss'?0.35:0.5);
+        }
+        progressFill.style.width=`${Math.round(progressRatio*100)}%`;
+        progressWrap.appendChild(progressFill);
+
+        left.append(summary,meta,progressWrap,preview);
 
         const right=document.createElement('div');
+        right.className='recent-slip-side';
         const badge=document.createElement('span');
-        const tone=statusBadgeTone(item.overall_result);
         badge.className=`result-chip ${tone}`;
-        badge.textContent=(item.overall_result||'needs_review').replace('_',' ');
+        badge.textContent=statusBadgeLabel(item.overall_result);
+
         const open=document.createElement('button');
         open.type='button';
         open.className='secondary';
-        open.style.marginTop='6px';
+        open.style.marginTop='0';
         open.textContent='Open';
+        open.disabled=!item.public_url;
         open.addEventListener('click',()=>{ if(item.public_url){window.open(item.public_url,'_blank','noopener');}});
-        right.append(badge,open);
-        right.style.display='flex';
-        right.style.flexDirection='column';
-        right.style.alignItems='flex-end';
 
+        right.append(badge,open);
         row.append(left,right);
         recentSlipsList.appendChild(row);
       }
     }
+
 
     async function loadRecentSlips(){
       try{
@@ -1325,15 +1360,15 @@ Murray over 2.5 threes'></textarea>
         if(item.actual_value!==null&&item.actual_value!==undefined){
           legCell.innerHTML+=`<div style="margin-top:4px;font-size:12px;color:#cbd5e1;">Actual: ${escapeHtml(String(item.actual_value))}</div>`;
         }
-        resultCell.textContent=resultLabel[status]||String(status);
+        resultCell.className='leg-result-cell';
 
         if(item.matched_event){
-          eventCell.innerHTML+=`<div style="font-size:12px;">Game: ${escapeHtml(item.matched_event)}</div>`;
+          legCell.innerHTML+=`<div style="margin-top:4px;font-size:12px;color:#cbd5e1;">Game: ${escapeHtml(item.matched_event)}</div>`;
         }
 
         const needsReview=status==='review'||status==='unmatched';
         if(needsReview){
-          eventCell.innerHTML+=`<div class='review-panel'><div class='review-title'>⚠️ Needs manual review</div><div class='review-reason'>${escapeHtml(bestReviewReason(item)||'We could not confidently resolve this leg yet.')}</div></div>`;
+          legCell.innerHTML+=`<div class='review-panel'><div class='review-reason'>${escapeHtml(bestReviewReason(item)||'We could not confidently resolve this leg yet.')}</div></div>`;
         }
 
         const candidateGames=(item.candidate_games||[]).length
@@ -1666,8 +1701,14 @@ Murray over 2.5 threes'></textarea>
           const parsedLegObjects=parsed.parsed_legs||[];
           const parsedLegs=parsedLegObjects.map((item)=>item.normalized_label||item.raw_leg_text).filter(Boolean);
           collectPlayerNameSuggestions(parsedLegObjects);
-          if(parsedLegs.length){slip.value=parsedLegs.join('\\n');}
-          else if(body.cleaned_text){slip.value=body.cleaned_text;}
+          if(parsedLegs.length){
+            slip.value=parsedLegs.join('\\n');
+            slip.dispatchEvent(new Event('input',{bubbles:true}));
+          }else if(body.cleaned_text){
+            const cleanedLines=String(body.cleaned_text).split(/\\r?\\n/).map((line)=>line.trim()).filter(Boolean);
+            slip.value=cleanedLines.join('\\n');
+            slip.dispatchEvent(new Event('input',{bubbles:true}));
+          }
           if(!slipDate.value&&parsed.detected_bet_date){slipDate.value=parsed.detected_bet_date;}
           screenshotNeedsParse=false;
           parsedScreenshotSignature=screenshotSignature;
