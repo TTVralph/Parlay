@@ -67,7 +67,7 @@ def test_manual_player_selection_ui_signals_are_rendered() -> None:
 def test_manual_event_selection_ui_is_clickable_and_reopenable() -> None:
     script = _check_page_script()
     assert "const canPickGame=(item.result==='review'||showGamePicker)&&candidateGames.length>0" in script
-    assert "pickerLabel.textContent='Possible games';" in script
+    assert "pickerLabel.textContent='Multiple games found. Choose the correct one.';" in script
     assert "changeGameBtn.textContent='Change game';" in script
     assert "resetGameBtn.textContent='Reset selected game';" in script
     assert "payload.selected_event_by_leg_id=selectedGameByLegId" in script

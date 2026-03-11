@@ -69,7 +69,7 @@ _MARKET_ALIASES = {
     'pra': 'points + rebounds + assists',
     'points + rebounds + assists': 'points + rebounds + assists',
 }
-_PLAYER_ONLY_LINE = re.compile(r"^[A-Z][A-Za-z\-'’]+(?:\s+[A-Z][A-Za-z\-'’]+){1,3}$")
+_PLAYER_ONLY_LINE = re.compile(r"^[A-Z][A-Za-z\-'’\.]+(?:\s+[A-Z][A-Za-z\-'’\.]+){1,3}$")
 _OU_MARKET_LINE = re.compile(
     r'^(?P<dir>O|U|Over|Under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>[A-Za-z0-9+ ]+)$',
     re.I,
@@ -97,6 +97,14 @@ _MARKET_FOLLOWUP_LINE = re.compile(r'^(?P<market>Triple\s*-?\s*Double|Double\s*-
 _YES_NO_ONLY = re.compile(r'^(Yes|No)$', re.I)
 _DIRECTION_LINE_ONLY = re.compile(r'^(?P<dir>O|U|Over|Under)\s*(?P<line>\d+(?:\.\d+)?)$', re.I)
 _MARKET_ONLY_LINE = re.compile(r'^(?P<market>Pts|Points|Reb|Rebs|Rebounds|Ast|Asts|Assists|PRA|Pts\s*\+\s*Ast|Pts\s*\+\s*Reb|Reb\s*\+\s*Ast|3PM|3PT|Threes|Three\s+Pointers)$', re.I)
+_ALT_MARKET_PHRASE = re.compile(
+    r'^(?:TO\s+(?:SCORE|RECORD)\s+)?(?P<line>\d+(?:\.\d+)?)\s*\+\s*(?P<market>POINTS|REBOUNDS|ASSISTS|PRA)\b',
+    re.I,
+)
+_INLINE_ALT_MARKET = re.compile(
+    r"^(?!TO\b)(?P<name>[A-Za-z\-'’\. ]+?)\s+(?:TO\s+(?:SCORE|RECORD)\s+)?(?P<line>\d+(?:\.\d+)?)\s*\+\s*(?P<market>POINTS|REBOUNDS|ASSISTS|PRA)\b",
+    re.I,
+)
 
 
 def _is_noise_line(line: str) -> bool:
@@ -162,6 +170,17 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
             current_player = _title_name(inline_ou.group('name'))
             continue
 
+        inline_alt = _INLINE_ALT_MARKET.match(line)
+        if inline_alt:
+            normalized.append(_format_ou_leg(
+                inline_alt.group('name'),
+                'over',
+                f"{float(inline_alt.group('line')) - 0.5:g}",
+                inline_alt.group('market'),
+            ))
+            current_player = _title_name(inline_alt.group('name'))
+            continue
+
         direction_only = _DIRECTION_LINE_ONLY.match(line)
         if direction_only and current_player:
             pending_direction = direction_only.group('dir')
@@ -210,6 +229,27 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
             pending_yes_no_name = current_player
             pending_yes_no_market = None
             pending_yes_no_selection = None
+            continue
+
+        alt_market = _ALT_MARKET_PHRASE.match(line)
+        if alt_market and current_player:
+            normalized.append(_format_ou_leg(
+                current_player,
+                'over',
+                f"{float(alt_market.group('line')) - 0.5:g}",
+                alt_market.group('market'),
+            ))
+            continue
+
+        if current_player and re.match(r'^TO\s+(?:SCORE|RECORD)\b', line, re.I):
+            trailing_alt = _ALT_MARKET_PHRASE.search(line)
+            if trailing_alt:
+                normalized.append(_format_ou_leg(
+                    current_player,
+                    'over',
+                    f"{float(trailing_alt.group('line')) - 0.5:g}",
+                    trailing_alt.group('market'),
+                ))
             continue
 
         ou_market = _OU_MARKET_LINE.match(line)
