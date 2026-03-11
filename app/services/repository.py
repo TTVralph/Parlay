@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..stripe_gateway import create_checkout_session, create_billing_portal
@@ -1059,6 +1059,11 @@ def _new_public_slip_id(length: int = 8) -> str:
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
+def _new_public_tracker_key(length: int = 24) -> str:
+    alphabet = string.ascii_lowercase + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
 def save_public_slip_result(
     db: Session,
     *,
@@ -1069,6 +1074,7 @@ def save_public_slip_result(
     parser_confidence: str | None = None,
     bet_date: datetime | None = None,
     stake_amount: float | None = None,
+    tracker_key: str | None = None,
 ) -> PublicSlipResultORM:
     matched_events = [leg.get('matched_event') for leg in legs if leg.get('matched_event')]
     public_id = _new_public_slip_id()
@@ -1082,8 +1088,10 @@ def save_public_slip_result(
         matched_events_json=json.dumps(matched_events),
         overall_result=overall_result,
         parser_confidence=parser_confidence,
+        tracker_key=(tracker_key or None),
         bet_date=bet_date,
         stake_amount=stake_amount,
+        checked_at=datetime.utcnow(),
     )
     db.add(row)
     db.commit()
@@ -1093,3 +1101,17 @@ def save_public_slip_result(
 
 def get_public_slip_result(db: Session, public_id: str) -> PublicSlipResultORM | None:
     return db.scalar(select(PublicSlipResultORM).where(PublicSlipResultORM.public_id == public_id))
+
+
+
+def list_recent_public_slips(db: Session, *, tracker_key: str, limit: int = 8) -> list[PublicSlipResultORM]:
+    safe_key = tracker_key.strip().lower()
+    if not safe_key:
+        return []
+    stmt = (
+        select(PublicSlipResultORM)
+        .where(or_(PublicSlipResultORM.tracker_key == safe_key, PublicSlipResultORM.tracker_key == tracker_key.strip()))
+        .order_by(PublicSlipResultORM.checked_at.desc(), PublicSlipResultORM.id.desc())
+        .limit(max(1, min(limit, 20)))
+    )
+    return list(db.scalars(stmt).all())

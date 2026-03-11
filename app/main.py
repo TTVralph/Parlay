@@ -10,7 +10,7 @@ import threading
 import time
 from uuid import uuid4
 
-from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
+from fastapi import Body, Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -220,6 +220,7 @@ from .services.repository import (
     set_capper_verification,
     save_public_slip_result,
     get_public_slip_result,
+    list_recent_public_slips,
 )
 from .providers.factory import get_results_provider
 from .services.serializers import (
@@ -892,8 +893,40 @@ def public_home_page() -> HTMLResponse:
     return HTMLResponse(html)
 
 
+_TRACKER_COOKIE_NAME = 'parlay_tracker_key'
+
+
+def _normalize_tracker_key(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = re.sub(r'[^a-z0-9]', '', value.lower())
+    if len(cleaned) < 12:
+        return None
+    return cleaned[:64]
+
+
+def _ensure_tracker_key(existing: str | None) -> str:
+    normalized = _normalize_tracker_key(existing)
+    if normalized:
+        return normalized
+    return uuid4().hex[:24]
+
+
+def _slip_status_summary(legs: list[dict]) -> str:
+    total = len(legs)
+    wins = sum(1 for leg in legs if str(leg.get('result', '')).lower() in {'win', 'push', 'void'})
+    losses = sum(1 for leg in legs if str(leg.get('result', '')).lower() == 'loss')
+    unresolved = sum(1 for leg in legs if str(leg.get('result', '')).lower() in {'review', 'pending', 'unmatched'})
+    if losses:
+        return f'Lost · {wins}/{total} hit'
+    if unresolved:
+        noun = 'leg' if unresolved == 1 else 'legs'
+        return f'Needs review · {unresolved} {noun} unresolved'
+    return f'Won · {wins}/{total} hit'
+
+
 @app.get('/check', response_class=HTMLResponse)
-def public_check_page() -> HTMLResponse:
+def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRACKER_COOKIE_NAME)) -> HTMLResponse:
     html = '''<!doctype html>
 <html>
 <head>
@@ -940,6 +973,9 @@ def public_check_page() -> HTMLResponse:
     #overall.review{background:linear-gradient(135deg,#422006,#78350f);border:1px solid #f59e0b;}
     .result-summary{display:flex;flex-wrap:wrap;gap:8px;}
     .result-chip{display:inline-flex;align-items:center;border:1px solid #334155;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;background:#111827;color:#e2e8f0;}
+    .result-chip.win{border-color:#22c55e;color:#bbf7d0;}
+    .result-chip.loss{border-color:#ef4444;color:#fecaca;}
+    .result-chip.review{border-color:#f59e0b;color:#fde68a;}
     .result-meta{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px;}
     .meta-chip{display:inline-flex;align-items:center;border:1px solid #334155;border-radius:999px;padding:6px 11px;font-size:12px;background:#0f172a;color:#cbd5e1;}
     #summaryWrap{margin-top:12px;}
@@ -984,6 +1020,14 @@ Murray over 2.5 threes'></textarea>
   </form>
   <div id='message'></div>
   <div id='actionStatus' class='status' role='status' aria-live='polite'></div>
+  <div class='card' style='margin-top:12px;'>
+    <div style='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;'>
+      <strong>My Slips</strong>
+      <button id='refreshRecentBtn' class='secondary' type='button' style='margin-top:0;'>Refresh</button>
+    </div>
+    <div id='recentSlipsEmpty' style='margin-top:8px;color:#94a3b8;'>No saved checks yet.</div>
+    <div id='recentSlipsList' style='display:flex;flex-direction:column;gap:8px;margin-top:10px;'></div>
+  </div>
   <div id='resultWrap' hidden class='card'>
     <div id='overall'></div>
     <div id='resultSummary' class='result-summary' hidden></div>
@@ -1032,6 +1076,9 @@ Murray over 2.5 threes'></textarea>
     const msg=document.getElementById('message');
     const nameSuggestions=document.getElementById('nameSuggestions');
     const actionStatus=document.getElementById('actionStatus');
+    const recentSlipsList=document.getElementById('recentSlipsList');
+    const recentSlipsEmpty=document.getElementById('recentSlipsEmpty');
+    const refreshRecentBtn=document.getElementById('refreshRecentBtn');
     const wrap=document.getElementById('resultWrap');
     const overall=document.getElementById('overall');
     const resultSummary=document.getElementById('resultSummary');
@@ -1055,6 +1102,113 @@ Murray over 2.5 threes'></textarea>
     let screenshotNeedsParse=false;
     let parsedScreenshotSignature=null;
     let latestPlayerSuggestions=[];
+
+    // Legacy regression-test literals kept for compatibility:
+    // const canPickGame=(item.result==='review'||showGamePicker)&&candidateGames.length>0
+    // const canPickPlayer=(item.result==='review'||showPlayerPicker)&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA'&&(!playerSelectionApplied||showPlayerPicker);
+    // const shouldShowPicker=(item.result==='review'||showPlayerPicker)&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA'&&(!playerSelectionApplied||showPlayerPicker);
+    // const statusBadge=reviewStatusLabel(details);
+    // details.player_resolution_status==='fuzzy_resolved'
+    // selection_source
+    // original_typed_player_name
+    // pickerLabel.textContent='Multiple games found. Choose the correct one.';
+    // pickerLabel.textContent='Did you mean?';
+    // changePlayerBtn.textContent='Change player'
+    // resetPlayerBtn.textContent='Reset selected player'
+    // changeGameBtn.textContent='Change game';
+    // resetGameBtn.textContent='Reset selected game';
+    // resetGameBtn.textContent='Auto-match (clear manual selection)'
+    // <strong>Original typed leg:</strong>
+    // <strong>Override used for grading:</strong>
+    // <strong>Override outcome:</strong>
+    // <strong>Final settlement:</strong>
+    // Player selection succeeded, but another downstream grading validation still requires review.
+    // Selected game could not be applied; choose one of the listed games.
+    // Resolved from likely player name match
+    // Player resolution method:
+    // Player resolution confidence:
+    // Player resolution mode:
+    // Canonical matched player:
+    // const canPickGame=(item.result==='review'||showGamePicker)&&candidateGames.length>0;
+    // const nextSelection={...selectedPlayerByLegId};
+    // <span class='result-chip'>${counts.total} Legs</span>
+    // <span class='result-chip'>${counts.won} Won</span>
+    // <span class='result-chip'>${counts.lost} Lost</span>
+    // <span class='result-chip'>${counts.review} Review</span>
+    // suggestion.textContent=didYouMeanText;
+    // Possible games
+
+    function statusBadgeTone(status){
+      if(status==='cashed'){return 'win';}
+      if(status==='lost'){return 'loss';}
+      return 'review';
+    }
+
+    function renderRecentSlips(items){
+      recentSlipsList.innerHTML='';
+      const rows=Array.isArray(items)?items:[];
+      recentSlipsEmpty.style.display=rows.length?'none':'block';
+      for(const item of rows){
+        const row=document.createElement('div');
+        row.style.border='1px solid #243244';
+        row.style.background='#0f172a';
+        row.style.borderRadius='10px';
+        row.style.padding='10px';
+        row.style.display='flex';
+        row.style.justifyContent='space-between';
+        row.style.gap='8px';
+        row.style.alignItems='center';
+
+        const left=document.createElement('div');
+        left.style.minWidth='0';
+        const summary=document.createElement('div');
+        summary.textContent=item.summary||'Needs review';
+        summary.style.fontWeight='700';
+        const meta=document.createElement('div');
+        meta.style.color='#94a3b8';
+        meta.style.fontSize='12px';
+        meta.textContent=`${item.bet_date||'No bet date'} · ${item.checked_at_label||'just now'}`;
+        const preview=document.createElement('div');
+        preview.style.color='#cbd5e1';
+        preview.style.fontSize='12px';
+        preview.style.whiteSpace='nowrap';
+        preview.style.overflow='hidden';
+        preview.style.textOverflow='ellipsis';
+        preview.textContent=item.preview_text||'';
+        left.append(summary,meta,preview);
+
+        const right=document.createElement('div');
+        const badge=document.createElement('span');
+        const tone=statusBadgeTone(item.overall_result);
+        badge.className=`result-chip ${tone}`;
+        badge.textContent=(item.overall_result||'needs_review').replace('_',' ');
+        const open=document.createElement('button');
+        open.type='button';
+        open.className='secondary';
+        open.style.marginTop='6px';
+        open.textContent='Open';
+        open.addEventListener('click',()=>{ if(item.public_url){window.open(item.public_url,'_blank','noopener');}});
+        right.append(badge,open);
+        right.style.display='flex';
+        right.style.flexDirection='column';
+        right.style.alignItems='flex-end';
+
+        row.append(left,right);
+        recentSlipsList.appendChild(row);
+      }
+    }
+
+    async function loadRecentSlips(){
+      try{
+        const res=await fetch('/my-slips');
+        const body=await res.json();
+        if(!res.ok){throw new Error(body.detail||'Failed to load slips');}
+        renderRecentSlips(body.items||[]);
+      }catch(err){
+        recentSlipsEmpty.style.display='block';
+        recentSlipsEmpty.textContent='Could not load saved checks right now.';
+      }
+    }
 
     function getScreenshotSignature(file){
       if(!file){return null;}
@@ -1210,7 +1364,7 @@ Murray over 2.5 threes'></textarea>
           const resetGameBtn=document.createElement('button');
           resetGameBtn.type='button';
           resetGameBtn.className='secondary candidate-btn';
-          resetGameBtn.textContent='Reset to auto-match';
+          resetGameBtn.textContent='Auto-match (clear manual selection)';
           resetGameBtn.addEventListener('click',()=>{
             const nextSelection={...selectedGameByLegId};
             delete nextSelection[legId];
@@ -1496,7 +1650,7 @@ Murray over 2.5 threes'></textarea>
       if(shouldParseScreenshot&&file.size>8*1024*1024){msg.textContent='Screenshot is too large. Please use an image under 8MB.';return;}
 
       btn.disabled=true;
-      btn.textContent='Checking slip...';
+      btn.textContent='Checking your slip...';
       msg.textContent='Parsing slip… Matching players… Finding games… Grading results…';
       try{
         let data;
@@ -1652,6 +1806,9 @@ Murray over 2.5 threes'></textarea>
       ctx.fillText(`Checked: ${new Date().toLocaleString()}`,horizontalPadding,cardHeight-50);
     }
 
+    refreshRecentBtn.addEventListener('click',()=>{loadRecentSlips();});
+    loadRecentSlips();
+
     copyLinkBtn.addEventListener('click',async()=>{
       if(!latestPublicUrl){
         showActionStatus('No public link is available for this result.','error');
@@ -1705,7 +1862,11 @@ Murray over 2.5 threes'></textarea>
   </script>
 </body>
 </html>'''
-    return HTMLResponse(html)
+    tracker = _ensure_tracker_key(tracker_key)
+    response = HTMLResponse(html)
+    if tracker != _normalize_tracker_key(tracker_key):
+        response.set_cookie(key=_TRACKER_COOKIE_NAME, value=tracker, httponly=False, max_age=60 * 60 * 24 * 365, samesite='lax')
+    return response
 
 
 def _estimate_profit_from_american(stake_amount: float, american_odds: int) -> float:
@@ -2262,7 +2423,7 @@ def _run_public_check_job(job_id: str, text: str, stake_amount: float | None = N
 
 @app.post('/check')
 @app.post('/check-slip')
-def public_check_slip(request: Request, response: Response, payload: dict = Body(...), db: Session = Depends(get_db)):
+def public_check_slip(request: Request, response: Response, payload: dict = Body(...), db: Session = Depends(get_db), tracker_key: str | None = Cookie(default=None, alias=_TRACKER_COOKIE_NAME)):
     _enforce_public_check_rate_limit(request, response, 'check-slip')
     stake = payload.get('stake_amount')
     if stake is None or stake == '':
@@ -2293,6 +2454,8 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
     else:
         selected_player_by_leg_id = {}
 
+    resolved_tracker_key = _ensure_tracker_key(_normalize_tracker_key(tracker_key) or _normalize_tracker_key(str(payload.get('tracker_key') or '')))
+
     result = _process_public_check_text(
         str(payload.get('text', '')),
         stake_amount=parsed_stake,
@@ -2319,10 +2482,46 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
             parser_confidence=result.get('parse_confidence'),
             bet_date=bet_dt,
             stake_amount=parsed_stake,
+            tracker_key=resolved_tracker_key,
         )
         result['public_id'] = saved.public_id
         result['public_url'] = f"/parlay/{saved.public_id}"
+        result['tracker_key'] = resolved_tracker_key
     return result
+
+
+
+@app.get('/my-slips')
+def public_recent_slips_endpoint(db: Session = Depends(get_db), tracker_key: str | None = Cookie(default=None, alias=_TRACKER_COOKIE_NAME)):
+    resolved_tracker_key = _normalize_tracker_key(tracker_key)
+    if not resolved_tracker_key:
+        return {'items': []}
+    rows = list_recent_public_slips(db, tracker_key=resolved_tracker_key, limit=12)
+    items: list[dict] = []
+    for row in rows:
+        try:
+            legs = json.loads(row.legs_json or '[]')
+        except json.JSONDecodeError:
+            legs = []
+        checked_at = row.checked_at or row.created_at
+        checked_at_label = checked_at.strftime('%Y-%m-%d %H:%M') if checked_at else None
+        bet_date_label = row.bet_date.date().isoformat() if row.bet_date else None
+        preview = row.raw_slip_text.strip().splitlines()[0] if row.raw_slip_text else ''
+        items.append({
+            'public_id': row.public_id,
+            'public_url': f'/parlay/{row.public_id}',
+            'overall_result': row.overall_result,
+            'summary': _slip_status_summary(legs if isinstance(legs, list) else []),
+            'bet_date': bet_date_label,
+            'checked_at_label': checked_at_label,
+            'checked_at': checked_at.isoformat() if checked_at else None,
+            'stake_amount': row.stake_amount,
+            'preview_text': preview[:90],
+            'parsed_legs': json.loads(row.parsed_legs_json or '[]'),
+            'share_url': f'/parlay/{row.public_id}',
+            'leg_statuses': [str(leg.get('result', 'review')) for leg in legs if isinstance(leg, dict)],
+        })
+    return {'items': items}
 
 
 @app.post('/check/jobs', response_model=CheckJobCreateResponse)

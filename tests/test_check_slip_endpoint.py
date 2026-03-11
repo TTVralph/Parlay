@@ -63,3 +63,34 @@ def test_public_parlay_page_has_graceful_not_found_state():
     assert page.status_code == 404
     assert 'This public slip was not found.' in page.text
     assert 'Check a new slip' in page.text
+
+
+def test_check_slip_saved_to_recent_tracker_feed():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+
+    response = client.post('/check-slip', json={'text': 'Denver ML\nJokic over 24.5 points', 'bet_date': '2026-03-09', 'stake_amount': 25})
+    assert response.status_code == 200
+    body = response.json()
+    assert body['ok'] is True
+
+    recents = client.get('/my-slips')
+    assert recents.status_code == 200
+    items = recents.json()['items']
+    assert len(items) >= 1
+    first = items[0]
+    assert first['public_url'].startswith('/parlay/')
+    assert first['summary']
+    assert isinstance(first['leg_statuses'], list)
+    assert first['share_url'] == first['public_url']
+
+
+def test_check_page_has_my_slips_ui():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert 'My Slips' in html
+    assert "id='recentSlipsList'" in html
+    assert "fetch('/my-slips')" in html

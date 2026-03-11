@@ -49,8 +49,10 @@ class PublicSlipResultORM(Base):
     matched_events_json: Mapped[str] = mapped_column(Text, nullable=False, default='[]')
     overall_result: Mapped[str] = mapped_column(String(20), nullable=False)
     parser_confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    tracker_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     bet_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     stake_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
