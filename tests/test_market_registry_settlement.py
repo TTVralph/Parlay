@@ -6,6 +6,7 @@ import pytest
 
 from app.grader import settle_leg
 from app.models import Leg
+from app.services.event_snapshot import EventSnapshot
 from app.providers.base import EventInfo
 
 
@@ -114,3 +115,73 @@ def test_combo_markets_settle_with_breakdown(market_type: str, line: float, expe
     assert graded.settlement_explanation.stat_components
     assert graded.settlement_explanation.component_values
     assert graded.settlement_explanation.computed_total is not None
+
+
+def test_settle_leg_prefers_snapshot_for_migrated_single_stat_markets() -> None:
+    provider = RegistryProvider()
+    leg = Leg(
+        raw_text='Nikola Jokic points',
+        sport='NBA',
+        market_type='player_points',
+        player='Nikola Jokic',
+        direction='over',
+        line=29.5,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Boston Celtics @ Denver Nuggets',
+        resolved_team='Denver Nuggets',
+    )
+    snapshot = EventSnapshot(
+        event_id='evt-1',
+        home_team={'name': 'Denver Nuggets'},
+        away_team={'name': 'Boston Celtics'},
+        normalized_player_stats={
+            'nikolajokic': {
+                'player_id': '15',
+                'display_name': 'Nikola Jokic',
+                'stats': {'PTS': 30.0, 'REB': 7.0, 'AST': 5.0, 'PR': 37.0, 'PA': 35.0, 'RA': 12.0, 'PRA': 42.0},
+            }
+        },
+    )
+
+    def _boom(*args, **kwargs):
+        raise AssertionError('provider stat lookup should not be called when snapshot stat exists')
+
+    provider.get_player_result = _boom  # type: ignore[method-assign]
+    graded = settle_leg(leg, provider, event_snapshot=snapshot)
+    assert graded.settlement == 'win'
+
+
+def test_settle_leg_snapshot_combo_matches_provider_result() -> None:
+    provider = RegistryProvider()
+    leg = Leg(
+        raw_text='Nikola Jokic pra',
+        sport='NBA',
+        market_type='player_pra',
+        player='Nikola Jokic',
+        direction='over',
+        line=41.5,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Boston Celtics @ Denver Nuggets',
+        resolved_team='Denver Nuggets',
+    )
+    snapshot = EventSnapshot(
+        event_id='evt-1',
+        home_team={'name': 'Denver Nuggets'},
+        away_team={'name': 'Boston Celtics'},
+        normalized_player_stats={
+            'nikolajokic': {
+                'player_id': '15',
+                'display_name': 'Nikola Jokic',
+                'stats': {'PTS': 20.0, 'REB': 7.0, 'AST': 5.0, 'PRA': 32.0},
+            }
+        },
+    )
+
+    from_snapshot = settle_leg(leg, provider, event_snapshot=snapshot)
+    from_provider = settle_leg(leg, provider)
+
+    assert from_snapshot.actual_value == from_provider.actual_value
+    assert from_snapshot.settlement == from_provider.settlement
+

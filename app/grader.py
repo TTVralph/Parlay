@@ -83,6 +83,82 @@ def _name_matches(target_player: str, candidate: str | None) -> bool:
     return ''.join(target_tokens) == ''.join(candidate_tokens) or target_tokens[-1] == candidate_tokens[-1]
 
 
+_SNAPSHOT_STAT_ALIASES = {
+    'PTS': {'PTS', 'points'},
+    'REB': {'REB', 'rebounds'},
+    'AST': {'AST', 'assists'},
+    'PR': {'PR'},
+    'PA': {'PA'},
+    'RA': {'RA'},
+    'PRA': {'PRA'},
+}
+
+
+def _snapshot_player_entry(
+    snapshot: EventSnapshot,
+    *,
+    player_id: str | None,
+    player_name: str | None,
+) -> dict | None:
+    for entry in snapshot.normalized_player_stats.values():
+        if player_id and str(entry.get('player_id') or '').strip() == str(player_id).strip():
+            return entry
+    if player_name:
+        normalized_name = ''.join(ch for ch in player_name.lower() if ch.isalnum())
+        return snapshot.normalized_player_stats.get(normalized_name)
+    return None
+
+
+def get_player_stat(
+    snapshot: EventSnapshot,
+    player_id: str | None,
+    stat_key: str,
+    *,
+    player_name: str | None = None,
+) -> float | None:
+    entry = _snapshot_player_entry(snapshot, player_id=player_id, player_name=player_name)
+    if not entry:
+        return None
+    stats = entry.get('stats') or {}
+    for alias in _SNAPSHOT_STAT_ALIASES.get(stat_key, {stat_key}):
+        value = stats.get(alias)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def get_player_combo_stat(
+    snapshot: EventSnapshot,
+    player_id: str | None,
+    stat_key: str,
+    *,
+    player_name: str | None = None,
+) -> float | None:
+    total = get_player_stat(snapshot, player_id, stat_key, player_name=player_name)
+    if total is not None:
+        return total
+    combo_components = {
+        'PR': ('PTS', 'REB'),
+        'PA': ('PTS', 'AST'),
+        'RA': ('REB', 'AST'),
+        'PRA': ('PTS', 'REB', 'AST'),
+    }
+    components = combo_components.get(stat_key)
+    if not components:
+        return None
+    values: list[float] = []
+    for component in components:
+        value = get_player_stat(snapshot, player_id, component, player_name=player_name)
+        if value is None:
+            return None
+        values.append(value)
+    return float(sum(values))
+
+
 def _select_event_sequence_winner(market_type: str, events: list[PlayByPlayEvent]) -> str | None:
     if market_type == 'player_first_basket':
         event = next((evt for evt in events if evt.is_made_shot), None)
@@ -615,15 +691,54 @@ def settle_leg(
         if settlement_diagnostics['market_mapping'] and settlement_diagnostics['market_mapping'].get('mapping_failed'):
             settlement_diagnostics['settlement_failure_reason'] = 'market mapping missing'
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.MARKET_MAPPING_MISSING
+
+    snapshot_supported_markets = {
+        'player_points',
+        'player_rebounds',
+        'player_assists',
+        'player_pr',
+        'player_pa',
+        'player_ra',
+        'player_pra',
+    }
+    used_snapshot = False
+    snapshot_entry = None
+    if event_snapshot is not None and leg.market_type in snapshot_supported_markets:
+        snapshot_entry = _snapshot_player_entry(
+            event_snapshot,
+            player_id=leg.resolved_player_id,
+            player_name=player_lookup_name,
+        )
+        if snapshot_entry:
+            matched_boxscore_player_name = snapshot_entry.get('display_name')
+
     detail_lookup = getattr(provider, 'get_player_result_details', None)
     actual_value = None
-    if callable(detail_lookup):
+    if event_snapshot is not None and leg.market_type in snapshot_supported_markets:
+        if leg.market_type == 'player_points':
+            actual_value = get_player_stat(event_snapshot, leg.resolved_player_id, 'PTS', player_name=player_lookup_name)
+        elif leg.market_type == 'player_rebounds':
+            actual_value = get_player_stat(event_snapshot, leg.resolved_player_id, 'REB', player_name=player_lookup_name)
+        elif leg.market_type == 'player_assists':
+            actual_value = get_player_stat(event_snapshot, leg.resolved_player_id, 'AST', player_name=player_lookup_name)
+        elif leg.market_type == 'player_pr':
+            actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, 'PR', player_name=player_lookup_name)
+        elif leg.market_type == 'player_pa':
+            actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, 'PA', player_name=player_lookup_name)
+        elif leg.market_type == 'player_ra':
+            actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, 'RA', player_name=player_lookup_name)
+        elif leg.market_type == 'player_pra':
+            actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, 'PRA', player_name=player_lookup_name)
+        used_snapshot = actual_value is not None
+
+    if actual_value is None and callable(detail_lookup):
         details = detail_lookup(player_lookup_name, leg.market_type, event_id=leg.event_id)
         if details:
             actual_value = details.get('actual_value')
             matched_boxscore_player_name = details.get('matched_boxscore_player_name')
     if actual_value is None:
         actual_value = provider.get_player_result(player_lookup_name, leg.market_type, event_id=leg.event_id)
+
     component_values_dict = None
     stat_components: list[str] | None = None
     computed_total: float | None = None
@@ -632,19 +747,25 @@ def settle_leg(
         component_values_dict = {}
         stat_components = list(market_entry['stat_components'])
         for component in stat_components:
-            lookup_market = _STAT_COMPONENT_TO_PLAYER_MARKET.get(component)
-            if not lookup_market:
-                component_values_dict = None
-                break
-            component_value = provider.get_player_result(player_lookup_name, lookup_market, event_id=leg.event_id)
+            component_label = _STAT_COMPONENT_LABELS.get(component, component)
+            component_value = None
+            if event_snapshot is not None and leg.market_type in snapshot_supported_markets:
+                component_value = get_player_stat(event_snapshot, leg.resolved_player_id, component, player_name=player_lookup_name)
+            if component_value is None:
+                lookup_market = _STAT_COMPONENT_TO_PLAYER_MARKET.get(component)
+                if not lookup_market:
+                    component_values_dict = None
+                    break
+                component_value = provider.get_player_result(player_lookup_name, lookup_market, event_id=leg.event_id)
             if component_value is None:
                 component_values_dict = None
                 break
-            component_label = _STAT_COMPONENT_LABELS.get(component, component)
             component_values_dict[component_label] = float(component_value)
         if component_values_dict:
             computed_total = float(sum(component_values_dict.values()))
             actual_value = computed_total
+
+    settlement_diagnostics['stat_source'] = 'snapshot' if used_snapshot else 'provider'
 
     settlement_diagnostics['stat_lookup_result'] = 'found' if actual_value is not None else 'missing'
     if leg.line is None or leg.direction is None:
