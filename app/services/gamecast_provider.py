@@ -6,13 +6,15 @@ from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
+from app.services.request_cache import RequestCache
+
 
 class ESPNGamecastProvider:
     """Auxiliary ESPN live-event context provider for a single NBA event."""
 
-    def __init__(self, timeout_s: float = 3.0) -> None:
+    def __init__(self, timeout_s: float = 3.0, *, cache: RequestCache[str, dict[str, Any]] | None = None) -> None:
         self._timeout_s = timeout_s
-        self._cache: dict[str, dict[str, Any]] = {}
+        self._cache = cache or RequestCache[str, dict[str, Any]](max_entries=128)
 
     def _fetch_json(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
         full_url = url
@@ -29,15 +31,16 @@ class ESPNGamecastProvider:
             return None
 
     def fetch_raw(self, event_id: str) -> dict[str, Any] | None:
-        if event_id in self._cache:
-            return self._cache[event_id]
+        cached = self._cache.get(event_id)
+        if cached is not None:
+            return cached
 
         payload = self._fetch_json(
             'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary',
             params={'event': event_id},
         )
         if payload is not None:
-            self._cache[event_id] = payload
+            self._cache.set(event_id, payload)
         return payload
 
     def fetch_normalized(self, event_id: str) -> dict[str, Any] | None:
