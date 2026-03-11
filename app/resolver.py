@@ -8,6 +8,7 @@ from .models import Leg
 from .identity_resolution import get_canonical_player_identity, normalize_entity_name, resolve_player_identity
 from .providers.base import EventInfo, ResultsProvider
 from .services.nba_game_resolver import resolve_player_game
+from .services.scoreboard_provider import ESPNScoreboardProvider
 
 AMBIGUOUS_EVENT_WARNING = 'multiple games found for resolved team on date'
 PLAYER_TEAM_UNRESOLVED_WARNING = 'team could not be resolved from player identity'
@@ -292,6 +293,7 @@ def resolve_leg_events(
     selected_player_by_leg_id: dict[str, str] | None = None,
     bet_date: date | None = None,
     screenshot_default_date: date | None = None,
+    scoreboard_provider: ESPNScoreboardProvider | None = None,
 ) -> list[Leg]:
     explicit_slip_date = bet_date
     slip_default_date = explicit_slip_date or screenshot_default_date or (posted_at if isinstance(posted_at, date) and not isinstance(posted_at, datetime) else None)
@@ -311,6 +313,7 @@ def resolve_leg_events(
     else:
         anchor_input = None
     anchor = anchor_input
+    scoreboard_provider = scoreboard_provider or ESPNScoreboardProvider()
 
     resolved: list[Leg] = []
     resolved_event_ids: set[str] = set()
@@ -416,7 +419,7 @@ def resolve_leg_events(
             player_lookup_name = resolved_player_name or leg.player
             if leg.sport == 'NBA' and explicit_slip_date is not None:
                 try:
-                    resolved_game = resolve_player_game(player_lookup_name, explicit_slip_date.isoformat(), provider=provider)
+                    resolved_game = resolve_player_game(player_lookup_name, explicit_slip_date.isoformat(), provider=provider, scoreboard_provider=scoreboard_provider)
                 except Exception:
                     resolved_game = None
                 if resolved_game is not None:
@@ -625,6 +628,21 @@ def resolve_leg_events(
             continue
 
         if not candidates:
+            if leg.sport == 'NBA' and slip_default_date is not None:
+                scoreboard_hits = scoreboard_provider.resolve_event_candidates(
+                    slip_default_date.isoformat(),
+                    team_query=leg.resolved_team or player_team,
+                    opponent_query=opponent,
+                )
+                if scoreboard_hits:
+                    updates['event_candidates'] = list(scoreboard_hits[:5])
+                    notes.append(f'diagnostic: scoreboard_candidates={len(scoreboard_hits)}')
+                    if len(scoreboard_hits) > 1:
+                        updates['event_review_reason_code'] = 'scoreboard_multiple_candidates'
+                        updates['event_review_reason_text'] = 'Multiple scoreboard candidates found; select the correct game.'
+                    else:
+                        updates['event_review_reason_code'] = 'scoreboard_candidate_needs_confirmation'
+                        updates['event_review_reason_text'] = 'Scoreboard found a likely game; confirm event selection.'
             resolution_warnings.append('no_candidate_events')
             updates['event_resolution_status'] = 'review'
             updates['event_resolution_method'] = 'no_event_match'
@@ -634,7 +652,7 @@ def resolve_leg_events(
                 updates['event_review_reason_code'] = 'nearby_date_candidates_only'
                 updates['event_review_reason_text'] = 'Only nearby-date games were found; confirm the correct date.'
                 updates['event_date_match_quality'] = 'nearby'
-            else:
+            elif not updates.get('event_review_reason_code'):
                 updates['event_review_reason_code'] = 'no_matching_event_for_team_date'
                 updates['event_review_reason_text'] = 'No matching game was found for the resolved team/date.'
                 updates['event_date_match_quality'] = 'unknown'

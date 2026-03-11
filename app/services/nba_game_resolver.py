@@ -9,6 +9,7 @@ from pathlib import Path
 from ..identity_resolution import normalize_entity_name
 from ..providers.base import EventInfo, ResultsProvider
 from ..providers.factory import get_results_provider
+from .scoreboard_provider import ESPNScoreboardProvider
 
 _PLAYERS_CACHE_PATH = Path(__file__).resolve().parents[2] / 'data' / 'nba_players.json'
 _TEAMS_CACHE_PATH = Path(__file__).resolve().parents[2] / 'data' / 'nba_teams.json'
@@ -103,7 +104,32 @@ def _candidate_team_tokens(player_row: dict[str, object]) -> list[str]:
     return sorted(tokens)
 
 
-def resolve_player_game(player_name: str, date: str, provider: ResultsProvider | None = None) -> Game | None:
+def _game_from_scoreboard_event(event: dict[str, object]) -> Game | None:
+    event_id = str(event.get('event_id') or '').strip()
+    home_team = str(event.get('home_team') or '').strip()
+    away_team = str(event.get('away_team') or '').strip()
+    event_date = str(event.get('date') or '').strip()
+    if not (event_id and home_team and away_team and event_date):
+        return None
+    try:
+        start_time = datetime.fromisoformat(event_date.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return Game(
+        event_id=event_id,
+        sport='NBA',
+        home_team=home_team,
+        away_team=away_team,
+        start_time=start_time,
+    )
+
+
+def resolve_player_game(
+    player_name: str,
+    date: str,
+    provider: ResultsProvider | None = None,
+    scoreboard_provider: ESPNScoreboardProvider | None = None,
+) -> Game | None:
     player_row = _resolve_player_row(player_name)
     if not player_row:
         return None
@@ -115,6 +141,16 @@ def resolve_player_game(player_name: str, date: str, provider: ResultsProvider |
     candidate_tokens = _candidate_team_tokens(player_row)
     if not candidate_tokens:
         return None
+
+    if scoreboard_provider is not None:
+        scoreboard_matches: dict[str, Game] = {}
+        for token in candidate_tokens:
+            for event in scoreboard_provider.resolve_event_candidates(date, team_query=token):
+                game = _game_from_scoreboard_event(event)
+                if game is not None:
+                    scoreboard_matches[game.event_id] = game
+        if len(scoreboard_matches) == 1:
+            return next(iter(scoreboard_matches.values()))
 
     provider = provider or get_results_provider()
     anchor = datetime.combine(target_date, datetime.min.time(), tzinfo=timezone.utc)
