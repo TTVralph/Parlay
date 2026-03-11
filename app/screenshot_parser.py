@@ -140,6 +140,12 @@ def _format_ou_leg(name: str, direction: str, line: str, market: str) -> str:
     return f'{clean_name} {clean_direction} {line} {clean_market}'
 
 
+def _format_plus_leg(name: str, line: str, market: str) -> str:
+    clean_name = _title_name(name)
+    clean_market = _normalize_market_label(market).title()
+    return f'{clean_name} {line}+ {clean_market}'
+
+
 def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
     normalized: list[str] = []
     current_player: str | None = None
@@ -172,10 +178,9 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
 
         inline_alt = _INLINE_ALT_MARKET.match(line)
         if inline_alt:
-            normalized.append(_format_ou_leg(
+            normalized.append(_format_plus_leg(
                 inline_alt.group('name'),
-                'over',
-                f"{float(inline_alt.group('line')) - 0.5:g}",
+                f"{float(inline_alt.group('line')):g}",
                 inline_alt.group('market'),
             ))
             current_player = _title_name(inline_alt.group('name'))
@@ -233,10 +238,9 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
 
         alt_market = _ALT_MARKET_PHRASE.match(line)
         if alt_market and current_player:
-            normalized.append(_format_ou_leg(
+            normalized.append(_format_plus_leg(
                 current_player,
-                'over',
-                f"{float(alt_market.group('line')) - 0.5:g}",
+                f"{float(alt_market.group('line')):g}",
                 alt_market.group('market'),
             ))
             continue
@@ -244,10 +248,9 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
         if current_player and re.match(r'^TO\s+(?:SCORE|RECORD)\b', line, re.I):
             trailing_alt = _ALT_MARKET_PHRASE.search(line)
             if trailing_alt:
-                normalized.append(_format_ou_leg(
+                normalized.append(_format_plus_leg(
                     current_player,
-                    'over',
-                    f"{float(trailing_alt.group('line')) - 0.5:g}",
+                    f"{float(trailing_alt.group('line')):g}",
                     trailing_alt.group('market'),
                 ))
             continue
@@ -358,7 +361,11 @@ def _leg_to_parsed(leg: Leg) -> ParsedScreenshotLeg:
     if player_name and stat_type and direction in {'yes', 'no'}:
         normalized_label = f"{player_name} {stat_type.title()} {direction.title()}"
     elif player_name and stat_type and direction and line is not None:
-        normalized_label = f"{player_name} {direction.title()} {line:g} {stat_type.title()}"
+        display_line = leg.display_line or f'{line:g}'
+        if isinstance(display_line, str) and display_line.endswith('+') and direction == 'over':
+            normalized_label = f"{player_name} Over {display_line} {stat_type.title()}"
+        else:
+            normalized_label = f"{player_name} {direction.title()} {line:g} {stat_type.title()}"
     return ParsedScreenshotLeg(
         raw_leg_text=leg.raw_text,
         raw_player_text=leg.parsed_player_name or leg.player,

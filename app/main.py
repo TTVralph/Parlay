@@ -1150,9 +1150,6 @@ Murray over 2.5 threes'></textarea>
           ...existingState,
           originalCandidateEvents:existingState.originalCandidateEvents||(item.candidate_games||[]),
           originalCandidatePlayers:existingState.originalCandidatePlayers||(item.candidate_players||[]),
-          originalReviewReason:existingState.originalReviewReason||(item.review_reason||item.explanation_reason||null),
-          originalResult:existingState.originalResult||(item.result||null),
-          autoMatchedEventId:existingState.autoMatchedEventId||(item.matched_event||null),
           wasManuallySelected:Boolean(selectedGameByLegId[legId]),
           showPlayerPicker:Boolean(existingState.showPlayerPicker),
           showGamePicker:Boolean(existingState.showGamePicker),
@@ -1160,9 +1157,6 @@ Murray over 2.5 threes'></textarea>
         if(hasCurrentCandidates&&!existingState.wasManuallySelected){
           nextState.originalCandidateEvents=item.candidate_games||[];
           if(hasCurrentPlayerCandidates){ nextState.originalCandidatePlayers=item.candidate_players||[]; }
-          nextState.originalReviewReason=item.review_reason||item.explanation_reason||null;
-          nextState.originalResult=item.result||null;
-          nextState.autoMatchedEventId=item.matched_event||null;
         }
         legUiStateByLegId={...legUiStateByLegId,[legId]:nextState};
 
@@ -1170,179 +1164,40 @@ Murray over 2.5 threes'></textarea>
         const legCell=document.createElement('td');
         const resultCell=document.createElement('td');
         const eventCell=document.createElement('td');
-        const legText=document.createElement('div');
-        legText.textContent=item.leg||'—';
-        legCell.appendChild(legText);
 
-        const detailsWrap=document.createElement('details');
-        detailsWrap.style.marginTop='6px';
-        const detailsSummary=document.createElement('summary');
-        detailsSummary.textContent='Details';
-        detailsSummary.style.cursor='pointer';
-        detailsSummary.style.color='#475569';
-        detailsSummary.style.fontSize='12px';
-        detailsWrap.appendChild(detailsSummary);
+        const status=item.result||'review';
+        const legText=String(item.leg||'—');
+        legCell.innerHTML=`<div style="font-weight:700;">${resultEmoji[status]||'🧐'} ${escapeHtml(legText)}</div>`;
+        if(item.actual_value!==null&&item.actual_value!==undefined){
+          legCell.innerHTML+=`<div style="margin-top:4px;font-size:12px;color:#cbd5e1;">Actual: ${escapeHtml(String(item.actual_value))}</div>`;
+        }
+        resultCell.textContent=resultLabel[status]||String(status);
 
-        const detailsBody=document.createElement('div');
-        detailsBody.style.marginTop='6px';
-        detailsBody.style.fontSize='12px';
-        detailsBody.style.color='#334155';
-        const componentValues=item.component_values||{};
-        const componentRows=Object.keys(componentValues).map((key)=>`<div>${key}: ${componentValues[key]}</div>`).join('');
-        const boxscoreText=item.matched_boxscore_player_name
-          || ((item.player_found_in_boxscore===null||item.player_found_in_boxscore===undefined)
-            ? 'Unknown'
-            : (item.player_found_in_boxscore ? 'Yes' : 'No'));
-        const settlementDiag=item.settlement_diagnostics||{};
-        const marketMapping=settlementDiag.market_mapping||{};
-        const details=item.review_details||item.resolution_details||null;
-        const playerSelectionApplied=Boolean(item.player_selection_applied||item.selection_source==='user_selected');
-        const overrideUsedForGrading=Boolean(item.override_used_for_grading);
-        const eventSelectionApplied=Boolean(item.event_selection_applied||item.event_selection_source==='user_selected'||selectedGameByLegId[legId]);
-        const selectedPlayerLabel=item.selected_player_name||item.canonical_player_name||details?.selected_player_name||details?.canonical_matched_player_name||null;
-        const selectedEventLabel=item.selected_event_label||item.matched_event||((selectedGameByLegId[legId]&&((item.candidate_games||[]).find((game)=>game.event_id===selectedGameByLegId[legId])?.event_label))||null);
-        const overrideStatusLabel=overrideStatusText(item,{playerSelectionApplied,eventSelectionApplied,overrideUsedForGrading});
-        const possibleGames=(item.candidate_events||[]).length?`<div style="margin-top:4px"><strong>Possible games:</strong> ${(item.candidate_events||[]).map((e)=>`${e.event_label||e.event_id} (${e.event_date||'—'})`).join(' • ')}</div>`:'';
-        detailsBody.innerHTML=`
-          <div><strong>Original typed leg:</strong> ${item.leg||'—'}</div>
-          <div><strong>Selected player:</strong> ${selectedPlayerLabel||'—'}</div>
-          <div><strong>Selected game:</strong> ${selectedEventLabel||'—'}</div>
-          <div><strong>Override used for grading:</strong> ${overrideUsedForGrading?'Yes':'No'}</div>
-          <div><strong>Override outcome:</strong> ${item.override_grading_explanation||overrideStatusLabel||'No manual override applied.'}</div>
-          <div><strong>Final settlement:</strong> ${resultLabel[item.result]||String(item.result||'review')}</div>
-          <div><strong>Review status:</strong> ${item.result==='review'?(bestReviewReason(item)||'Needs manual review.'):'Settled'}</div>
-          <div>Sport: ${item.leg?.sport||item.sport||'—'}</div>
-          <div>Parsed: ${item.parsed_player_name||item.parsed_player_or_team||'—'} / ${item.normalized_stat_type||item.normalized_market||'—'}</div>
-          <div>Matched player: ${item.matched_player||item.resolved_player_name||'—'}</div>
-          <div>Matched team: ${item.matched_team||item.resolved_team||'—'}</div>
-          <div>Matched event: ${item.matched_event_explained||item.matched_event||'—'}</div>
-          <div>Normalized market: ${item.normalized_market_explained||item.normalized_market||'—'}</div>
-          <div>Stat field used: ${item.stat_field_used||'—'}</div>
-          <div>Line: ${item.line ?? '—'}</div>
-          <div>Actual: ${item.actual_value ?? '—'}</div>
-          ${componentRows}
-          <div>Result: ${resultLabel[item.result]||String(item.result||'review')}</div>
-          <div>Identity: ${(item.identity_match_method||'—')} (${item.identity_match_confidence||'—'})</div>
-          <div>Selection: ${item.selection||item.normalized_selection||'—'}</div>
-          <div>Reason code: ${item.settlement_reason_code||'—'}</div>
-          <div>Reason: ${item.settlement_reason_text||item.settlement_reason||item.explanation_reason||'—'}</div>
-          <div>Grading confidence: ${item.grading_confidence ?? '—'}</div>
-          <div>Resolved player: ${item.resolved_player_name||'—'} (${item.resolved_player_id||'—'})</div>
-          <div>Player resolution method: ${details?.player_resolution_method||item.player_resolution_method||'—'}</div>
-          <div>Player resolution confidence: ${details?.player_resolution_confidence??item.player_resolution_confidence??'—'}</div>
-          <div>Player resolution mode: ${details?.player_resolution_is_exact?'Exact':(details?.player_resolution_is_conservative?'Conservative':'Review')}</div>
-          <div>Player resolution explanation: ${details?.player_resolution_explanation||item.player_resolution_explanation||'—'}</div>
-          <div>Canonical matched player: ${details?.canonical_matched_player_name||item.canonical_player_name||item.resolved_player_name||'—'}</div>
-          <div>Original typed player: ${details?.original_typed_player_name||item.parsed_player_name||item.parsed_player_or_team||'—'}</div>
-          <div>Selected player: ${item.selected_player_name||details?.selected_player_name||'—'} (${item.selected_player_id||details?.selected_player_id||'—'})</div>
-          <div>Selection source: ${item.selection_source||details?.selection_source||'—'}</div>
-          <div>Selection note: ${item.selection_explanation||details?.selection_explanation||'—'}</div>
-          <div>Resolved team: ${item.resolved_team||'—'}</div>
-          <div>Player in box score: ${boxscoreText}</div>
-          <div>Resolution confidence: ${item.resolution_confidence ?? '—'}</div>
-          <div>Resolution ambiguity: ${item.resolution_ambiguity_reason ?? '—'}</div>
-          <div>Candidate players: ${(item.candidate_players||[]).map((c)=>c.player_name||c).join(', ') || '—'}</div>
-          <div>Candidate events: ${(item.candidate_events||[]).map((e)=>e.event_label||e.event_id).join(', ') || '—'}</div>
-          ${possibleGames}
-          <div>Parse confidence: ${item.parse_confidence ?? '—'}</div>
-          <div>Review reason: ${bestReviewReason(item)||'—'}</div>
-          <div>Warnings: ${(item.validation_warnings||[]).join(' | ') || '—'}</div>
-          <div>Unmatched reason code: ${item.unmatched_reason_code||'—'}</div>
-          <div>Event resolution worked: ${settlementDiag.event_resolution_worked===undefined?'—':String(settlementDiag.event_resolution_worked)}</div>
-          <div>Stat extraction worked: ${settlementDiag.stat_extraction_worked===undefined?'—':String(settlementDiag.stat_extraction_worked)}</div>
-          <div>Event match rejection: ${settlementDiag.event_match_rejection_reason||'—'}</div>
-          <div>Roster validation: ${settlementDiag.roster_validation_result||'—'}</div>
-          <div>Stat lookup: ${settlementDiag.stat_lookup_result||'—'}</div>
-          <div>Settlement failure: ${settlementDiag.settlement_failure_reason||'—'}</div>
-          <div>Market mapping: ${marketMapping.normalized_market||'—'} -> ${marketMapping.espn_stat_field||'—'} (present: ${marketMapping.stat_field_present===undefined||marketMapping.stat_field_present===null?'—':String(marketMapping.stat_field_present)})</div>
-          <div>Diagnostics: ${(item.notes||item.leg?.notes||[]).join(' | ') || '—'}</div>
-        `;
-        detailsWrap.appendChild(detailsBody);
-        legCell.appendChild(detailsWrap);
+        if(item.matched_event){
+          eventCell.innerHTML+=`<div style="font-size:12px;">Game: ${escapeHtml(item.matched_event)}</div>`;
+        }
 
-        resultCell.textContent=resultLabel[item.result]||String(item.result||'review');
-        if(details&&details.player_resolution_status==='fuzzy_resolved'){
-          const subtle=document.createElement('div');
-          subtle.style.marginTop='4px';
-          subtle.style.fontSize='11px';
-          subtle.style.color='#64748b';
-          subtle.textContent='Resolved from likely player name match';
-          resultCell.appendChild(subtle);
+        const needsReview=status==='review'||status==='unmatched';
+        if(needsReview){
+          eventCell.innerHTML+=`<div class='review-panel'><div class='review-title'>⚠️ Needs manual review</div><div class='review-reason'>${escapeHtml(bestReviewReason(item)||'We could not confidently resolve this leg yet.')}</div></div>`;
         }
-        if(details&&(details.player_resolution_status==='ambiguous'||details.player_resolution_status==='unresolved')&&details.player_resolution_explanation){
-          const explanation=document.createElement('div');
-          explanation.style.marginTop='4px';
-          explanation.style.fontSize='11px';
-          explanation.style.color='#475569';
-          explanation.textContent=details.player_resolution_explanation;
-          resultCell.appendChild(explanation);
-        }
-        const statusBadge=reviewStatusLabel(details);
-        if(statusBadge){
-          const badge=document.createElement('div');
-          badge.style.marginTop='4px';
-          badge.style.fontSize='11px';
-          badge.style.color='#475569';
-          badge.style.fontWeight='600';
-          badge.textContent=`${statusBadge}`;
-          resultCell.appendChild(badge);
-        }
-        const selectedPlayerId=selectedPlayerByLegId[legId]||item.selected_player_id||'';
-        const showPlayerPicker=Boolean(nextState.showPlayerPicker);
-        const visibleCandidatePlayers=((item.candidate_players||[]).length?(item.candidate_players||[]):((playerSelectionApplied||showPlayerPicker)?(nextState.originalCandidatePlayers||[]):[]));
-        const candidatePlayers=visibleCandidatePlayers.filter((candidate)=>candidate&&candidate.player_name);
+
         const candidateGames=(item.candidate_games||[]).length
           ?(item.candidate_games||[])
           :(nextState.wasManuallySelected ? (nextState.originalCandidateEvents||[]) : []);
-
-        if(overrideStatusLabel){
-          const overrideNote=document.createElement('div');
-          overrideNote.style.marginTop='4px';
-          overrideNote.style.fontSize='11px';
-          overrideNote.style.color='#475569';
-          overrideNote.textContent=overrideStatusLabel;
-          resultCell.appendChild(overrideNote);
-        }
-
-        if(item.matched_event){
-          eventCell.textContent=item.matched_event;
-        }
-
         const selectedGameId=selectedGameByLegId[legId]||item.selected_event_id||'';
         const showGamePicker=Boolean(nextState.showGamePicker);
-        const canPickGame=(item.result==='review'||showGamePicker)&&candidateGames.length>0;
+        const canPickGame=(needsReview||showGamePicker)&&candidateGames.length>0;
         if(canPickGame){
           const pickerWrap=document.createElement('div');
           pickerWrap.style.marginTop='8px';
-          pickerWrap.style.padding='8px';
-          pickerWrap.style.border='1px solid #e2e8f0';
-          pickerWrap.style.borderRadius='8px';
-          pickerWrap.style.background='#f8fafc';
-
-          const pickerLabel=document.createElement('div');
-          pickerLabel.style.fontSize='12px';
-          pickerLabel.style.fontWeight='600';
-          pickerLabel.textContent='Multiple games found. Choose the correct one.';
-          pickerWrap.appendChild(pickerLabel);
-
-          const resetGameBtn=document.createElement('button');
-          resetGameBtn.type='button';
-          resetGameBtn.className='secondary candidate-btn';
-          resetGameBtn.textContent='Auto-match (clear manual selection)';
-          resetGameBtn.addEventListener('click',()=>{
-            const nextSelection={...selectedGameByLegId};
-            delete nextSelection[legId];
-            selectedGameByLegId=nextSelection;
-            legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,wasManuallySelected:false,showGamePicker:false}};
-            submitCheck();
-          });
-          pickerWrap.appendChild(resetGameBtn);
-
+          pickerWrap.innerHTML=`<div style="font-size:12px;font-weight:700;">Choose the correct game:</div>`;
           candidateGames.forEach((game)=>{
             const pickBtn=document.createElement('button');
             pickBtn.type='button';
             pickBtn.className='secondary candidate-btn';
-            pickBtn.textContent=game.event_label||game.event_id;
+            const datePart=game.event_date?` — ${game.event_date}`:'';
+            pickBtn.textContent=`${game.event_label||game.event_id}${datePart}`;
             if(selectedGameId&&selectedGameId===game.event_id){pickBtn.classList.add('selected');}
             pickBtn.addEventListener('click',()=>{
               if(!game.event_id){return;}
@@ -1352,180 +1207,48 @@ Murray over 2.5 threes'></textarea>
             });
             pickerWrap.appendChild(pickBtn);
           });
-          detailsBody.appendChild(pickerWrap);
-        }
-
-        if(eventSelectionApplied&&selectedEventLabel){
-          const selectedEventBadge=document.createElement('div');
-          selectedEventBadge.style.marginTop='6px';
-          selectedEventBadge.style.fontSize='11px';
-          selectedEventBadge.style.color='#334155';
-          selectedEventBadge.textContent=`Using selected game: ${selectedEventLabel}`;
-          eventCell.appendChild(selectedEventBadge);
-          const changeGameBtn=document.createElement('button');
-          changeGameBtn.type='button';
-          changeGameBtn.className='secondary';
-          changeGameBtn.style.marginTop='6px';
-          changeGameBtn.style.marginRight='6px';
-          changeGameBtn.textContent='Change game';
-          changeGameBtn.addEventListener('click',()=>{
-            legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showGamePicker:true}};
-            renderRows(legs||[]);
-          });
-          eventCell.appendChild(changeGameBtn);
-
           const resetGameBtn=document.createElement('button');
           resetGameBtn.type='button';
-          resetGameBtn.className='secondary';
-          resetGameBtn.style.marginTop='6px';
-          resetGameBtn.textContent='Reset selected game';
+          resetGameBtn.className='secondary candidate-btn';
+          resetGameBtn.textContent='Reset to auto-match';
           resetGameBtn.addEventListener('click',()=>{
             const nextSelection={...selectedGameByLegId};
             delete nextSelection[legId];
             selectedGameByLegId=nextSelection;
-            legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showGamePicker:true,wasManuallySelected:false}};
+            legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,wasManuallySelected:false,showGamePicker:false}};
             submitCheck();
           });
-          eventCell.appendChild(resetGameBtn);
+          pickerWrap.appendChild(resetGameBtn);
+          eventCell.appendChild(pickerWrap);
         }
 
-        if(item.result==='review'&&eventSelectionApplied){
-          const downstreamNote=document.createElement('div');
-          downstreamNote.style.marginTop='4px';
-          downstreamNote.style.fontSize='11px';
-          downstreamNote.style.color='#475569';
-          if((item.selection_error_code||'')==='INVALID_SELECTED_EVENT_ID'){
-            downstreamNote.textContent='Selected game could not be applied; choose one of the listed games.';
-          }else if((item.event_review_reason_code||'')==='matched_event_rejected_by_roster_validation'||(item.review_reason||'').toLowerCase().includes('roster')){
-            downstreamNote.textContent='Player selection succeeded, but selected game did not contain the player on roster/stat validation.';
-          }else if((item.review_reason||'').toLowerCase().includes('roster')){
-            downstreamNote.textContent='Selected game did not contain the player.';
-          }else{
-            downstreamNote.textContent='Player selection succeeded, but another downstream grading validation still requires review.';
-          }
-          eventCell.appendChild(downstreamNote);
-        }
-
-        if(item.matched_event&&!(item.result==='review'&&eventSelectionApplied)){
-          eventCell.textContent=item.matched_event;
-          if(playerSelectionApplied&&selectedPlayerLabel){
-            const selectionBadge=document.createElement('div');
-            selectionBadge.style.marginTop='4px';
-            selectionBadge.style.fontSize='11px';
-            selectionBadge.style.color='#334155';
-            selectionBadge.textContent=`Using selected player: ${selectedPlayerLabel}`;
-            eventCell.appendChild(selectionBadge);
-            const changePlayerBtn=document.createElement('button');
-            changePlayerBtn.type='button';
-            changePlayerBtn.className='secondary';
-            changePlayerBtn.style.marginTop='6px';
-            changePlayerBtn.style.marginRight='6px';
-            changePlayerBtn.textContent='Change player';
-            changePlayerBtn.addEventListener('click',()=>{
-              legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showPlayerPicker:true}};
-              renderRows(legs||[]);
-            });
-            eventCell.appendChild(changePlayerBtn);
-
-            const resetPlayerBtn=document.createElement('button');
-            resetPlayerBtn.type='button';
-            resetPlayerBtn.className='secondary';
-            resetPlayerBtn.style.marginTop='6px';
-            resetPlayerBtn.textContent='Reset selected player';
-            resetPlayerBtn.addEventListener('click',()=>{
-              const nextSelection={...selectedPlayerByLegId};
-              delete nextSelection[legId];
-              selectedPlayerByLegId=nextSelection;
-              legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showPlayerPicker:true}};
+        const candidatePlayers=((item.candidate_players||[]).length?(item.candidate_players||[]):(nextState.originalCandidatePlayers||[]))
+          .filter((candidate)=>candidate&&candidate.player_name);
+        const selectedPlayerId=selectedPlayerByLegId[legId]||item.selected_player_id||'';
+        const showPlayerPicker=Boolean(nextState.showPlayerPicker);
+        const canPickPlayer=(needsReview||showPlayerPicker)&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA';
+        if(canPickPlayer){
+          const pickerWrap=document.createElement('div');
+          pickerWrap.style.marginTop='8px';
+          pickerWrap.innerHTML=`<div style="font-size:12px;font-weight:700;">Choose the correct player:</div>`;
+          candidatePlayers.forEach((candidate)=>{
+            const pickBtn=document.createElement('button');
+            pickBtn.type='button';
+            pickBtn.className='secondary candidate-btn';
+            const teamText=candidate.team_name?` (${candidate.team_name})`:'';
+            pickBtn.textContent=`${candidate.player_name}${teamText}`;
+            if(selectedPlayerId&&selectedPlayerId===candidate.player_id){pickBtn.classList.add('selected');}
+            pickBtn.addEventListener('click',()=>{
+              if(!candidate.player_id){return;}
+              selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:candidate.player_id};
+              legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showPlayerPicker:false}};
               submitCheck();
             });
-            eventCell.appendChild(resetPlayerBtn);
-          }
-          const shouldShowPicker=(item.result==='review'||showPlayerPicker)&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA'&&(!playerSelectionApplied||showPlayerPicker);
-          if(shouldShowPicker){
-            const pickerLabel=document.createElement('div');
-            pickerLabel.style.marginTop='8px';
-            pickerLabel.style.fontSize='12px';
-            pickerLabel.style.fontWeight='600';
-            pickerLabel.textContent='Multiple players matched. Choose the correct player.';
-            eventCell.appendChild(pickerLabel);
-            candidatePlayers.forEach((candidate)=>{
-              const pickBtn=document.createElement('button');
-              pickBtn.type='button';
-              pickBtn.className='secondary candidate-btn';
-              pickBtn.style.marginTop='6px';
-              pickBtn.style.marginRight='6px';
-              const teamText=candidate.team_name?` (${candidate.team_name})`:'';
-              pickBtn.textContent=`${candidate.player_name}${teamText}`;
-              pickBtn.addEventListener('click',()=>{
-                if(!candidate.player_id){return;}
-                selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:candidate.player_id};
-                legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showPlayerPicker:false}};
-                submitCheck();
-              });
-              eventCell.appendChild(pickBtn);
-            });
-          }
-        }else{
-          const fallbackReason=bestReviewReason(item);
-          const reasonNode=document.createElement('div');
-          reasonNode.innerHTML=`<div class='review-panel'><div class='review-title'>⚠️ Needs manual review</div><div class='review-reason'>${escapeHtml(fallbackReason||'We could not confidently resolve this leg yet.')}</div></div>`;
-          eventCell.appendChild(reasonNode);
-          const didYouMeanText=(details&&details.did_you_mean)||item.did_you_mean;
-          if(didYouMeanText){
-            const suggestion=document.createElement('div');
-            suggestion.style.marginTop='4px';
-            suggestion.style.fontSize='12px';
-            suggestion.style.color='#475569';
-            suggestion.textContent=didYouMeanText;
-            eventCell.appendChild(suggestion);
-          }
-
-          if(playerSelectionApplied&&selectedPlayerLabel){
-            const selectionBadge=document.createElement('div');
-            selectionBadge.style.marginTop='6px';
-            selectionBadge.style.fontSize='11px';
-            selectionBadge.style.color='#334155';
-            selectionBadge.textContent=`Using selected player: ${selectedPlayerLabel}`;
-            eventCell.appendChild(selectionBadge);
-            if(item.result==='review'){
-              const pendingAfterSelection=document.createElement('div');
-              pendingAfterSelection.style.marginTop='4px';
-              pendingAfterSelection.style.fontSize='11px';
-              pendingAfterSelection.style.color='#475569';
-              pendingAfterSelection.textContent=`Player selection succeeded, but this leg still needs review: ${bestReviewReason(item)||'additional validation needed'}`;
-              eventCell.appendChild(pendingAfterSelection);
-            }
-          }
-          const canPickPlayer=(item.result==='review'||showPlayerPicker)&&candidatePlayers.length>0&&String(item.sport||item.leg?.sport||'NBA')==='NBA'&&(!playerSelectionApplied||showPlayerPicker);
-          if(canPickPlayer){
-            const pickerLabel=document.createElement('div');
-            pickerLabel.style.marginTop='8px';
-            pickerLabel.style.fontSize='12px';
-            pickerLabel.style.fontWeight='600';
-            pickerLabel.textContent='Multiple players matched. Choose the correct player.';
-            eventCell.appendChild(pickerLabel);
-
-            candidatePlayers.forEach((candidate)=>{
-              const pickBtn=document.createElement('button');
-              pickBtn.type='button';
-              pickBtn.className='secondary candidate-btn';
-              pickBtn.style.marginTop='6px';
-              pickBtn.style.marginRight='6px';
-              const teamText=candidate.team_name?` (${candidate.team_name})`:'';
-              pickBtn.textContent=`${candidate.player_name}${teamText}`;
-              if(selectedPlayerId&&selectedPlayerId===candidate.player_id){pickBtn.classList.add('selected');}
-              pickBtn.addEventListener('click',()=>{
-                if(!candidate.player_id){return;}
-                selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:candidate.player_id};
-                legUiStateByLegId={...legUiStateByLegId,[legId]:{...nextState,showPlayerPicker:false}};
-                submitCheck();
-              });
-              eventCell.appendChild(pickBtn);
-            });
-
-          }
+            pickerWrap.appendChild(pickBtn);
+          });
+          eventCell.appendChild(pickerWrap);
         }
+
         tr.appendChild(legCell);
         tr.appendChild(resultCell);
         tr.appendChild(eventCell);
