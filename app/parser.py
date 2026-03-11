@@ -20,6 +20,11 @@ MARKET_PATTERN = (
     r"3 pointers made|3-pointers made|three pointers made|three-point field goals made|three point field goals made|"
     r"pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits|triple\s*double|double\s*double"
 )
+
+NUMBER_FIRST_PATTERN = re.compile(
+    rf"^(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>{MARKET_PATTERN})\s+(?P<name>[\w .\-'’]+?)$",
+    re.I,
+)
 OVER_UNDER_PATTERN = re.compile(
     rf"^(?P<name>[\w .\-'’]+?)\s+(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?P<market>{MARKET_PATTERN})?$",
     re.I,
@@ -39,7 +44,10 @@ TOTAL_ONLY_PATTERN = re.compile(r'^(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d
 GAME_TOTAL_PATTERN = re.compile(r'^(?:game\s+total\s+)?(?P<dir>o|u|over|under)\s*(?P<line>\d+(?:\.\d+)?)\s*(?:total\s*points|points)?$', re.I)
 SPORT_PREFIX_PATTERN = re.compile(r'^(nba|nfl|mlb)\s*[:\-]?\s*', re.I)
 OPPONENT_SUFFIX_PATTERN = re.compile(r"\s+v(?:s|\.|ersus)\s+(?P<opponent>[\w .\-'’]+)$", re.I)
+AT_OPPONENT_SUFFIX_PATTERN = re.compile(r"\s+@\s*(?P<opponent>[\w .\-'’]+)$", re.I)
+MATCHUP_SUFFIX_PATTERN = re.compile(r"\s*\(?(?P<home>[a-z0-9 .\-]+)\s+v(?:s|\.)\s+(?P<away>[a-z0-9 .\-]+)\)?$", re.I)
 AMERICAN_ODDS_TOKEN_PATTERN = re.compile(r'(?<!\w)(?P<odds>[+\-]\d{3,4})(?!\w)')
+NOISE_PUNCTUATION_PATTERN = re.compile(r'[!?.;,]+$')
 
 
 def _normalize_whitespace(text: str) -> str:
@@ -54,8 +62,34 @@ def _american_to_decimal(american_odds: int) -> float:
 
 def _extract_line_odds(line: str) -> tuple[str, int | None]:
     odds_tokens = [int(match.group('odds')) for match in AMERICAN_ODDS_TOKEN_PATTERN.finditer(line)]
-    clean_line = _normalize_whitespace(AMERICAN_ODDS_TOKEN_PATTERN.sub('', line))
+    clean_line = AMERICAN_ODDS_TOKEN_PATTERN.sub('', line)
+    clean_line = re.sub(r'\(\s*\)', ' ', clean_line)
+    clean_line = _normalize_whitespace(clean_line)
     return clean_line, (odds_tokens[-1] if odds_tokens else None)
+
+
+def _normalize_input_lines(text: str) -> list[str]:
+    fragments: list[str] = []
+    for source_line in text.splitlines():
+        if not source_line.strip():
+            continue
+        normalized = source_line.replace('|', '\n')
+        normalized = re.sub(r'\s*,\s*', '\n', normalized)
+        for piece in normalized.splitlines():
+            candidate = piece.strip()
+            if not candidate:
+                continue
+            candidate = re.sub(r'\s*:\s*', ' ', candidate)
+            candidate = NOISE_PUNCTUATION_PATTERN.sub('', candidate)
+            candidate = _normalize_whitespace(candidate)
+            if candidate:
+                fragments.append(candidate)
+    return fragments
+
+
+def _is_initial_shorthand(token: str) -> bool:
+    parts = [part for part in re.sub(r"[.'’]", '', token).split() if part]
+    return len(parts) == 2 and len(parts[0]) <= 2
 
 
 def _is_odds_only_line(line: str) -> bool:
@@ -76,6 +110,9 @@ def _team_lookup(token: str) -> str | None:
 
 
 def _player_lookup(token: str) -> tuple[str | None, float]:
+    if _is_initial_shorthand(token):
+        return None, 0.0
+
     resolution = resolve_player_resolution(token)
     if resolution:
         return resolution.resolved_player_name, resolution.resolution_confidence
@@ -108,13 +145,21 @@ def _market_lookup(token: str) -> str | None:
 
 
 def _extract_opponent_context(line: str) -> tuple[str, str | None]:
-    match = OPPONENT_SUFFIX_PATTERN.search(line)
-    if not match:
-        return line, None
-    opponent_raw = _normalize_whitespace(match.group('opponent'))
-    opponent_team = _team_lookup(opponent_raw)
-    clean_line = _normalize_whitespace(line[:match.start()])
-    return clean_line, opponent_team
+    for pattern in (OPPONENT_SUFFIX_PATTERN, AT_OPPONENT_SUFFIX_PATTERN):
+        match = pattern.search(line)
+        if match:
+            opponent_raw = _normalize_whitespace(match.group('opponent'))
+            opponent_team = _team_lookup(opponent_raw)
+            clean_line = _normalize_whitespace(line[:match.start()])
+            return clean_line, opponent_team
+
+    matchup = MATCHUP_SUFFIX_PATTERN.search(line)
+    if matchup:
+        home_team = _team_lookup(_normalize_whitespace(matchup.group('home')))
+        away_team = _team_lookup(_normalize_whitespace(matchup.group('away')))
+        clean_line = _normalize_whitespace(line[:matchup.start()])
+        return clean_line, away_team or home_team
+    return line, None
 
 
 def _infer_sport(team: str | None = None, player: str | None = None, sport_hint: Sport | None = None) -> Sport:
@@ -126,7 +171,7 @@ def _infer_sport(team: str | None = None, player: str | None = None, sport_hint:
 
 
 def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
-    lines = [_normalize_whitespace(line) for line in text.splitlines() if line.strip()]
+    lines = _normalize_input_lines(text)
     normalized_lines: list[tuple[str, int | None]] = []
     for line in lines:
         clean_line, line_odds = _extract_line_odds(line)
@@ -230,6 +275,9 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             parse_confidence = (1.0 + 1.0 + (1.0 if market_type else 0.0) + (1.0 if resolved_player else 0.7)) / 4.0
             confidence = max(parse_confidence, resolution_conf if resolved_player else parse_confidence)
             notes = list(opponent_note)
+            if _is_initial_shorthand(parsed_name):
+                notes.append('player identity ambiguous: Ambiguous player shorthand; include full first name')
+                confidence = min(confidence, 0.62)
             if not market_type:
                 notes.append('Could not parse stat type')
                 market_type = 'player_points'
@@ -272,6 +320,22 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
                 notes.append('Parsed player name from raw text; alias not found')
             alt_confidence = 0.78 if resolved_player else 0.66
             legs.append(Leg(raw_text=clean_line, sport=sport, market_type=default_market, player=player, direction='over', line=line_value - 0.5, display_line=f'{int(line_value) if line_value.is_integer() else line_value}+', confidence=alt_confidence, notes=notes, parse_confidence=alt_confidence, parsed_player_name=parsed_name, normalized_stat_type=default_market, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
+            continue
+
+        number_first_match = NUMBER_FIRST_PATTERN.match(normalized_line)
+        if number_first_match:
+            parsed_name = _normalize_whitespace(number_first_match.group('name'))
+            resolved_player, resolution_conf = _player_lookup(parsed_name)
+            player = resolved_player or parsed_name
+            market_type = _market_lookup(number_first_match.group('market').lower()) or 'player_points'
+            line_value = float(number_first_match.group('line')) - 0.5
+            sport = _infer_sport(player=player, sport_hint=line_sport_hint)
+            notes = ['Mapped plus-threshold to over line for MVP settlement', *opponent_note]
+            if _is_initial_shorthand(parsed_name):
+                notes.append('player identity ambiguous: Ambiguous player shorthand; include full first name')
+            parse_confidence = 0.8 if resolved_player else 0.68
+            confidence = max(parse_confidence, resolution_conf if resolved_player else parse_confidence)
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='over', line=line_value, display_line=f"{number_first_match.group('line')}+", confidence=confidence, notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
         legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='player_points', confidence=0.0, notes=['Unmatched leg'], american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
