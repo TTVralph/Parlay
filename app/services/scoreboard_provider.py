@@ -8,13 +8,15 @@ from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
+from app.services.request_cache import RequestCache
+
 
 class ESPNScoreboardProvider:
     """Fetches ESPN NBA scoreboard slates and normalizes event metadata."""
 
-    def __init__(self, timeout_s: float = 3.0) -> None:
+    def __init__(self, timeout_s: float = 3.0, *, cache: RequestCache[str, dict[str, Any]] | None = None) -> None:
         self._timeout_s = timeout_s
-        self._cache: dict[str, dict[str, Any]] = {}
+        self._cache = cache or RequestCache[str, dict[str, Any]](max_entries=32)
 
     def _fetch_json(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
         full_url = url
@@ -62,14 +64,17 @@ class ESPNScoreboardProvider:
             day_key = self._date_key(date_str)
         except ValueError:
             return None
-        if day_key in self._cache:
-            return self._cache[day_key]
+
+        cached = self._cache.get(day_key)
+        if cached is not None:
+            return cached
+
         payload = self._fetch_json(
             'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
             params={'dates': day_key},
         )
         if payload is not None:
-            self._cache[day_key] = payload
+            self._cache.set(day_key, payload)
         return payload
 
     def normalize_event(self, raw_event: dict[str, Any]) -> dict[str, Any] | None:

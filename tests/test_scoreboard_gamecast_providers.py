@@ -175,3 +175,72 @@ def test_providers_fail_gracefully_on_missing_payloads() -> None:
 
     assert scoreboard.fetch_events_for_date('2026-03-06') == []
     assert gamecast.fetch_normalized('missing-event') is None
+
+
+
+def test_scoreboard_provider_caches_by_date(monkeypatch) -> None:
+    provider = ESPNScoreboardProvider()
+    calls: list[str] = []
+
+    def _mock_fetch(url: str, params: dict[str, str] | None = None):
+        calls.append(str((params or {}).get('dates')))
+        return {'events': []}
+
+    monkeypatch.setattr(provider, '_fetch_json', _mock_fetch)
+
+    provider.fetch_raw('2026-03-06')
+    provider.fetch_raw('2026-03-06')
+    provider.fetch_raw('2026-03-07')
+
+    assert calls == ['20260306', '20260307']
+
+
+def test_gamecast_provider_cache_hit_and_miss(monkeypatch) -> None:
+    provider = ESPNGamecastProvider()
+    calls: list[str] = []
+
+    def _mock_fetch(url: str, params: dict[str, str] | None = None):
+        event_id = str((params or {}).get('event'))
+        calls.append(event_id)
+        return {'id': event_id, 'header': {'competitions': []}}
+
+    monkeypatch.setattr(provider, '_fetch_json', _mock_fetch)
+
+    provider.fetch_raw('evt-1')
+    provider.fetch_raw('evt-1')
+    provider.fetch_raw('evt-2')
+
+    assert calls == ['evt-1', 'evt-2']
+
+
+def test_play_by_play_provider_cache_hit_and_miss(monkeypatch) -> None:
+    from app.services.play_by_play_provider import ESPNPlayByPlayProvider
+
+    provider = ESPNPlayByPlayProvider()
+    calls: list[str] = []
+
+    def _mock_fetch(url: str, params: dict[str, str] | None = None):
+        event_id = str((params or {}).get('event'))
+        calls.append(event_id)
+        return {
+            'id': event_id,
+            'plays': [
+                {
+                    'type': 'shot',
+                    'text': 'Nikola Jokic makes two point shot',
+                    'period': {'number': 1},
+                    'clock': {'displayValue': '10:10'},
+                    'team': {'displayName': 'Denver Nuggets'},
+                    'athletesInvolved': [{'athlete': {'displayName': 'Nikola Jokic'}}],
+                    'scoringPlay': True,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(provider, '_fetch_json', _mock_fetch)
+
+    assert provider.get_normalized_events('evt-1') is not None
+    assert provider.get_normalized_events('evt-1') is not None
+    assert provider.get_normalized_events('evt-2') is not None
+
+    assert calls == ['evt-1', 'evt-2']
