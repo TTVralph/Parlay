@@ -39,3 +39,12 @@ def test_normalize_market_milestones_and_alternate_lines() -> None:
 
 def test_normalize_market_unsupported_returns_none() -> None:
     assert normalize_market('passing yards') is None
+
+
+def test_normalize_market_play_by_play_aliases() -> None:
+    assert normalize_market('first basket') == 'first_basket'
+    assert normalize_market('to score first') == 'first_basket'
+    assert normalize_market('first rebound') == 'first_rebound'
+    assert normalize_market('first assist') == 'first_assist'
+    assert normalize_market('first 3 pointer') == 'first_three'
+    assert normalize_market('last bucket') == 'last_basket'

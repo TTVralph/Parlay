@@ -114,6 +114,14 @@ MARKET_ALIASES = {
     'rebounds + assists': 'player_ra',
     'points + rebounds + assists': 'player_pra',
     '3-pointers made': 'player_threes',
+    'first basket': 'player_first_basket',
+    'first bucket': 'player_first_basket',
+    'first scorer': 'player_first_basket',
+    'to score first': 'player_first_basket',
+    'first rebound': 'player_first_rebound',
+    'first assist': 'player_first_assist',
+    'first three': 'player_first_three',
+    'last basket': 'player_last_basket',
 }
 
 TEAM_SPORTS = {
