@@ -242,18 +242,29 @@ def run_case(endpoint_url: str, case: TestCase, timeout_seconds: int = 20) -> tu
 def main() -> int:
     parser = argparse.ArgumentParser(description='Run simple /check-slip backend regression cases.')
     parser.add_argument('--url', default=DEFAULT_ENDPOINT_URL, help='Full /check-slip endpoint URL.')
+    parser.add_argument(
+        '--case',
+        default=None,
+        help='Only run cases whose name contains this text (case-insensitive).',
+    )
     args = parser.parse_args()
 
     print(f'Using endpoint: {args.url}')
+    selected_cases = TEST_CASES
+    if args.case:
+        case_filter = args.case.lower()
+        selected_cases = [case for case in TEST_CASES if case_filter in case.name.lower()]
+        print(f"Running {len(selected_cases)} matching case(s) for filter: '{args.case}'")
+
     passed = 0
 
-    for case in TEST_CASES:
+    for case in selected_cases:
         case_passed, _ = run_case(args.url, case)
         if case_passed:
             passed += 1
         time.sleep(CASE_DELAY_SECONDS)
 
-    total = len(TEST_CASES)
+    total = len(selected_cases)
     print(f'\nSummary: {passed}/{total} passed')
     return 0 if passed == total else 1
 
