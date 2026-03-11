@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -25,6 +26,11 @@ import requests
 
 # Easy-to-edit default endpoint.
 DEFAULT_ENDPOINT_URL = os.getenv('PARLAYBOT_ENDPOINT_URL', 'http://127.0.0.1:8000/check-slip')
+# Small delay between test cases to reduce endpoint rate limiting.
+CASE_DELAY_SECONDS = 0.15
+# Retry behavior for HTTP 429 responses.
+MAX_429_RETRIES = 2
+RETRY_BACKOFF_BASE_SECONDS = 0.5
 
 
 @dataclass(frozen=True)
@@ -188,11 +194,32 @@ def run_case(endpoint_url: str, case: TestCase, timeout_seconds: int = 20) -> tu
 
     print(f'\n=== {case.name} ===')
 
-    try:
-        response = requests.post(endpoint_url, json=payload, timeout=timeout_seconds)
-    except requests.RequestException as exc:
-        print('HTTP status: (request failed)')
-        return False, f'Request failed: {exc}'
+    max_attempts = MAX_429_RETRIES + 1
+    response = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.post(endpoint_url, json=payload, timeout=timeout_seconds)
+        except requests.RequestException as exc:
+            print('HTTP status: (request failed)')
+            return False, f'Request failed: {exc}'
+
+        if response.status_code != 429:
+            break
+
+        retries_left = max_attempts - attempt
+        if retries_left == 0:
+            print('HTTP 429 received; no retries left.')
+            break
+
+        backoff_seconds = RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+        print(
+            'HTTP 429 received; '
+            f'retrying ({attempt}/{MAX_429_RETRIES}) after {backoff_seconds:.2f}s backoff...'
+        )
+        time.sleep(backoff_seconds)
+
+    assert response is not None
 
     print(f'HTTP status: {response.status_code}')
 
@@ -224,6 +251,7 @@ def main() -> int:
         case_passed, _ = run_case(args.url, case)
         if case_passed:
             passed += 1
+        time.sleep(CASE_DELAY_SECONDS)
 
     total = len(TEST_CASES)
     print(f'\nSummary: {passed}/{total} passed')
