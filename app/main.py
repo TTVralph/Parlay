@@ -899,39 +899,49 @@ def public_check_page() -> HTMLResponse:
 <head>
   <title>Did This Parlay Cash?</title>
   <style>
-    body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:900px;color:#0f172a;}
-    h1{margin-bottom:8px;}
-    p{color:#475569;}
+    :root{color-scheme:dark;}
+    body{font-family:Inter,Arial,Helvetica,sans-serif;margin:0;background:#090c12;color:#f8fafc;}
+    .shell{max-width:960px;margin:0 auto;padding:20px 16px 40px;}
+    .hero-card,.card{background:#121924;border:1px solid #1f2937;border-radius:18px;padding:18px;box-shadow:0 16px 28px rgba(0,0,0,.35);}
+    h1{margin:0;font-size:40px;line-height:1.08;letter-spacing:-0.02em;}
+    p{color:#94a3b8;line-height:1.5;}
     .status{margin-top:8px;padding:10px 12px;border-radius:10px;font-weight:600;display:none;}
     .status.show{display:block;}
     .status.success{background:#ecfdf3;color:#166534;border:1px solid #bbf7d0;}
     .status.error{background:#fef2f2;color:#991b1b;border:1px solid #fecaca;}
-    textarea{width:100%;min-height:190px;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-family:inherit;box-sizing:border-box;}
-    button{margin-top:12px;padding:10px 14px;border:1px solid #334155;border-radius:10px;background:#0f172a;color:#fff;cursor:pointer;}
+    textarea{width:100%;min-height:190px;padding:12px;border:1px solid #2b394f;border-radius:14px;background:#0d141f;color:#f8fafc;font-family:inherit;box-sizing:border-box;}
+    button{margin-top:12px;padding:11px 16px;border:1px solid #3864d8;border-radius:12px;background:#2563eb;color:#fff;cursor:pointer;font-weight:700;transition:.15s ease;}
+    button:hover{filter:brightness(1.08);} button:active{transform:translateY(1px);}
     button[disabled]{opacity:.6;cursor:not-allowed;}
-    button.sample{margin-top:0;background:#fff;color:#0f172a;border:1px solid #cbd5e1;padding:8px 10px;}
-    button.secondary{background:#fff;color:#0f172a;border-color:#cbd5e1;}
-    .candidate-btn{display:inline-flex;align-items:center;gap:4px;margin-top:6px;margin-right:6px;padding:7px 10px;border-radius:999px;border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;cursor:pointer;pointer-events:auto;font-size:12px;font-weight:600;}
-    .candidate-btn:hover{background:#eef2ff;border-color:#94a3b8;}
-    .candidate-btn:focus-visible{outline:2px solid #6366f1;outline-offset:2px;}
+    button.sample{margin-top:0;background:#1a2333;color:#dbeafe;border:1px solid #2a3a52;padding:8px 12px;border-radius:999px;}
+    button.secondary{background:#1a2333;color:#dbeafe;border-color:#2a3a52;}
+    .candidate-btn{display:inline-flex;align-items:center;gap:6px;margin-top:6px;margin-right:8px;padding:9px 12px;border-radius:999px;border:1px solid #334155;background:#111827;color:#e2e8f0;cursor:pointer;pointer-events:auto;font-size:12px;font-weight:700;}
+    .candidate-btn:hover{background:#1e293b;border-color:#3b82f6;}
+    .candidate-btn:focus-visible{outline:2px solid #60a5fa;outline-offset:2px;}
     #samples{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px;}
-    #uploadWrap{margin-top:12px;padding:10px;border:1px dashed #cbd5e1;border-radius:10px;background:#fafafa;}
-    #message{margin-top:12px;color:#334155;font-weight:600;}
-    #resultWrap{margin-top:14px;border:1px solid #e2e8f0;border-radius:12px;padding:14px;}
-    #overall{font-size:18px;font-weight:700;margin-bottom:12px;}
-    .result-summary{display:flex;flex-wrap:wrap;gap:8px;margin:-4px 0 12px;}
-    .result-chip{display:inline-flex;align-items:center;border:1px solid #cbd5e1;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:700;background:#f8fafc;color:#334155;}
+    #uploadWrap{margin-top:12px;padding:12px;border:1px dashed #334155;border-radius:12px;background:#0f172a;}
+    #message{margin-top:12px;color:#bfdbfe;font-weight:600;}
+    #resultWrap{margin-top:14px;padding:0;display:flex;flex-direction:column;gap:12px;}
+    #overall{font-size:34px;font-weight:900;border-radius:16px;padding:16px 18px;margin:0;}
+    #overall.win{background:linear-gradient(135deg,#14532d,#166534);border:1px solid #22c55e;}
+    #overall.loss{background:linear-gradient(135deg,#450a0a,#7f1d1d);border:1px solid #ef4444;}
+    #overall.review{background:linear-gradient(135deg,#422006,#78350f);border:1px solid #f59e0b;}
+    .result-summary{display:flex;flex-wrap:wrap;gap:8px;}
+    .result-chip{display:inline-flex;align-items:center;border:1px solid #334155;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;background:#111827;color:#e2e8f0;}
     .result-meta{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px;}
-    .meta-chip{display:inline-flex;align-items:center;border:1px solid #e2e8f0;border-radius:999px;padding:3px 10px;font-size:12px;background:#fff;color:#475569;}
+    .meta-chip{display:inline-flex;align-items:center;border:1px solid #334155;border-radius:999px;padding:6px 11px;font-size:12px;background:#0f172a;color:#cbd5e1;}
     #summaryWrap{margin-top:12px;}
-    #summaryOut{min-height:98px;background:#f8fafc;}
-    table{width:100%;border-collapse:collapse;}
-    th,td{text-align:left;padding:8px;border-bottom:1px solid #e2e8f0;vertical-align:top;}
-    th{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:#64748b;}
-    code{background:#f8fafc;padding:2px 6px;border-radius:6px;}
+    #summaryOut{min-height:98px;background:#0d141f;color:#e2e8f0;}
+    .died-card{border:1px solid #7f1d1d;background:#2a1116;color:#fecaca;border-radius:12px;padding:12px;}
+    table,thead,tbody{display:block;} thead{display:none;} table{width:100%;}
+    tr{display:block;margin-bottom:10px;border:1px solid #243244;border-radius:14px;background:#111827;padding:12px;}
+    td{text-align:left;padding:4px 0;display:block;vertical-align:top;border:none;}
+    code{background:#111827;padding:2px 6px;border-radius:6px;color:#bfdbfe;}
   </style>
 </head>
 <body>
+  <div class='shell'>
+  <div class='hero-card'>
   <h1>Did This Parlay Cash?</h1>
   <p>One leg per line. Pick a sample, paste your slip, or upload a screenshot, then hit <code>Check Slip</code>.</p>
   <p style='margin-top:-8px;font-size:12px;color:#64748b;'>MLB/NFL grading is currently beta preview only. NBA grading is the most reliable right now.</p>
@@ -962,12 +972,13 @@ Murray over 2.5 threes'></textarea>
   </form>
   <div id='message'></div>
   <div id='actionStatus' class='status' role='status' aria-live='polite'></div>
-  <div id='resultWrap' hidden>
+  <div id='resultWrap' hidden class='card'>
     <div id='overall'></div>
     <div id='resultSummary' class='result-summary' hidden></div>
     <div id='metaSummary' class='result-meta' hidden></div>
-    <div id='payoutOut' style='margin:8px 0;color:#334155;'></div>
-    <div id='debugOut' style='margin:8px 0 12px;color:#334155;'></div>
+    <div id='diedHere' hidden></div>
+    <div id='payoutOut' style='margin:8px 0;color:#cbd5e1;'></div>
+    <details><summary>Show technical details</summary><div id='debugOut' style='margin:8px 0 12px;color:#94a3b8;'></div></details>
     <table>
       <thead><tr><th>Leg</th><th>Result</th><th>Matched event</th></tr></thead>
       <tbody id='legsBody'></tbody>
@@ -982,6 +993,8 @@ Murray over 2.5 threes'></textarea>
       <textarea id='summaryOut' readonly placeholder='Summary will appear here after checking a slip.'></textarea>
       <canvas id='shareCardCanvas' width='1080' height='1350' style='display:none;'></canvas>
     </div>
+  </div>
+  </div>
   </div>
   <script>
     const sampleSlips={
@@ -1011,12 +1024,14 @@ Murray over 2.5 threes'></textarea>
     const resultSummary=document.getElementById('resultSummary');
     const metaSummary=document.getElementById('metaSummary');
     const payoutOut=document.getElementById('payoutOut');
+    const diedHere=document.getElementById('diedHere');
     const debugOut=document.getElementById('debugOut');
     const legsBody=document.getElementById('legsBody');
     const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
     const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
     const screenshotGradeEndpoint='/ingest/screenshot/grade';
     const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
+    const overallTone={cashed:'win',lost:'loss',still_live:'review',needs_review:'review'};
     const emptyTextMessage='Paste at least one leg first.';
     let selectedGameByLegId={};
     let selectedPlayerByLegId={};
@@ -1529,11 +1544,11 @@ Murray over 2.5 threes'></textarea>
 
     function renderResultSummary(payload){
       const counts=countLegResults(payload.legs||[]);
+      const firstLoss=(payload.legs||[]).find((item)=>item.result==='loss');
       resultSummary.innerHTML=`
-        <span class='result-chip'>${counts.total} Legs</span>
-        <span class='result-chip'>${counts.won} Won</span>
-        <span class='result-chip'>${counts.lost} Lost</span>
-        <span class='result-chip'>${counts.review} Review</span>
+        <span class='result-chip'>${counts.won} ✅ Win</span>
+        <span class='result-chip'>${counts.lost} ❌ Loss</span>
+        <span class='result-chip'>${counts.review} ⚠️ Review</span>
       `;
       resultSummary.hidden=false;
 
@@ -1548,8 +1563,15 @@ Murray over 2.5 threes'></textarea>
       if(hasStake){chips.push(`<span class='meta-chip'>Stake: $${Number(payload.stake_amount).toFixed(2)}</span>`);}
       if(payload.estimated_payout!==undefined&&payload.estimated_payout!==null){chips.push(`<span class='meta-chip'>Est. payout: $${Number(payload.estimated_payout).toFixed(2)}</span>`);}
       if(hasStake&&payload.payout_message){chips.push(`<span class='meta-chip'>${payload.payout_message}</span>`);}
-      metaSummary.innerHTML=chips.join('');
-      metaSummary.hidden=!chips.length;
+      let secondary=`${counts.won} of ${counts.total} legs hit`;
+      if(counts.review>0){secondary+=` · ${counts.review} legs need manual review`;}
+      if(firstLoss&&payload.parlay_result==='lost'){secondary+=` · Parlay died on ${firstLoss.leg||'a leg'}`;}
+      metaSummary.innerHTML=`<span class='meta-chip'>${secondary}</span>${chips.join('')}`;
+      metaSummary.hidden=false;
+      if(payload.parlay_result==='lost'&&firstLoss){
+        diedHere.innerHTML=`<div class='died-card'><strong>Parlay died here</strong><div style='margin-top:6px;'>${firstLoss.leg||'—'}</div><div style='margin-top:4px;font-size:12px;color:#fecaca;'>Needed ${firstLoss.line ?? '—'} · Actual ${firstLoss.actual_value ?? '—'}</div></div>`;
+        diedHere.hidden=false;
+      }
     }
 
     function escapeHtml(text){
@@ -1672,6 +1694,8 @@ Murray over 2.5 threes'></textarea>
       resultSummary.hidden=true;
       metaSummary.innerHTML='';
       metaSummary.hidden=true;
+      diedHere.hidden=true;
+      diedHere.innerHTML='';
       summaryOut.value='';
       copyBtn.disabled=true;
       copyLinkBtn.disabled=true;
@@ -1680,7 +1704,8 @@ Murray over 2.5 threes'></textarea>
       latestPublicUrl='';
       latestResultPayload=null;
       clearActionStatus();
-      overall.textContent='Parlay result: NEEDS REVIEW';
+      overall.className='review';
+      overall.textContent='⚠️ NEEDS REVIEW';
       payoutOut.textContent='';
     }
 
@@ -1698,8 +1723,8 @@ Murray over 2.5 threes'></textarea>
       if(shouldParseScreenshot&&file.size>8*1024*1024){msg.textContent='Screenshot is too large. Please use an image under 8MB.';return;}
 
       btn.disabled=true;
-      btn.textContent='Checking...';
-      msg.textContent='Checking your slip...';
+      btn.textContent='Checking slip...';
+      msg.textContent='Parsing slip… Matching players… Finding games… Grading results…';
       try{
         let data;
         let res;
@@ -1741,7 +1766,10 @@ Murray over 2.5 threes'></textarea>
         if(!res.ok){msg.textContent=data.detail||data.message||'Could not check this slip right now.';return;}
         msg.textContent=data.message||'Done.';
         resetRenderedSlipResult();
-        overall.textContent='Parlay result: '+(overallLabel[data.parlay_result]||'NEEDS REVIEW');
+        const overallState=overallTone[data.parlay_result]||'review';
+        const overallIcon=overallState==='win'?'✅':(overallState==='loss'?'❌':'⚠️');
+        overall.className=overallState;
+        overall.textContent=`${overallIcon} ${(overallLabel[data.parlay_result]||'NEEDS REVIEW')}`;
         renderResultSummary(data);
         if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){
           payoutOut.textContent=`Estimated payout: $${Number(data.estimated_payout).toFixed(2)} (profit: $${Number(data.estimated_profit).toFixed(2)})`;
