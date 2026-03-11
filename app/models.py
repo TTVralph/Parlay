@@ -80,6 +80,12 @@ class Leg(BaseModel):
     event_resolution_warnings: list[str] = Field(default_factory=list)
     slip_default_date: Optional[str] = None
     mixed_event_dates_detected: Optional[bool] = None
+    event_resolution_status: Optional[str] = None
+    event_resolution_method: Optional[str] = None
+    event_review_reason_code: Optional[str] = None
+    event_review_reason_text: Optional[str] = None
+    event_date_match_quality: Optional[Literal['exact', 'nearby', 'mismatch', 'unknown']] = None
+    roster_validation_result: Optional[Literal['pass', 'fail', 'unknown']] = None
     american_odds: Optional[int] = None
     decimal_odds: Optional[float] = None
     selected_player_name: Optional[str] = None
@@ -145,6 +151,12 @@ class GradedLeg(BaseModel):
     event_resolution_warnings: list[str] = Field(default_factory=list)
     slip_default_date: Optional[str] = None
     mixed_event_dates_detected: Optional[bool] = None
+    event_resolution_status: Optional[str] = None
+    event_resolution_method: Optional[str] = None
+    event_review_reason_code: Optional[str] = None
+    event_review_reason_text: Optional[str] = None
+    event_date_match_quality: Optional[Literal['exact', 'nearby', 'mismatch', 'unknown']] = None
+    roster_validation_result: Optional[Literal['pass', 'fail', 'unknown']] = None
     input_source_path: Optional[Literal['manual_text', 'screenshot']] = None
     debug_comparison: dict[str, Any] = Field(default_factory=dict)
     review_reason_text: Optional[str] = None

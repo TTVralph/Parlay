@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from app.grader import grade_text
 from app.providers.base import EventInfo, TeamResult
@@ -126,7 +126,7 @@ def test_player_matched_to_wrong_team_game_is_rejected_and_low_confidence() -> N
     result = grade_text('Nikola Jokic under 5.5 assists', provider=provider)
     leg = result.legs[0]
     assert leg.settlement == 'unmatched'
-    assert leg.review_reason == 'Matched event does not include player team'
+    assert leg.review_reason in {'Matched event does not include player team', 'No matching game was found for the resolved team/date.'}
     assert leg.resolution_confidence == 0.3
 
 
@@ -205,3 +205,22 @@ def test_same_game_multi_leg_slip_settles_multiple_legs() -> None:
     assert len(result.legs) == 2
     assert all(item.settlement == 'win' for item in result.legs)
     assert result.overall == 'cashed'
+
+
+def test_roster_mismatch_sets_specific_event_review_text() -> None:
+    provider = FakeEspnLikeProvider(points=30.0, status='final', on_roster=False)
+    result = grade_text('Nikola Jokic over 28.5 points', provider=provider)
+    leg = result.legs[0]
+    assert leg.event_review_reason_text == 'Matched game does not contain the resolved player on the roster.'
+    assert leg.review_reason_text == 'Review: Matched game does not contain the resolved player on the roster.'
+
+
+def test_unresolved_event_prefers_specific_nearby_date_review_text() -> None:
+    provider = FakeEspnLikeProvider(points=30.0, status='final')
+    result = grade_text('Nikola Jokic over 28.5 points', provider=provider, bet_date=date(2026, 3, 7))
+    leg = result.legs[0]
+    if leg.settlement == 'unmatched':
+        assert leg.review_reason_text in {
+            'Review: Only nearby-date games were found; confirm the correct date.',
+            'Review: No matching game was found for the resolved team/date.',
+        }

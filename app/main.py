@@ -1091,7 +1091,7 @@ Murray over 2.5 threes'></textarea>
     function bestReviewReason(item){
       const details=item.review_details||item.resolution_details||null;
       if(details&&details.review_reason_text){return details.review_reason_text;}
-      return item.review_reason_text||item.did_you_mean||item.review_reason||item.explanation_reason||'Needs manual review. We could not confidently resolve this leg.';
+      return item.event_review_reason_text||item.review_reason_text||item.did_you_mean||item.review_reason||item.explanation_reason||'Needs manual review. We could not confidently resolve this leg.';
     }
 
     function renderRows(legs){
@@ -1146,6 +1146,7 @@ Murray over 2.5 threes'></textarea>
         const settlementDiag=item.settlement_diagnostics||{};
         const marketMapping=settlementDiag.market_mapping||{};
         const details=item.review_details||item.resolution_details||null;
+        const possibleGames=(item.candidate_events||[]).length?`<div style="margin-top:4px"><strong>Possible games:</strong> ${(item.candidate_events||[]).map((e)=>`${e.event_label||e.event_id} (${e.event_date||'—'})`).join(' • ')}</div>`:'';
         detailsBody.innerHTML=`
           <div>Sport: ${item.leg?.sport||item.sport||'—'}</div>
           <div>Parsed: ${item.parsed_player_name||item.parsed_player_or_team||'—'} / ${item.normalized_stat_type||item.normalized_market||'—'}</div>
@@ -1179,6 +1180,7 @@ Murray over 2.5 threes'></textarea>
           <div>Resolution ambiguity: ${item.resolution_ambiguity_reason ?? '—'}</div>
           <div>Candidate players: ${(item.candidate_players||[]).map((c)=>c.player_name||c).join(', ') || '—'}</div>
           <div>Candidate events: ${(item.candidate_events||[]).map((e)=>e.event_label||e.event_id).join(', ') || '—'}</div>
+          ${possibleGames}
           <div>Parse confidence: ${item.parse_confidence ?? '—'}</div>
           <div>Review reason: ${bestReviewReason(item)||'—'}</div>
           <div>Warnings: ${(item.validation_warnings||[]).join(' | ') || '—'}</div>
@@ -1936,8 +1938,10 @@ _REVIEW_REASON_TEXT_BY_CODE: dict[str, str] = {
     'PLAYER_AMBIGUOUS': 'Multiple plausible player matches found; select the correct player.',
     'PLAYER_UNRESOLVED': 'Player name could not be resolved confidently.',
     'INVALID_SELECTED_PLAYER_ID': 'Selected player could not be applied; please choose again.',
-    'PLAYER_NOT_ON_EVENT_ROSTER': 'Resolved player is not on the matched game roster.',
+    'PLAYER_NOT_ON_EVENT_ROSTER': 'Matched game does not contain the resolved player on the roster.',
     'EVENT_NOT_FOUND': 'No matching game was found for the resolved team/date.',
+    'MULTIPLE_GAMES_MATCHED': 'Multiple plausible games were found for this player/date.',
+    'NEARBY_DATE_CANDIDATES_ONLY': 'Only nearby-date games were found; confirm the correct date.',
 }
 
 
@@ -1979,6 +1983,11 @@ def _review_reason_code(item: GradedLeg, *, did_you_mean: str | None) -> str | N
         return 'PLAYER_AMBIGUOUS'
     if did_you_mean or 'player not found' in reason_text or 'likely refers to' in reason_text:
         return 'PLAYER_UNRESOLVED'
+    event_reason_code = (item.event_review_reason_code or item.leg.event_review_reason_code or '').lower()
+    if event_reason_code == 'nearby_date_candidates_only':
+        return 'NEARBY_DATE_CANDIDATES_ONLY'
+    if event_reason_code in {'multiple_plausible_events'}:
+        return 'MULTIPLE_GAMES_MATCHED'
     if len(item.candidate_games or item.candidate_events or item.leg.event_candidates) > 1 or 'multiple possible games' in notes:
         return 'MULTIPLE_GAMES_MATCHED'
     if 'no game found for resolved team on date' in notes or unmatched_reason_code in {'event_unresolved', 'no_candidate_events'}:
@@ -2029,7 +2038,7 @@ def _build_review_details(item: GradedLeg, *, result: str, did_you_mean: str | N
     matched_event_count = 1 if (item.matched_event or item.leg.event_label) else 0
 
     reason_code = _review_reason_code(item, did_you_mean=did_you_mean) or 'PARTIAL_SLIP_REVIEW'
-    fallback_reason = item.review_reason_text or item.review_reason or item.explanation_reason
+    fallback_reason = item.event_review_reason_text or item.leg.event_review_reason_text or item.review_reason_text or item.review_reason or item.explanation_reason
     reason_text = _review_reason_text_from_code(reason_code, fallback_reason)
     details: dict[str, object] = {
         **player_resolution_details,
