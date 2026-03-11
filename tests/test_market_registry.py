@@ -1,33 +1,40 @@
 from app.services.market_registry import normalize_market
 
 
-def test_normalize_market_aliases() -> None:
+def test_normalize_market_aliases_and_combos() -> None:
     cases = {
         'points': 'points',
-        'pts': 'points',
+        'PTS': 'points',
         'reb': 'rebounds',
-        'ast': 'assists',
-        '3pt made': 'threes',
+        'AST': 'assists',
         'stl': 'steals',
         'blk': 'blocks',
-        'tov': 'turnovers',
-        'pra': 'pra',
-        'p+r+a': 'pra',
-        'pts+reb+ast': 'pra',
-        'points rebounds assists': 'pra',
-        'pr': 'pr',
-        'p+r': 'pr',
-        'pts+reb': 'pr',
-        'pa': 'pa',
-        'p+a': 'pa',
-        'pts+ast': 'pa',
-        'ra': 'ra',
-        'r+a': 'ra',
-        'reb+ast': 'ra',
+        'TO': 'turnovers',
+        '3pt made': 'three_pointers_made',
+        '3PTM': 'three_pointers_made',
+        'FGM': 'field_goals_made',
+        'FTM': 'free_throws_made',
+        'pr': 'points_rebounds',
+        'pts+reb': 'points_rebounds',
+        'pa': 'points_assists',
+        'pts+ast': 'points_assists',
+        'ra': 'rebounds_assists',
+        'reb+ast': 'rebounds_assists',
+        'PRA': 'points_rebounds_assists',
+        'pts+reb+ast': 'points_rebounds_assists',
+        'stocks': 'steals_blocks',
+        'pts+3pm': 'points_threes',
+        'reb+blk': 'rebounds_blocks',
     }
 
     for raw, expected in cases.items():
         assert normalize_market(raw) == expected
+
+
+def test_normalize_market_milestones_and_alternate_lines() -> None:
+    assert normalize_market('25+ pts') == 'points_milestone'
+    assert normalize_market('20+ pts+reb+ast') == 'points_rebounds_assists_milestone'
+    assert normalize_market('alt points line') == 'points_alternate_line'
 
 
 def test_normalize_market_unsupported_returns_none() -> None:
