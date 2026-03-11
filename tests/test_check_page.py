@@ -77,9 +77,9 @@ def test_check_page_only_renders_manual_override_controls_when_candidates_exist(
     page = client.get('/check')
     assert page.status_code == 200
     html = page.text
-    assert "const canPickGame=item.result==='review'&&candidateGames.length>0;" in html
+    assert "const canPickGame=(item.result==='review'||showGamePicker)&&candidateGames.length>0;" in html
     assert 'wasManuallySelected:Boolean(selectedGameByLegId[legId])' in html
-    assert 'Pick a game' in html
+    assert 'Possible games' in html
     assert 'Manual selection used for grading' in html
     assert 'Player selected, but not used in final grading' in html
     assert 'Game selected, but not used in final grading' in html
@@ -112,9 +112,8 @@ def test_check_page_reset_selection_is_available_via_auto_match_option() -> None
     page = client.get('/check')
     assert page.status_code == 200
     html = page.text
-    assert "prompt.textContent='Auto-match (clear manual selection)'" in html
-    assert "select.addEventListener('change'" in html
-    assert 'if(nextValue){' in html
+    assert "resetGameBtn.textContent='Auto-match (clear manual selection)'" in html
+    assert "resetGameBtn.addEventListener('click'" in html
     assert 'delete nextSelection[legId];' in html
 
 
@@ -125,6 +124,8 @@ def test_check_page_can_reset_player_and_game_selection_independently() -> None:
     html = page.text
     assert "changePlayerBtn.textContent='Change player'" in html
     assert "resetPlayerBtn.textContent='Reset selected player'" in html
+    assert "changeGameBtn.textContent='Change game'" in html
+    assert "resetGameBtn.textContent='Reset selected game'" in html
     assert 'const nextSelection={...selectedPlayerByLegId};' in html
     assert 'delete nextSelection[legId];' in html
     assert 'const nextSelection={...selectedGameByLegId};' in html
@@ -300,3 +301,15 @@ def test_check_page_shows_unresolved_typo_explanation_and_structured_details():
     assert 'Player resolution mode:' in html
     assert 'Canonical matched player:' in html
     assert "pickerLabel.textContent='Did you mean?';" in html
+
+
+def test_check_page_renders_clickable_candidate_buttons_for_player_and_event_pickers() -> None:
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert '.candidate-btn' in html
+    assert "pickBtn.type='button';" in html
+    assert "pickBtn.className='secondary candidate-btn';" in html
+    assert "payload.selected_player_by_leg_id=selectedPlayerByLegId" in html
+    assert "payload.selected_event_by_leg_id=selectedGameByLegId" in html

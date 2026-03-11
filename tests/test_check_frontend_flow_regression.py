@@ -62,3 +62,19 @@ def test_manual_player_selection_ui_signals_are_rendered() -> None:
     assert "Game selected, but not used in final grading" in script
     assert "const canPickPlayer=(item.result==='review'||showPlayerPicker)&&candidatePlayers.length>0" in script
     assert "changePlayerBtn.textContent='Change player'" in script
+
+
+def test_manual_event_selection_ui_is_clickable_and_reopenable() -> None:
+    script = _check_page_script()
+    assert "const canPickGame=(item.result==='review'||showGamePicker)&&candidateGames.length>0" in script
+    assert "pickerLabel.textContent='Possible games';" in script
+    assert "changeGameBtn.textContent='Change game';" in script
+    assert "resetGameBtn.textContent='Reset selected game';" in script
+    assert "payload.selected_event_by_leg_id=selectedGameByLegId" in script
+
+
+def test_manual_player_and_event_candidate_buttons_use_clickable_button_style() -> None:
+    script = _check_page_script()
+    assert "pickBtn.className='secondary candidate-btn';" in script
+    assert "selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:candidate.player_id};" in script
+    assert "selectedGameByLegId={...selectedGameByLegId,[legId]:game.event_id};" in script
