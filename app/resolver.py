@@ -123,6 +123,31 @@ def _build_candidate_events(events: list[EventInfo], *, slip_value: date | datet
     return payload
 
 
+def _narrow_candidates_with_scoreboard(
+    candidates: list[EventInfo],
+    scoreboard_events: list[dict[str, object]],
+) -> tuple[list[EventInfo], bool]:
+    if not candidates or not scoreboard_events:
+        return candidates, False
+
+    scoreboard_matchups: set[frozenset[str]] = set()
+    for event in scoreboard_events:
+        home = _norm(str(event.get('home_team') or ''))
+        away = _norm(str(event.get('away_team') or ''))
+        if home and away:
+            scoreboard_matchups.add(frozenset((home, away)))
+
+    if not scoreboard_matchups:
+        return candidates, False
+
+    narrowed = [
+        event
+        for event in candidates
+        if frozenset((_norm(event.home_team), _norm(event.away_team))) in scoreboard_matchups
+    ]
+    return (narrowed or candidates), bool(narrowed and len(narrowed) < len(candidates))
+
+
 def _event_contains_team(event: EventInfo, team: str | None) -> bool:
     if not team:
         return False
@@ -473,6 +498,23 @@ def resolve_leg_events(
             include_historical=include_historical,
         )
 
+        scoreboard_hits: list[dict[str, object]] = []
+        should_use_scoreboard = (
+            leg.sport == 'NBA'
+            and slip_default_date is not None
+            and (not player_team or not opponent)
+        )
+        if should_use_scoreboard:
+            scoreboard_hits = scoreboard_provider.resolve_event_candidates(
+                slip_default_date.isoformat(),
+                team_query=leg.resolved_team or player_team,
+                opponent_query=opponent,
+            )
+            candidates, narrowed_by_scoreboard = _narrow_candidates_with_scoreboard(candidates, scoreboard_hits)
+            if narrowed_by_scoreboard:
+                resolution_warnings.append('scoreboard_date_narrowing_used')
+                notes.append(f'diagnostic: scoreboard_narrowed_candidates={len(candidates)}')
+
         if leg.player and leg.sport == 'NBA' and player_team and explicit_slip_date is not None and not candidates:
             if NO_TEAM_GAME_ON_SELECTED_DATE_WARNING not in notes:
                 notes.append(NO_TEAM_GAME_ON_SELECTED_DATE_WARNING)
@@ -628,21 +670,15 @@ def resolve_leg_events(
             continue
 
         if not candidates:
-            if leg.sport == 'NBA' and slip_default_date is not None:
-                scoreboard_hits = scoreboard_provider.resolve_event_candidates(
-                    slip_default_date.isoformat(),
-                    team_query=leg.resolved_team or player_team,
-                    opponent_query=opponent,
-                )
-                if scoreboard_hits:
-                    updates['event_candidates'] = list(scoreboard_hits[:5])
-                    notes.append(f'diagnostic: scoreboard_candidates={len(scoreboard_hits)}')
-                    if len(scoreboard_hits) > 1:
-                        updates['event_review_reason_code'] = 'scoreboard_multiple_candidates'
-                        updates['event_review_reason_text'] = 'Multiple scoreboard candidates found; select the correct game.'
-                    else:
-                        updates['event_review_reason_code'] = 'scoreboard_candidate_needs_confirmation'
-                        updates['event_review_reason_text'] = 'Scoreboard found a likely game; confirm event selection.'
+            if scoreboard_hits:
+                updates['event_candidates'] = list(scoreboard_hits[:5])
+                notes.append(f'diagnostic: scoreboard_candidates={len(scoreboard_hits)}')
+                if len(scoreboard_hits) > 1:
+                    updates['event_review_reason_code'] = 'scoreboard_multiple_candidates'
+                    updates['event_review_reason_text'] = 'Multiple scoreboard candidates found; select the correct game.'
+                else:
+                    updates['event_review_reason_code'] = 'scoreboard_candidate_needs_confirmation'
+                    updates['event_review_reason_text'] = 'Scoreboard found a likely game; confirm event selection.'
             resolution_warnings.append('no_candidate_events')
             updates['event_resolution_status'] = 'review'
             updates['event_resolution_method'] = 'no_event_match'

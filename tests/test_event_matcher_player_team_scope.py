@@ -455,3 +455,115 @@ def test_mixed_date_flag_does_not_add_warning_to_exactly_resolved_legs() -> None
 
     assert all(item.mixed_event_dates_detected is True for item in resolved)
     assert all('mixed_event_dates_detected' not in item.event_resolution_warnings for item in resolved)
+
+
+def test_scoreboard_date_narrows_multi_candidate_set_with_incomplete_context() -> None:
+    class AmbiguousDateProvider(TeamScopedPlayerProvider):
+        def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return None
+
+        def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return [
+                EventInfo(
+                    event_id='evt-den-bos',
+                    sport='NBA',
+                    home_team='Denver Nuggets',
+                    away_team='Boston Celtics',
+                    start_time=datetime.fromisoformat('2026-03-06T02:00:00+00:00'),
+                ),
+                EventInfo(
+                    event_id='evt-den-uta',
+                    sport='NBA',
+                    home_team='Denver Nuggets',
+                    away_team='Utah Jazz',
+                    start_time=datetime.fromisoformat('2026-03-06T04:00:00+00:00'),
+                ),
+            ]
+
+    class StubScoreboard:
+        def resolve_event_candidates(self, date_str: str, *, team_query: str | None = None, opponent_query: str | None = None):
+            assert date_str == '2026-03-06'
+            return [
+                {
+                    'event_id': 'espn-den-bos',
+                    'date': '2026-03-06T02:00:00Z',
+                    'short_name': 'BOS @ DEN',
+                    'home_team': 'Denver Nuggets',
+                    'away_team': 'Boston Celtics',
+                    'home_team_abbr': 'DEN',
+                    'away_team_abbr': 'BOS',
+                }
+            ]
+
+    leg = Leg(
+        raw_text='Jamal Murray over 20.5 points',
+        sport='NBA',
+        market_type='player_points',
+        player='Jamal Murray',
+        direction='over',
+        line=20.5,
+        confidence=0.9,
+    )
+
+    resolved = resolve_leg_events(
+        [leg],
+        AmbiguousDateProvider(),
+        posted_at=date(2026, 3, 6),
+        include_historical=True,
+        scoreboard_provider=StubScoreboard(),
+    )
+
+    assert resolved[0].event_id == 'evt-den-bos'
+    assert 'scoreboard_date_narrowing_used' in resolved[0].event_resolution_warnings
+
+
+def test_scoreboard_date_narrowing_preserves_existing_matching_when_no_overlap() -> None:
+    class StableProvider(TeamScopedPlayerProvider):
+        def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return 'Golden State Warriors'
+
+        def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return [
+                EventInfo(
+                    event_id='evt-gsw-lal',
+                    sport='NBA',
+                    home_team='Golden State Warriors',
+                    away_team='Los Angeles Lakers',
+                    start_time=datetime.fromisoformat('2026-03-06T03:00:00+00:00'),
+                )
+            ]
+
+    class MismatchScoreboard:
+        def resolve_event_candidates(self, date_str: str, *, team_query: str | None = None, opponent_query: str | None = None):
+            return [
+                {
+                    'event_id': 'espn-bos-den',
+                    'date': '2026-03-06T02:00:00Z',
+                    'short_name': 'BOS @ DEN',
+                    'home_team': 'Denver Nuggets',
+                    'away_team': 'Boston Celtics',
+                    'home_team_abbr': 'DEN',
+                    'away_team_abbr': 'BOS',
+                }
+            ]
+
+    leg = Leg(
+        raw_text='Stephen Curry over 4.5 threes',
+        sport='NBA',
+        market_type='player_threes',
+        player='Stephen Curry',
+        direction='over',
+        line=4.5,
+        confidence=0.9,
+    )
+
+    resolved = resolve_leg_events(
+        [leg],
+        StableProvider(),
+        posted_at=date(2026, 3, 6),
+        include_historical=True,
+        scoreboard_provider=MismatchScoreboard(),
+    )
+
+    assert resolved[0].event_id == 'evt-gsw-lal'
+    assert 'scoreboard_date_narrowing_used' not in resolved[0].event_resolution_warnings
