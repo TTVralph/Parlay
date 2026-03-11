@@ -2164,6 +2164,55 @@ def _override_grading_explanation(item: GradedLeg, *, result: str) -> str | None
     return None
 
 
+def _override_grading_explanation_from_public_leg(leg: dict[str, object]) -> str | None:
+    player_applied = bool(leg.get('player_selection_applied') or leg.get('selection_applied'))
+    event_applied = bool(leg.get('event_selection_applied'))
+    override_used = bool(leg.get('override_used_for_grading'))
+    player_selected = bool(player_applied or leg.get('selected_player_id') or leg.get('selected_player_name'))
+    event_selected = bool(event_applied or leg.get('selected_event_id') or leg.get('selected_event_label'))
+
+    if player_applied and event_applied:
+        return 'Used selected player and selected game for grading.'
+    if player_applied and event_selected and not event_applied:
+        return 'Used selected player for grading, but selected game could not be applied.'
+    if event_applied and player_selected and not player_applied:
+        return 'Used selected game for grading, but player selection was not applied.'
+    if event_applied:
+        return 'Used selected game for grading.'
+    if player_applied:
+        return 'Used selected player for grading.'
+    if override_used:
+        return 'Manual selection used for grading.'
+    if player_selected and event_selected:
+        return 'Selected player and game were recorded, but could not both be applied for final grading.'
+    if event_selected:
+        return 'Selected game was recorded, but final grading still used auto-matched event.'
+    if player_selected:
+        return 'Selected player was recorded, but final grading still used auto-matched player.'
+    return None
+
+
+def _persistable_public_leg(leg: dict[str, object]) -> dict[str, object]:
+    row = dict(leg)
+    row['player_selection_applied'] = bool(row.get('player_selection_applied') or row.get('selection_applied'))
+    row['event_selection_applied'] = bool(row.get('event_selection_applied'))
+    row['override_used_for_grading'] = bool(row.get('override_used_for_grading'))
+    row['override_grading_explanation'] = str(
+        row.get('override_grading_explanation') or _override_grading_explanation_from_public_leg(row) or ''
+    ) or None
+    for field in (
+        'selected_player_name',
+        'selected_player_id',
+        'selected_event_id',
+        'selected_event_label',
+        'selection_source',
+        'selection_explanation',
+    ):
+        value = row.get(field)
+        row[field] = str(value).strip() if value is not None and str(value).strip() else None
+    return row
+
+
 def _process_public_check_text(
     text: str,
     stake_amount: float | None = None,
@@ -2455,11 +2504,16 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
     )
     if _has_persistable_public_result(result):
         bet_dt = datetime.combine(parsed_date, datetime.min.time()) if parsed_date else None
+        persistable_legs = [
+            _persistable_public_leg(leg)
+            for leg in result.get('legs', [])
+            if isinstance(leg, dict)
+        ]
         saved = save_public_slip_result(
             db,
             raw_slip_text=str(payload.get('text', '')).strip(),
             parsed_legs=[str(item) for item in result.get('parsed_legs', [])],
-            legs=result.get('legs', []),
+            legs=persistable_legs,
             overall_result=str(result.get('parlay_result', 'needs_review')),
             parser_confidence=result.get('parse_confidence'),
             bet_date=bet_dt,
@@ -2555,15 +2609,24 @@ def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> 
     emoji = {'win': '✅', 'loss': '❌', 'pending': '⏳', 'push': '➖', 'void': '🚫', 'review': '🧐', 'unmatched': '🧐'}
     leg_rows = []
     for leg in legs:
+        display_parts = [escape(str(leg.get('leg') or '—'))]
+        selected_player = leg.get('selected_player_name')
+        selected_game = leg.get('selected_event_label')
+        if selected_player:
+            display_parts.append(f"<div style='margin-top:4px;color:#334155;'><strong>Selected player:</strong> {escape(str(selected_player))}</div>")
+        if selected_game:
+            display_parts.append(f"<div style='margin-top:4px;color:#334155;'><strong>Selected game:</strong> {escape(str(selected_game))}</div>")
+
         reason = leg.get('review_reason_text') or leg.get('review_reason') or leg.get('settlement_reason_text') or '—'
-        selected_label = leg.get('selected_player_name') or leg.get('canonical_player_name')
-        if leg.get('selection_source') == 'user_selected' and selected_label:
-            reason = f"{reason} | Using selected player: {selected_label}"
+        override_text = leg.get('override_grading_explanation') or _override_grading_explanation_from_public_leg(leg)
+        if override_text:
+            reason = f"{reason} | {override_text}" if reason != '—' else str(override_text)
+
         leg_rows.append(
             "<tr>"
-            f"<td>{escape(str(leg.get('leg', '—')))}</td>"
+            f"<td>{''.join(display_parts)}</td>"
             f"<td>{emoji.get(leg.get('result'), '🧐')} {escape((leg.get('result') or 'review').upper())}</td>"
-            f"<td>{escape(str(leg.get('matched_event') or '—'))}</td>"
+            f"<td>{escape(str(leg.get('matched_event') or selected_game or '—'))}</td>"
             f"<td>{escape(str(reason))}</td>"
             "</tr>"
         )
