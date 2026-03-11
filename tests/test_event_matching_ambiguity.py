@@ -286,11 +286,14 @@ def test_selected_event_override_regrades_target_leg_and_sets_metadata(monkeypat
     assert resp.status_code == 200
     leg = resp.json()['legs'][0]
     assert leg['matched_event'] == 'LA Clippers @ Memphis Grizzlies'
+    assert leg['result'] == 'win'
     assert leg['event_selection_applied'] is True
     assert leg['selected_event_id'] == 'evt-a'
     assert leg['selected_event_label'] == 'LA Clippers @ Memphis Grizzlies'
     assert leg['event_selection_source'] == 'user_selected'
     assert 'user-selected game override' in (leg['event_selection_explanation'] or '')
+    assert leg['override_used_for_grading'] is True
+    assert leg['event_review_reason_code'] is None
 
 
 def test_invalid_selected_event_id_is_non_fatal_and_returns_review(monkeypatch) -> None:
@@ -311,6 +314,7 @@ def test_invalid_selected_event_id_is_non_fatal_and_returns_review(monkeypatch) 
     leg = body['legs'][0]
     assert leg['result'] == 'review'
     assert leg['selection_error_code'] == 'INVALID_SELECTED_EVENT_ID'
+    assert leg['override_used_for_grading'] is False
     assert leg['review_details']['review_reason_code'] == 'INVALID_SELECTED_EVENT_ID'
 
 

@@ -532,6 +532,7 @@ def test_check_selected_candidate_reruns_grading_and_preserves_original_leg_text
                 confidence=0.9,
                 identity_match_method='manual_selection',
                 identity_match_confidence='HIGH',
+                override_used_for_grading=True,
             )
             return GradeResponse(overall='pending', legs=[GradedLeg(leg=leg, settlement='pending', reason='ok')])
 
@@ -564,6 +565,7 @@ def test_check_selected_candidate_reruns_grading_and_preserves_original_leg_text
     assert second['legs'][0]['selected_player_id'] == 'nba-shai-gilgeous-alexander'
     assert second['legs'][0]['canonical_player_name'] == 'Shai Gilgeous-Alexander'
     assert second['legs'][0]['selection_explanation'] == 'Used user-selected player: Shai Gilgeous-Alexander'
+    assert second['legs'][0]['override_used_for_grading'] is True
     assert second['legs'][0]['candidate_players'] == []
     assert second['legs'][0]['review_details'] is None
     assert captured_kwargs['selected_player_by_leg_id'] == {'0': 'nba-shai-gilgeous-alexander'}

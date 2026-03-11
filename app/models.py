@@ -100,6 +100,7 @@ class Leg(BaseModel):
     selected_event_label: Optional[str] = None
     event_selection_source: Optional[Literal['auto', 'user_selected']] = None
     event_selection_explanation: Optional[str] = None
+    override_used_for_grading: bool = False
 
 
 class ParseResponse(BaseModel):
@@ -177,6 +178,7 @@ class GradedLeg(BaseModel):
     selected_event_label: Optional[str] = None
     event_selection_source: Optional[Literal['auto', 'user_selected']] = None
     event_selection_explanation: Optional[str] = None
+    override_used_for_grading: bool = False
 
 
 class SettlementExplanation(BaseModel):
