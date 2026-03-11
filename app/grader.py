@@ -143,6 +143,12 @@ def _base_leg_kwargs(leg: Leg, *, input_source_path: str = 'manual_text') -> dic
         'event_resolution_warnings': leg.event_resolution_warnings,
         'slip_default_date': leg.slip_default_date,
         'mixed_event_dates_detected': leg.mixed_event_dates_detected,
+        'event_resolution_status': leg.event_resolution_status,
+        'event_resolution_method': leg.event_resolution_method,
+        'event_review_reason_code': leg.event_review_reason_code,
+        'event_review_reason_text': leg.event_review_reason_text,
+        'event_date_match_quality': leg.event_date_match_quality,
+        'roster_validation_result': leg.roster_validation_result,
         'input_source_path': input_source_path,
         'selected_player_name': leg.selected_player_name,
         'selected_player_id': leg.selected_player_id,
@@ -194,6 +200,11 @@ def _default_settlement_diagnostics(leg: Leg) -> dict[str, object]:
         'market_mapping': None,
         'candidate_events_before_filtering': _extract_candidate_count_from_notes(leg.notes, 'candidate_events_before_filtering'),
         'candidate_events_after_filtering': _extract_candidate_count_from_notes(leg.notes, 'candidate_events_after_filtering'),
+        'event_resolution_status': leg.event_resolution_status,
+        'event_resolution_method': leg.event_resolution_method,
+        'event_review_reason_code': leg.event_review_reason_code,
+        'event_review_reason_text': leg.event_review_reason_text,
+        'event_date_match_quality': leg.event_date_match_quality,
     }
 
 def _review_reason_from_notes(leg: Leg) -> str:
@@ -234,8 +245,8 @@ def _review_reason_text(review_reason: str | None, reason_code: str) -> str | No
     explicit = {
         reason_codes.IDENTITY_MATCH_AMBIGUOUS: 'Review: Multiple plausible player matches found; select the correct player.',
         reason_codes.INVALID_SELECTED_PLAYER_ID: 'Review: Selected player could not be applied; please choose again.',
-        reason_codes.PLAYER_NOT_ON_EVENT_ROSTER: 'Review: Resolved player is not on the matched game roster.',
-        reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER: 'Review: Resolved player is not on the matched game roster.',
+        reason_codes.PLAYER_NOT_ON_EVENT_ROSTER: 'Review: Matched game does not contain the resolved player on the roster.',
+        reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER: 'Review: Matched game does not contain the resolved player on the roster.',
         reason_codes.EVENT_UNRESOLVED: 'Review: No matching game was found for the resolved team/date.',
         reason_codes.NO_CANDIDATE_EVENTS: 'Review: No matching game was found for the resolved team/date.',
     }
@@ -245,9 +256,13 @@ def _review_reason_text(review_reason: str | None, reason_code: str) -> str | No
                 return f'Review: {review_reason}'
             if 'not found' in value or 'could not be resolved' in value:
                 return 'Review: Player name could not be resolved confidently.'
+        if reason_code in {reason_codes.EVENT_UNRESOLVED, reason_codes.NO_CANDIDATE_EVENTS} and review_reason and any(
+            token in value for token in ('multiple plausible games', 'nearby-date', 'roster', 'no matching game')
+        ):
+            return f'Review: {review_reason}'
         return explicit[reason_code]
     if reason_code in {reason_codes.MATCHED_EVENT_TEAM_MISMATCH, reason_codes.EVENT_TEAM_MISMATCH}:
-        return 'Review: Resolved player is not on the matched game roster.'
+        return 'Review: Matched game does not contain the resolved player on the roster.'
     if reason_code in {reason_codes.MISSING_STAT_SOURCE, reason_codes.STAT_NOT_FOUND, reason_codes.MARKET_MAPPING_MISSING} and any(k in value for k in ('combo', 'component', 'stat')):
         return 'Review: combo component stats incomplete'
     if review_reason:
@@ -357,7 +372,7 @@ def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_
         )
 
     if not leg.event_id:
-        reason = _review_reason_from_notes(leg)
+        reason = leg.event_review_reason_text or _review_reason_from_notes(leg)
         settlement_diagnostics['settlement_failure_reason'] = reason
         settlement_diagnostics['unmatched_reason_code'] = reason_codes.NO_CANDIDATE_EVENTS
         return explained(
@@ -444,6 +459,7 @@ def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_
     settlement_diagnostics['final_matched_event'] = leg.event_label
     validation = validate_player_event_match(player_lookup_name, event_info, leg.resolved_team, provider, event_id=leg.event_id)
     settlement_diagnostics['roster_validation_result'] = 'pass' if validation.is_valid else 'fail'
+    base_kwargs['roster_validation_result'] = settlement_diagnostics['roster_validation_result']
     if validation.confidence == 'LOW':
         base_kwargs['resolution_confidence'] = min(float(leg.resolution_confidence or 1.0), 0.3)
         base_kwargs['validation_warnings'] = list(validation.warnings)
@@ -457,7 +473,10 @@ def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.PLAYER_NOT_ON_EVENT_ROSTER
         else:
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_TEAM_MISMATCH
-        return explained(settlement='unmatched', reason='Impossible player/event match rejected', reason_code=code, reason_message='; '.join(validation.warnings), review_reason='; '.join(validation.warnings), explanation_reason='Leg marked void/review instead of graded')
+        review_text = 'Matched game does not contain the resolved player on the roster.' if code == reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER else 'Matched game does not contain the resolved player team.'
+        base_kwargs['event_review_reason_text'] = review_text
+        base_kwargs['event_review_reason_code'] = 'matched_event_rejected_by_roster_validation' if code == reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER else 'matched_event_team_mismatch'
+        return explained(settlement='unmatched', reason='Impossible player/event match rejected', reason_code=code, reason_message='; '.join(validation.warnings), review_reason=review_text, explanation_reason='Leg marked void/review instead of graded')
 
     matched_boxscore_player_name = None
     market_diag_fn = getattr(provider, 'get_market_mapping_diagnostics', None)

@@ -24,11 +24,16 @@ def _norm(text: str) -> str:
     return re.sub(r'[^a-z0-9]', '', text.lower())
 
 
-def _event_candidate_payload(event: EventInfo) -> dict[str, object]:
+def _event_candidate_payload(event: EventInfo, *, match_confidence: str | None = None, reason: str | None = None) -> dict[str, object]:
     return {
         'event_id': event.event_id,
         'event_label': event.label,
+        'event_date': event.start_time.date().isoformat(),
         'event_start_time': event.start_time.isoformat(),
+        'home_team': event.home_team,
+        'away_team': event.away_team,
+        'match_confidence': match_confidence,
+        'reason': reason,
     }
 
 
@@ -96,6 +101,25 @@ def _filter_by_slip_date_with_historical_fallback(
     if include_historical:
         return candidates
     return filtered
+
+def _event_date_match_quality(event: EventInfo, slip_value: date | datetime | None) -> str:
+    if slip_value is None:
+        return 'unknown'
+    slip_date = slip_value.date() if isinstance(slip_value, datetime) else slip_value
+    delta = abs((event.start_time.date() - slip_date).days)
+    if delta == 0:
+        return 'exact'
+    if delta <= 2:
+        return 'nearby'
+    return 'mismatch'
+
+
+def _build_candidate_events(events: list[EventInfo], *, slip_value: date | datetime | None, reason: str) -> list[dict[str, object]]:
+    payload: list[dict[str, object]] = []
+    for event in events[:5]:
+        quality = _event_date_match_quality(event, slip_value)
+        payload.append(_event_candidate_payload(event, match_confidence='medium' if quality in {'exact', 'nearby'} else 'low', reason=reason))
+    return payload
 
 
 def _event_contains_team(event: EventInfo, team: str | None) -> bool:
@@ -406,11 +430,7 @@ def resolve_leg_events(
 
             if player_team:
                 team_candidates = _team_candidates(provider, player_team, anchor, include_historical=include_historical)
-                if explicit_slip_date is not None:
-                    team_candidates = _filter_by_slip_date(team_candidates, explicit_slip_date)
                 candidates = _merge_player_and_team_candidates(candidates, team_candidates)
-                if explicit_slip_date is not None:
-                    candidates = _filter_by_slip_date(candidates, explicit_slip_date)
                 pre_team_filter_count = len(candidates)
                 candidates = [event for event in candidates if _event_contains_team(event, player_team)]
                 if pre_team_filter_count > 0 and not candidates:
@@ -436,6 +456,9 @@ def resolve_leg_events(
             notes.append(f'diagnostic: candidate_events_after_filtering={len(candidates)}')
             updates['matched_by'] = updates.get('matched_by') or 'player_boxscore_lookup'
 
+        all_candidates_before_date_filter = list(candidates)
+        nearby_candidates = [event for event in all_candidates_before_date_filter if _event_date_match_quality(event, slip_filter_value) == 'nearby']
+        exact_candidates = [event for event in all_candidates_before_date_filter if _event_date_match_quality(event, slip_filter_value) == 'exact']
         candidates = _filter_by_slip_date_with_historical_fallback(
             candidates,
             slip_filter_value,
@@ -517,6 +540,12 @@ def resolve_leg_events(
             updates['matched_event_label'] = event.label
             updates['matched_event_date'] = event.start_time.date().isoformat()
             updates['matched_team'] = player_team or leg.team
+            updates['event_resolution_status'] = 'resolved'
+            updates['event_resolution_method'] = updates.get('matched_by') or 'event_lookup'
+            updates['event_review_reason_code'] = None
+            updates['event_review_reason_text'] = None
+            updates['event_date_match_quality'] = _event_date_match_quality(event, slip_filter_value)
+            updates['roster_validation_result'] = 'unknown'
             updates['event_resolution_warnings'] = list(dict.fromkeys(resolution_warnings))
             resolved_leg = leg.model_copy(update=updates)
             updates['event_resolution_confidence'] = _resolution_confidence_for_leg(resolved_leg)
@@ -524,7 +553,7 @@ def resolve_leg_events(
             continue
 
         if len(candidates) > 1:
-            updates['event_candidates'] = [_event_candidate_payload(event) for event in candidates[:5]]
+            updates['event_candidates'] = _build_candidate_events(candidates, slip_value=slip_filter_value, reason='multiple plausible games for resolved player/date')
             resolution_warnings.extend(['multiple_candidate_events', 'ambiguous_event_match'])
             if AMBIGUOUS_EVENT_WARNING not in notes:
                 notes.append(AMBIGUOUS_EVENT_WARNING)
@@ -537,6 +566,12 @@ def resolve_leg_events(
                     notes.append(MULTIPLE_TEAM_GAMES_WARNING)
             updates['notes'] = notes
             updates['matched_by'] = None
+            updates['event_resolution_status'] = 'review'
+            updates['event_resolution_method'] = 'multi_candidate_review'
+            updates['event_review_reason_code'] = 'multiple_plausible_events'
+            updates['event_review_reason_text'] = 'Multiple plausible games were found for this player/date.'
+            updates['event_date_match_quality'] = 'exact' if exact_candidates else ('nearby' if nearby_candidates else 'unknown')
+            updates['roster_validation_result'] = 'unknown'
             updates['event_resolution_warnings'] = list(dict.fromkeys(resolution_warnings))
             updates['event_resolution_confidence'] = 'low'
             resolved.append(leg.model_copy(update=updates))
@@ -544,6 +579,18 @@ def resolve_leg_events(
 
         if not candidates:
             resolution_warnings.append('no_candidate_events')
+            updates['event_resolution_status'] = 'review'
+            updates['event_resolution_method'] = 'no_event_match'
+            updates['roster_validation_result'] = 'unknown'
+            if nearby_candidates:
+                updates['event_candidates'] = _build_candidate_events(nearby_candidates, slip_value=slip_filter_value, reason='nearby-date game; confirm slip date')
+                updates['event_review_reason_code'] = 'nearby_date_candidates_only'
+                updates['event_review_reason_text'] = 'Only nearby-date games were found; confirm the correct date.'
+                updates['event_date_match_quality'] = 'nearby'
+            else:
+                updates['event_review_reason_code'] = 'no_matching_event_for_team_date'
+                updates['event_review_reason_text'] = 'No matching game was found for the resolved team/date.'
+                updates['event_date_match_quality'] = 'unknown'
         updates['event_resolution_warnings'] = list(dict.fromkeys(resolution_warnings))
         unresolved_leg = leg.model_copy(update=updates)
         updates['event_resolution_confidence'] = _resolution_confidence_for_leg(unresolved_leg)
@@ -598,7 +645,18 @@ def resolve_leg_events(
     out: list[Leg] = []
     for leg in final_resolved:
         warnings = list(leg.event_resolution_warnings)
-        if mixed_dates:
+        if mixed_dates and not leg.event_id:
             warnings.append('mixed_event_dates_detected')
-        out.append(leg.model_copy(update={'mixed_event_dates_detected': mixed_dates, 'event_resolution_warnings': list(dict.fromkeys(warnings))}))
+        leg_updates: dict[str, object] = {
+            'mixed_event_dates_detected': mixed_dates,
+            'event_resolution_warnings': list(dict.fromkeys(warnings)),
+        }
+        if leg.event_id and not leg.event_resolution_status:
+            leg_updates['event_resolution_status'] = 'resolved'
+            leg_updates['event_resolution_method'] = leg.matched_by or 'event_lookup'
+            leg_updates['event_review_reason_code'] = None
+            leg_updates['event_review_reason_text'] = None
+            leg_updates['event_date_match_quality'] = leg.event_date_match_quality or ('exact' if explicit_slip_date and leg.matched_event_date == explicit_slip_date.isoformat() else 'unknown')
+            leg_updates['roster_validation_result'] = leg.roster_validation_result or 'unknown'
+        out.append(leg.model_copy(update=leg_updates))
     return out

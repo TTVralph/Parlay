@@ -192,6 +192,9 @@ def test_player_resolution_falls_back_to_identity_cache_team_aliases() -> None:
         def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
             return None
 
+        def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return None
+
         def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
             return []
 
@@ -236,6 +239,9 @@ def test_same_game_team_cluster_inference_links_multiple_unresolved_player_legs(
                 away_team='Golden State Warriors',
                 start_time=datetime.fromisoformat('2026-10-06T20:30:00'),
             )
+
+        def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return None
 
         def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
             return []
@@ -303,6 +309,9 @@ def test_mixed_date_slip_resolves_legs_separately() -> None:
                     EventInfo(event_id='evt-hou-day9', sport='NBA', home_team='Houston Rockets', away_team='Memphis Grizzlies', start_time=datetime.fromisoformat('2026-03-09T19:30:00')),
                 ]
             return []
+
+        def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return None
 
         def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
             return []
@@ -396,3 +405,53 @@ def test_player_event_lookup_keeps_player_candidates_when_team_schedule_disagree
 
     assert resolved[0].event_id == 'evt-gsw-lal'
     assert 'no game found for resolved team on date' not in resolved[0].notes
+
+
+def test_nearby_date_candidates_returned_when_no_exact_match() -> None:
+    class NearbyOnlyProvider(TeamScopedPlayerProvider):
+        def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+            return []
+
+        def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return None
+
+        def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return [
+                EventInfo(
+                    event_id='evt-nearby',
+                    sport='NBA',
+                    home_team='Utah Jazz',
+                    away_team='Golden State Warriors',
+                    start_time=datetime.fromisoformat('2026-10-07T21:00:00'),
+                )
+            ]
+
+    leg = Leg(raw_text='Draymond Green over 5.5 assists', sport='NBA', market_type='player_assists', player='Draymond Green', direction='over', line=5.5, confidence=0.9)
+    resolved = resolve_leg_events([leg], NearbyOnlyProvider(), posted_at=date(2026, 10, 5), include_historical=True, bet_date=date(2026, 10, 5))
+
+    assert resolved[0].event_id is None
+    assert resolved[0].event_review_reason_code == 'nearby_date_candidates_only'
+    assert resolved[0].event_date_match_quality == 'nearby'
+    assert resolved[0].event_candidates
+
+
+def test_mixed_date_flag_does_not_add_warning_to_exactly_resolved_legs() -> None:
+    class MixedDateProvider(TeamScopedPlayerProvider):
+        def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            return None
+
+        def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+            if player == 'Draymond Green':
+                return [EventInfo(event_id='evt-gsw-day8', sport='NBA', home_team='Utah Jazz', away_team='Golden State Warriors', start_time=datetime.fromisoformat('2026-03-08T20:00:00'))]
+            if player == 'Amen Thompson':
+                return [EventInfo(event_id='evt-hou-day9', sport='NBA', home_team='Houston Rockets', away_team='Memphis Grizzlies', start_time=datetime.fromisoformat('2026-03-09T20:00:00'))]
+            return []
+
+    legs = [
+        Leg(raw_text='Draymond Green over 1.5 threes', sport='NBA', market_type='player_threes', player='Draymond Green', direction='over', line=1.5, confidence=0.9),
+        Leg(raw_text='Amen Thompson over 5.5 rebounds', sport='NBA', market_type='player_rebounds', player='Amen Thompson', direction='over', line=5.5, confidence=0.9),
+    ]
+    resolved = resolve_leg_events(legs, MixedDateProvider(), posted_at=None, include_historical=True, screenshot_default_date=date(2026, 3, 8))
+
+    assert all(item.mixed_event_dates_detected is True for item in resolved)
+    assert all('mixed_event_dates_detected' not in item.event_resolution_warnings for item in resolved)
