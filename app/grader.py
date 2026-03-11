@@ -87,10 +87,33 @@ _SNAPSHOT_STAT_ALIASES = {
     'PTS': {'PTS', 'points'},
     'REB': {'REB', 'rebounds'},
     'AST': {'AST', 'assists'},
+    '3PM': {'3PM', '3PTM', '3PT FG', '3PT made', '3PT Made', 'threes', 'threes made'},
+    'STL': {'STL', 'steals'},
+    'BLK': {'BLK', 'blocks'},
+    'TOV': {'TOV', 'TO', 'turnovers'},
     'PR': {'PR'},
     'PA': {'PA'},
     'RA': {'RA'},
     'PRA': {'PRA'},
+}
+
+
+_SNAPSHOT_SINGLE_STAT_MARKETS = {
+    'player_points': 'PTS',
+    'player_rebounds': 'REB',
+    'player_assists': 'AST',
+    'player_threes': '3PM',
+    'player_steals': 'STL',
+    'player_blocks': 'BLK',
+    'player_turnovers': 'TOV',
+}
+
+
+_SNAPSHOT_COMBO_STAT_MARKETS = {
+    'player_pr': 'PR',
+    'player_pa': 'PA',
+    'player_ra': 'RA',
+    'player_pra': 'PRA',
 }
 
 
@@ -692,15 +715,7 @@ def settle_leg(
             settlement_diagnostics['settlement_failure_reason'] = 'market mapping missing'
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.MARKET_MAPPING_MISSING
 
-    snapshot_supported_markets = {
-        'player_points',
-        'player_rebounds',
-        'player_assists',
-        'player_pr',
-        'player_pa',
-        'player_ra',
-        'player_pra',
-    }
+    snapshot_supported_markets = set(_SNAPSHOT_SINGLE_STAT_MARKETS) | set(_SNAPSHOT_COMBO_STAT_MARKETS)
     used_snapshot = False
     snapshot_entry = None
     if event_snapshot is not None and leg.market_type in snapshot_supported_markets:
@@ -715,20 +730,12 @@ def settle_leg(
     detail_lookup = getattr(provider, 'get_player_result_details', None)
     actual_value = None
     if event_snapshot is not None and leg.market_type in snapshot_supported_markets:
-        if leg.market_type == 'player_points':
-            actual_value = get_player_stat(event_snapshot, leg.resolved_player_id, 'PTS', player_name=player_lookup_name)
-        elif leg.market_type == 'player_rebounds':
-            actual_value = get_player_stat(event_snapshot, leg.resolved_player_id, 'REB', player_name=player_lookup_name)
-        elif leg.market_type == 'player_assists':
-            actual_value = get_player_stat(event_snapshot, leg.resolved_player_id, 'AST', player_name=player_lookup_name)
-        elif leg.market_type == 'player_pr':
-            actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, 'PR', player_name=player_lookup_name)
-        elif leg.market_type == 'player_pa':
-            actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, 'PA', player_name=player_lookup_name)
-        elif leg.market_type == 'player_ra':
-            actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, 'RA', player_name=player_lookup_name)
-        elif leg.market_type == 'player_pra':
-            actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, 'PRA', player_name=player_lookup_name)
+        single_stat_key = _SNAPSHOT_SINGLE_STAT_MARKETS.get(leg.market_type)
+        combo_stat_key = _SNAPSHOT_COMBO_STAT_MARKETS.get(leg.market_type)
+        if single_stat_key is not None:
+            actual_value = get_player_stat(event_snapshot, leg.resolved_player_id, single_stat_key, player_name=player_lookup_name)
+        elif combo_stat_key is not None:
+            actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, combo_stat_key, player_name=player_lookup_name)
         used_snapshot = actual_value is not None
 
     if actual_value is None and callable(detail_lookup):
