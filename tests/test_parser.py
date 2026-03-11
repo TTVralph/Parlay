@@ -118,3 +118,39 @@ def test_parse_odds_on_separate_line_attach_to_previous_leg() -> None:
     assert legs[0].american_odds == 130
     assert legs[1].raw_text == 'OG Anunoby Under 2.5 Assists'
     assert legs[1].american_odds == -120
+
+
+def test_parse_initial_based_name_stays_ambiguous() -> None:
+    legs = parse_text('J Brown Over 24.5 Points')
+    assert len(legs) == 1
+    assert legs[0].player == 'J Brown'
+    assert legs[0].confidence <= 0.62
+    assert any('player identity ambiguous' in note.lower() for note in legs[0].notes)
+
+
+def test_parse_noisy_book_formatting_is_normalized() -> None:
+    text = 'NIKOLA JOKIC: o24.5 pts, +100 | murray O 2.5 3pm (-125)'
+    legs = parse_text(text)
+    assert len(legs) == 2
+    assert legs[0].player == 'Nikola Jokic'
+    assert legs[0].american_odds == 100
+    assert legs[1].player == 'Jamal Murray'
+    assert legs[1].market_type == 'player_threes'
+    assert legs[1].american_odds == -125
+
+
+def test_parse_opponent_context_at_and_matchup_suffixes() -> None:
+    at_legs = parse_text('Trae Young over 9.5 assists @ Lakers')
+    matchup_legs = parse_text('Donovan Mitchell over 27.5 points (DEN vs LAL)')
+    assert len(at_legs) == 1
+    assert len(matchup_legs) == 1
+    assert 'Opponent context: Los Angeles Lakers' in at_legs[0].notes
+    assert 'Opponent context: Los Angeles Lakers' in matchup_legs[0].notes
+
+
+def test_parse_number_first_notation() -> None:
+    legs = parse_text('24.5+ points Nikola Jokic')
+    assert len(legs) == 1
+    assert legs[0].player == 'Nikola Jokic'
+    assert legs[0].direction == 'over'
+    assert legs[0].line == 24.0
