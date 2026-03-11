@@ -2178,6 +2178,7 @@ def _process_public_check_text(
             'selected_event_label': item.selected_event_label or item.leg.selected_event_label,
             'event_selection_source': item.event_selection_source or item.leg.event_selection_source,
             'event_selection_explanation': item.event_selection_explanation or item.leg.event_selection_explanation,
+            'override_used_for_grading': bool(item.override_used_for_grading or item.leg.override_used_for_grading),
             'parsed_player_name': item.parsed_player_name or item.leg.parsed_player_name,
             'normalized_stat_type': item.normalized_stat_type or item.leg.normalized_stat_type,
             'resolution_confidence': item.resolution_confidence or item.leg.resolution_confidence,

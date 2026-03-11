@@ -162,6 +162,7 @@ def _base_leg_kwargs(leg: Leg, *, input_source_path: str = 'manual_text') -> dic
         'selected_event_label': leg.selected_event_label,
         'event_selection_source': leg.event_selection_source,
         'event_selection_explanation': leg.event_selection_explanation,
+        'override_used_for_grading': leg.override_used_for_grading,
     }
 
 

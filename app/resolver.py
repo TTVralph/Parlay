@@ -360,6 +360,7 @@ def resolve_leg_events(
                     updates['identity_match_confidence'] = 'HIGH'
                     updates['resolution_confidence'] = 1.0
                     updates['selection_applied'] = True
+                    updates['override_used_for_grading'] = True
                     notes.append('manual player selection applied')
                 else:
                     updates['selection_error_code'] = 'INVALID_SELECTED_PLAYER_ID'
@@ -483,6 +484,7 @@ def resolve_leg_events(
             selected_for_leg = selected_event_id
 
         updates['event_selection_applied'] = False
+        updates['override_used_for_grading'] = False
         updates['selected_event_id'] = selected_for_leg or None
         updates['selected_event_label'] = None
         updates['event_selection_source'] = 'auto'
@@ -495,6 +497,7 @@ def resolve_leg_events(
                 selected_event = selected_only[0]
                 candidates = [selected_event]
                 updates['event_selection_applied'] = True
+                updates['override_used_for_grading'] = True
                 updates['selected_event_id'] = selected_event.event_id
                 updates['selected_event_label'] = selected_event.label
                 updates['event_selection_source'] = 'user_selected' if selected_from_map else 'auto'
