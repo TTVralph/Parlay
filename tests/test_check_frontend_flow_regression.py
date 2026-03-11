@@ -55,8 +55,9 @@ def test_share_actions_and_summary_rendering_exist_after_grading() -> None:
 
 def test_manual_player_selection_ui_signals_are_rendered() -> None:
     script = _check_page_script()
-    assert "Using selected player:" in script
+    assert "Manual selection used for grading" in script
     assert "selection_source" in script
     assert "original_typed_player_name" in script
-    assert "Player selection succeeded, but this leg still needs review" in script
+    assert "Player selected, but not used in final grading" in script
+    assert "Game selected, but not used in final grading" in script
     assert "const canPickPlayer=!playerSelectionApplied" in script
