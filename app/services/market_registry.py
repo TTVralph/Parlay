@@ -4,7 +4,8 @@ import re
 from typing import Literal, TypedDict
 
 
-MarketType = Literal['single_stat', 'combo_stat', 'milestone_prop', 'alternate_line_prop', 'derived_stat']
+MarketType = Literal['single_stat', 'combo_stat', 'milestone_prop', 'alternate_line_prop', 'derived_stat', 'event_sequence_prop']
+DataSource = Literal['box_score', 'play_by_play']
 
 
 class MarketRegistryEntry(TypedDict):
@@ -13,6 +14,7 @@ class MarketRegistryEntry(TypedDict):
     market_type: MarketType
     stat_components: list[str]
     display_name: str
+    required_data_source: DataSource
 
 
 MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
@@ -22,6 +24,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['PTS'],
         'display_name': 'Points',
+        'required_data_source': 'box_score',
     },
     'rebounds': {
         'canonical_market_name': 'rebounds',
@@ -29,6 +32,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['REB'],
         'display_name': 'Rebounds',
+        'required_data_source': 'box_score',
     },
     'assists': {
         'canonical_market_name': 'assists',
@@ -36,6 +40,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['AST'],
         'display_name': 'Assists',
+        'required_data_source': 'box_score',
     },
     'steals': {
         'canonical_market_name': 'steals',
@@ -43,6 +48,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['STL'],
         'display_name': 'Steals',
+        'required_data_source': 'box_score',
     },
     'blocks': {
         'canonical_market_name': 'blocks',
@@ -50,6 +56,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['BLK'],
         'display_name': 'Blocks',
+        'required_data_source': 'box_score',
     },
     'turnovers': {
         'canonical_market_name': 'turnovers',
@@ -57,6 +64,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['TOV'],
         'display_name': 'Turnovers',
+        'required_data_source': 'box_score',
     },
     'three_pointers_made': {
         'canonical_market_name': 'three_pointers_made',
@@ -68,6 +76,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['3PM'],
         'display_name': 'Three Pointers Made',
+        'required_data_source': 'box_score',
     },
     'field_goals_made': {
         'canonical_market_name': 'field_goals_made',
@@ -75,6 +84,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['FGM'],
         'display_name': 'Field Goals Made',
+        'required_data_source': 'box_score',
     },
     'free_throws_made': {
         'canonical_market_name': 'free_throws_made',
@@ -82,6 +92,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['FTM'],
         'display_name': 'Free Throws Made',
+        'required_data_source': 'box_score',
     },
     'offensive_rebounds': {
         'canonical_market_name': 'offensive_rebounds',
@@ -89,6 +100,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['OREB'],
         'display_name': 'Offensive Rebounds',
+        'required_data_source': 'box_score',
     },
     'defensive_rebounds': {
         'canonical_market_name': 'defensive_rebounds',
@@ -96,6 +108,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['DREB'],
         'display_name': 'Defensive Rebounds',
+        'required_data_source': 'box_score',
     },
     'minutes_played': {
         'canonical_market_name': 'minutes_played',
@@ -103,6 +116,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'single_stat',
         'stat_components': ['MIN'],
         'display_name': 'Minutes Played',
+        'required_data_source': 'box_score',
     },
     'points_rebounds': {
         'canonical_market_name': 'points_rebounds',
@@ -110,6 +124,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'combo_stat',
         'stat_components': ['PTS', 'REB'],
         'display_name': 'Points + Rebounds',
+        'required_data_source': 'box_score',
     },
     'points_assists': {
         'canonical_market_name': 'points_assists',
@@ -117,6 +132,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'combo_stat',
         'stat_components': ['PTS', 'AST'],
         'display_name': 'Points + Assists',
+        'required_data_source': 'box_score',
     },
     'rebounds_assists': {
         'canonical_market_name': 'rebounds_assists',
@@ -124,6 +140,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'combo_stat',
         'stat_components': ['REB', 'AST'],
         'display_name': 'Rebounds + Assists',
+        'required_data_source': 'box_score',
     },
     'points_rebounds_assists': {
         'canonical_market_name': 'points_rebounds_assists',
@@ -131,6 +148,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'combo_stat',
         'stat_components': ['PTS', 'REB', 'AST'],
         'display_name': 'Points + Rebounds + Assists',
+        'required_data_source': 'box_score',
     },
     'steals_blocks': {
         'canonical_market_name': 'steals_blocks',
@@ -138,6 +156,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'combo_stat',
         'stat_components': ['STL', 'BLK'],
         'display_name': 'Steals + Blocks',
+        'required_data_source': 'box_score',
     },
     'points_threes': {
         'canonical_market_name': 'points_threes',
@@ -145,6 +164,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'combo_stat',
         'stat_components': ['PTS', '3PM'],
         'display_name': 'Points + Three Pointers Made',
+        'required_data_source': 'box_score',
     },
     'rebounds_blocks': {
         'canonical_market_name': 'rebounds_blocks',
@@ -152,6 +172,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'combo_stat',
         'stat_components': ['REB', 'BLK'],
         'display_name': 'Rebounds + Blocks',
+        'required_data_source': 'box_score',
     },
     'double_double': {
         'canonical_market_name': 'double_double',
@@ -159,6 +180,7 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'derived_stat',
         'stat_components': [],
         'display_name': 'Double Double',
+        'required_data_source': 'box_score',
     },
     'triple_double': {
         'canonical_market_name': 'triple_double',
@@ -166,6 +188,63 @@ MARKET_REGISTRY: dict[str, MarketRegistryEntry] = {
         'market_type': 'derived_stat',
         'stat_components': [],
         'display_name': 'Triple Double',
+        'required_data_source': 'box_score',
+    },
+    'first_basket': {
+        'canonical_market_name': 'first_basket',
+        'aliases': ['first basket', 'first bucket', 'first scorer', 'to score first'],
+        'market_type': 'event_sequence_prop',
+        'stat_components': [],
+        'display_name': 'First Basket',
+        'required_data_source': 'play_by_play',
+    },
+    'first_rebound': {
+        'canonical_market_name': 'first_rebound',
+        'aliases': ['first rebound', 'to get first rebound'],
+        'market_type': 'event_sequence_prop',
+        'stat_components': [],
+        'display_name': 'First Rebound',
+        'required_data_source': 'play_by_play',
+    },
+    'first_assist': {
+        'canonical_market_name': 'first_assist',
+        'aliases': ['first assist', 'to record first assist'],
+        'market_type': 'event_sequence_prop',
+        'stat_components': [],
+        'display_name': 'First Assist',
+        'required_data_source': 'play_by_play',
+    },
+    'first_three': {
+        'canonical_market_name': 'first_three',
+        'aliases': ['first three', 'first 3 pointer', 'first 3pt made', 'first three-pointer made'],
+        'market_type': 'event_sequence_prop',
+        'stat_components': [],
+        'display_name': 'First Three',
+        'required_data_source': 'play_by_play',
+    },
+    'last_basket': {
+        'canonical_market_name': 'last_basket',
+        'aliases': ['last basket', 'last bucket', 'to score last'],
+        'market_type': 'event_sequence_prop',
+        'stat_components': [],
+        'display_name': 'Last Basket',
+        'required_data_source': 'play_by_play',
+    },
+    'first_steal': {
+        'canonical_market_name': 'first_steal',
+        'aliases': ['first steal'],
+        'market_type': 'event_sequence_prop',
+        'stat_components': [],
+        'display_name': 'First Steal',
+        'required_data_source': 'play_by_play',
+    },
+    'first_block': {
+        'canonical_market_name': 'first_block',
+        'aliases': ['first block'],
+        'market_type': 'event_sequence_prop',
+        'stat_components': [],
+        'display_name': 'First Block',
+        'required_data_source': 'play_by_play',
     },
 }
 
@@ -185,6 +264,7 @@ for base in _MILESTONE_BASE_MARKETS:
         'market_type': 'milestone_prop',
         'stat_components': base_entry['stat_components'],
         'display_name': f"{base_entry['display_name']} Milestone",
+        'required_data_source': 'box_score',
     }
     MARKET_REGISTRY[f'{base}_alternate_line'] = {
         'canonical_market_name': f'{base}_alternate_line',
@@ -192,6 +272,7 @@ for base in _MILESTONE_BASE_MARKETS:
         'market_type': 'alternate_line_prop',
         'stat_components': base_entry['stat_components'],
         'display_name': f"{base_entry['display_name']} Alternate Line",
+        'required_data_source': 'box_score',
     }
 
 
@@ -217,13 +298,25 @@ CANONICAL_TO_PLAYER_MARKET = {
     'rebounds_blocks': 'player_rebounds_blocks',
     'double_double': 'player_double_double',
     'triple_double': 'player_triple_double',
+    'first_basket': 'player_first_basket',
+    'first_rebound': 'player_first_rebound',
+    'first_assist': 'player_first_assist',
+    'first_three': 'player_first_three',
+    'last_basket': 'player_last_basket',
+    'first_steal': 'player_first_steal',
+    'first_block': 'player_first_block',
 }
 
 for key, mapped in list(CANONICAL_TO_PLAYER_MARKET.items()):
+    entry = MARKET_REGISTRY.get(key)
+    if not entry or entry['required_data_source'] != 'box_score':
+        continue
     CANONICAL_TO_PLAYER_MARKET[f'{key}_milestone'] = mapped
     CANONICAL_TO_PLAYER_MARKET[f'{key}_alternate_line'] = mapped
 
-PLAYER_MARKET_TO_CANONICAL = {value: key for key, value in CANONICAL_TO_PLAYER_MARKET.items()}
+PLAYER_MARKET_TO_CANONICAL: dict[str, str] = {}
+for canonical, player_market in CANONICAL_TO_PLAYER_MARKET.items():
+    PLAYER_MARKET_TO_CANONICAL.setdefault(player_market, canonical)
 
 
 def _normalize_key(text: str) -> str:

@@ -7,6 +7,8 @@ from .models import GradeResponse, GradedLeg, Leg
 from .services import grade_reason_codes as reason_codes
 from .services.settlement_explainer import build_settlement_explanation, with_explanation
 from .services.market_registry import MARKET_REGISTRY, player_market_to_canonical
+from .services.play_by_play_provider import ESPNPlayByPlayProvider, PlayByPlayEvent
+from .services.provider_router import ProviderRouter
 from .providers.base import ResultsProvider
 from .providers.factory import get_results_provider
 from .event_matcher import resolve_leg_events
@@ -32,6 +34,13 @@ _MARKET_LABELS = {
     'player_rushing_yards': 'Rushing Yards',
     'player_receiving_yards': 'Receiving Yards',
     'player_hits': 'Hits',
+    'player_first_basket': 'First Basket',
+    'player_first_rebound': 'First Rebound',
+    'player_first_assist': 'First Assist',
+    'player_first_three': 'First Three',
+    'player_last_basket': 'Last Basket',
+    'player_first_steal': 'First Steal',
+    'player_first_block': 'First Block',
 }
 
 
@@ -61,6 +70,41 @@ class ValidationResult:
     is_valid: bool
     warnings: list[str]
     confidence: str = 'HIGH'
+
+
+def _name_matches(target_player: str, candidate: str | None) -> bool:
+    if not candidate:
+        return False
+    target_tokens = [token for token in target_player.lower().replace('.', '').split() if token]
+    candidate_tokens = [token for token in candidate.lower().replace('.', '').split() if token]
+    if not target_tokens or not candidate_tokens:
+        return False
+    return ''.join(target_tokens) == ''.join(candidate_tokens) or target_tokens[-1] == candidate_tokens[-1]
+
+
+def _select_event_sequence_winner(market_type: str, events: list[PlayByPlayEvent]) -> str | None:
+    if market_type == 'player_first_basket':
+        event = next((evt for evt in events if evt.is_made_shot), None)
+        return event.primary_player if event else None
+    if market_type == 'player_last_basket':
+        basket_events = [evt for evt in events if evt.is_made_shot]
+        return basket_events[-1].primary_player if basket_events else None
+    if market_type == 'player_first_three':
+        event = next((evt for evt in events if evt.is_three_pointer_made), None)
+        return event.primary_player if event else None
+    if market_type == 'player_first_rebound':
+        event = next((evt for evt in events if evt.is_rebound), None)
+        return event.primary_player if event else None
+    if market_type == 'player_first_assist':
+        event = next((evt for evt in events if evt.is_assist), None)
+        return event.assist_player if event else None
+    if market_type == 'player_first_steal':
+        event = next((evt for evt in events if evt.is_steal), None)
+        return event.steal_player if event else None
+    if market_type == 'player_first_block':
+        event = next((evt for evt in events if evt.is_block), None)
+        return event.block_player if event else None
+    return None
 
 
 def _event_info_for_leg(leg: Leg, provider: ResultsProvider):
@@ -295,7 +339,14 @@ def _build_debug_comparison(leg: Leg, *, graded: GradedLeg, reason_code: str, re
     }
 
 
-def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_text_slip_grading', input_source_path: str = 'manual_text') -> GradedLeg:
+def settle_leg(
+    leg: Leg,
+    provider: ResultsProvider,
+    *,
+    play_by_play_provider: ESPNPlayByPlayProvider | None = None,
+    code_path: str = 'manual_text_slip_grading',
+    input_source_path: str = 'manual_text',
+) -> GradedLeg:
     base_kwargs = _base_leg_kwargs(leg, input_source_path=input_source_path)
     base_kwargs['validation_warnings'] = []
     settlement_diagnostics = _default_settlement_diagnostics(leg)
@@ -410,6 +461,9 @@ def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_
         'normalized_market': canonical_market,
         'registry_entry_found': bool(registry_entry),
     }
+    router = ProviderRouter(box_score_provider=provider, play_by_play_provider=play_by_play_provider)
+    route = router.route(leg.market_type)
+    settlement_diagnostics['provider_route'] = route.data_source
 
     if leg.sport == 'NBA' and leg.market_type.startswith('player_') and canonical_market is None:
         return explained(
@@ -472,6 +526,58 @@ def settle_leg(leg: Leg, provider: ResultsProvider, *, code_path: str = 'manual_
         return explained(settlement='unmatched', reason='No player identified', reason_code=reason_codes.NO_PLAYER_IDENTIFIED, reason_message='No player identified', explanation_reason='player identity ambiguous')
 
     player_lookup_name = leg.resolved_player_name or leg.player
+
+    if route.data_source == 'play_by_play':
+        if route.provider is None:
+            settlement_diagnostics['settlement_failure_reason'] = 'play-by-play provider unavailable'
+            settlement_diagnostics['unmatched_reason_code'] = reason_codes.MISSING_STAT_SOURCE
+            return explained(
+                settlement='unmatched',
+                reason='Play-by-play provider unavailable',
+                reason_code=reason_codes.MISSING_STAT_SOURCE,
+                reason_message='Play-by-play provider unavailable',
+                review_reason='Play-by-play provider unavailable',
+                explanation_reason='stat unavailable',
+            )
+        events = route.provider.get_normalized_events(leg.event_id)
+        if not events:
+            settlement_diagnostics['settlement_failure_reason'] = 'missing play-by-play payload'
+            settlement_diagnostics['unmatched_reason_code'] = reason_codes.MISSING_STAT_SOURCE
+            return explained(
+                settlement='unmatched',
+                reason='Missing play-by-play payload for event',
+                reason_code=reason_codes.MISSING_STAT_SOURCE,
+                reason_message='Missing play-by-play payload for event',
+                review_reason='Missing play-by-play payload for event',
+                explanation_reason='stat unavailable',
+            )
+        winning_player = _select_event_sequence_winner(leg.market_type, events)
+        if not winning_player:
+            settlement_diagnostics['settlement_failure_reason'] = 'unresolved play-by-play market winner'
+            settlement_diagnostics['unmatched_reason_code'] = reason_codes.STAT_NOT_FOUND
+            return explained(
+                settlement='unmatched',
+                reason='Could not determine event-sequence winner from play-by-play',
+                reason_code=reason_codes.MISSING_STAT_SOURCE,
+                reason_message='Could not determine event-sequence winner from play-by-play',
+                review_reason='Could not determine event-sequence winner from play-by-play',
+                explanation_reason='stat unavailable',
+            )
+        direction = leg.direction or 'yes'
+        is_match = _name_matches(player_lookup_name, winning_player)
+        won = is_match if direction == 'yes' else not is_match
+        settlement_diagnostics['stat_extraction_worked'] = True
+        return explained(
+            settlement='win' if won else 'loss',
+            actual_value=1.0 if is_match else 0.0,
+            reason=f'{winning_player} is the resolved {(_MARKET_LABELS.get(leg.market_type, leg.market_type)).lower()}',
+            reason_code=reason_codes.ACTUAL_STAT_ABOVE_LINE if won else reason_codes.ACTUAL_STAT_BELOW_LINE,
+            reason_message=f'{winning_player} resolved this market',
+            explanation_reason='event resolved',
+            matched_boxscore_player_name=winning_player,
+            player_found_in_boxscore=True,
+        )
+
     event_info = _event_info_for_leg(leg, provider)
     settlement_diagnostics['final_matched_event'] = leg.event_label
     validation = validate_player_event_match(player_lookup_name, event_info, leg.resolved_team, provider, event_id=leg.event_id)
@@ -613,8 +719,10 @@ def grade_text(
     bet_date: date | None = None,
     screenshot_default_date: date | None = None,
     code_path: str = 'manual_text_slip_grading',
+    play_by_play_provider: ESPNPlayByPlayProvider | None = None,
 ) -> GradeResponse:
     provider = provider or get_results_provider()
+    play_by_play_provider = play_by_play_provider or ESPNPlayByPlayProvider()
     parsed_legs = parse_text(text)
     legs = filter_valid_legs(parsed_legs)
     resolved_legs = resolve_leg_events(
@@ -642,7 +750,16 @@ def grade_text(
             screenshot_default_date=screenshot_default_date,
         )
     input_source_path = _input_source_from_code_path(code_path)
-    graded = [settle_leg(leg, provider, code_path=code_path, input_source_path=input_source_path) for leg in resolved_legs]
+    graded = [
+        settle_leg(
+            leg,
+            provider,
+            play_by_play_provider=play_by_play_provider,
+            code_path=code_path,
+            input_source_path=input_source_path,
+        )
+        for leg in resolved_legs
+    ]
 
     settlements = [item.settlement for item in graded]
     if any(settlement == 'loss' for settlement in settlements):

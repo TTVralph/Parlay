@@ -18,7 +18,7 @@ MARKET_PATTERN = (
     r"p\+a|pts\+ast|points assists|r\+a|reb\+ast|rebounds assists|"
     r"3s|3pm|3 ptm|3pt made|3ptm|threes|three pointers|three-pointers|threes made|"
     r"3 pointers made|3-pointers made|three pointers made|three-point field goals made|three point field goals made|"
-    r"pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits|triple\s*double|double\s*double"
+    r"pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits|triple\s*double|double\s*double|first basket|first bucket|first scorer|to score first|first rebound|to get first rebound|first assist|to record first assist|first three|first 3 pointer|first 3pt made|first three-pointer made|last basket|last bucket|to score last|first steal|first block"
 )
 
 NUMBER_FIRST_PATTERN = re.compile(
@@ -35,6 +35,10 @@ YES_NO_PATTERN = re.compile(
 )
 NAMED_MARKET_PATTERN = re.compile(
     rf"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>{MARKET_PATTERN})$",
+    re.I,
+)
+EVENT_SEQUENCE_PATTERN = re.compile(
+    r"^(?P<name>[\w .\-'’]+?)\s+(?P<market>first basket|first bucket|first scorer|to score first|first rebound|to get first rebound|first assist|to record first assist|first three|first 3 pointer|first 3pt made|first three-pointer made|last basket|last bucket|to score last|first steal|first block)$",
     re.I,
 )
 ML_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+ml$', re.I)
@@ -286,6 +290,22 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction=direction, line=line_value, display_line=str(line_value), confidence=confidence, notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
+        event_sequence_match = EVENT_SEQUENCE_PATTERN.match(normalized_line)
+        if event_sequence_match:
+            parsed_name = _normalize_whitespace(event_sequence_match.group('name'))
+            resolved_player, resolution_conf = _player_lookup(parsed_name)
+            player = resolved_player or parsed_name
+            market_type = _market_lookup(event_sequence_match.group('market').lower())
+            sport = _infer_sport(player=player, sport_hint=line_sport_hint)
+            notes = list(opponent_note)
+            if not market_type:
+                notes.append('Could not parse stat type')
+                market_type = 'player_points'
+            parse_confidence = (1.0 + (1.0 if market_type else 0.0) + (1.0 if resolved_player else 0.7)) / 3.0
+            confidence = max(parse_confidence, resolution_conf if resolved_player else parse_confidence)
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='yes', line=1.0, display_line='Yes', confidence=confidence, notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
+            continue
+
         named_market_match = NAMED_MARKET_PATTERN.match(normalized_line)
         if named_market_match:
             parsed_name = _normalize_whitespace(named_market_match.group('name'))
@@ -353,7 +373,7 @@ def is_valid_leg(leg: Leg) -> bool:
         return bool(leg.team) and (leg.market_type != 'spread' or leg.line is not None)
     if leg.market_type == 'game_total':
         return leg.direction is not None and leg.line is not None
-    if leg.market_type in {'player_triple_double', 'player_double_double'}:
+    if leg.market_type in {'player_triple_double', 'player_double_double', 'player_first_basket', 'player_first_rebound', 'player_first_assist', 'player_first_three', 'player_last_basket', 'player_first_steal', 'player_first_block'}:
         return bool(leg.player and leg.direction in {'yes', 'no'})
     return bool(leg.player and leg.direction and leg.line is not None)
 
