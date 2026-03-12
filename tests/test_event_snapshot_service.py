@@ -9,6 +9,7 @@ from app.providers.espn_provider import ESPNNBAResultsProvider
 from app.services.event_snapshot import EventSnapshot, EventSnapshotService
 from app.services.play_by_play_provider import PlayByPlayEvent
 from app.services.request_cache import RequestCache
+from app.services.snapshot_store import SnapshotStore
 
 
 class _FakeScoreboardProvider:
@@ -345,3 +346,98 @@ def test_non_espn_provider_path_is_unchanged_without_snapshot() -> None:
 
     result = grade_text('Nikola Jokic over 29.5 points', provider=_NonEspnProvider())
     assert result.legs[0].settlement == 'win'
+
+
+class _FakeFinalGamecastProvider(_FakeGamecastProvider):
+    def fetch_normalized(self, event_id: str) -> dict[str, Any] | None:
+        payload = super().fetch_normalized(event_id)
+        if payload is None:
+            return None
+        payload['status'] = {'state': 'final'}
+        return payload
+
+
+def test_snapshot_saved_after_build_for_final_game(tmp_path) -> None:
+    store = SnapshotStore(base_dir=tmp_path / 'snapshots')
+    service = EventSnapshotService(
+        scoreboard_provider=_FakeScoreboardProvider(),
+        gamecast_provider=_FakeFinalGamecastProvider(),
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=store,
+    )
+
+    snapshot = service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    assert snapshot is not None
+    assert store.snapshot_exists('evt-1') is True
+    raw = (tmp_path / 'snapshots' / 'evt-1.json').read_text(encoding='utf-8')
+    assert 'normalized_player_stats' in raw
+    assert 'normalized_team_stats' in raw
+    assert 'metadata' in raw
+    assert 'diagnostics' in raw
+
+
+def test_snapshot_reused_from_store_without_provider_calls(tmp_path) -> None:
+    store = SnapshotStore(base_dir=tmp_path / 'snapshots')
+    first_service = EventSnapshotService(
+        scoreboard_provider=_FakeScoreboardProvider(),
+        gamecast_provider=_FakeFinalGamecastProvider(),
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=store,
+    )
+    first_service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    scoreboard = _FakeScoreboardProvider()
+    gamecast = _FakeFinalGamecastProvider()
+    second_service = EventSnapshotService(
+        scoreboard_provider=scoreboard,
+        gamecast_provider=gamecast,
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=store,
+    )
+
+    snapshot = second_service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    assert snapshot is not None
+    assert snapshot.event_id == 'evt-1'
+    assert gamecast.calls == []
+    assert scoreboard.calls == []
+
+
+def test_snapshot_store_corruption_falls_back_to_provider(tmp_path) -> None:
+    store = SnapshotStore(base_dir=tmp_path / 'snapshots')
+    (tmp_path / 'snapshots').mkdir(parents=True, exist_ok=True)
+    (tmp_path / 'snapshots' / 'evt-1.json').write_text('{bad json', encoding='utf-8')
+
+    scoreboard = _FakeScoreboardProvider()
+    gamecast = _FakeFinalGamecastProvider()
+    service = EventSnapshotService(
+        scoreboard_provider=scoreboard,
+        gamecast_provider=gamecast,
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=store,
+    )
+
+    snapshot = service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    assert snapshot is not None
+    assert gamecast.calls == ['evt-1']
+    assert scoreboard.calls == ['2026-03-06']
+
+
+def test_snapshot_store_missing_file_falls_back_to_provider(tmp_path) -> None:
+    store = SnapshotStore(base_dir=tmp_path / 'snapshots')
+    scoreboard = _FakeScoreboardProvider()
+    gamecast = _FakeFinalGamecastProvider()
+    service = EventSnapshotService(
+        scoreboard_provider=scoreboard,
+        gamecast_provider=gamecast,
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=store,
+    )
+
+    snapshot = service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    assert snapshot is not None
+    assert gamecast.calls == ['evt-1']
+    assert scoreboard.calls == ['2026-03-06']
