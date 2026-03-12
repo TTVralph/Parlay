@@ -108,6 +108,8 @@ class Leg(BaseModel):
     event_selection_source: Optional[Literal['auto', 'user_selected']] = None
     event_selection_explanation: Optional[str] = None
     override_used_for_grading: bool = False
+    original_leg_text: Optional[str] = None
+    normalized_line_value: Optional[float] = None
 
 
 class ParseResponse(BaseModel):
@@ -372,6 +374,8 @@ class AnalyzeLegRisk(BaseModel):
     line_value_label: Literal['good', 'neutral', 'bad', 'unknown'] = 'unknown'
     line_value_text: str = 'Line value unknown'
     line_value_source: Optional[str] = None
+    original_leg_text: Optional[str] = None
+    normalized_line_value: Optional[float] = None
 
 
 
@@ -409,6 +413,9 @@ class AnalyzeSlipResponse(BaseModel):
     changed_legs_count: int = 0
     rewrite_notes: list[str] = Field(default_factory=list)
     original_vs_rewritten_summary: str = ''
+    original_estimated_odds: Optional[int] = None
+    rewritten_estimated_odds: Optional[int] = None
+    risk_reduction_percent: float = 0.0
 
 
 class TweetIngestRequest(BaseModel):

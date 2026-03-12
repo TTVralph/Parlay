@@ -263,7 +263,7 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
     betstack = BetStackProvider.from_env()
     odds_rows = context.get('betstack_odds_rows') if context else None
     if odds_rows is None:
-        odds_rows = betstack.fetch_all_odds(sport='basketball')
+        odds_rows = betstack.fetch_nba_odds()
     betstack_line = betstack.lookup_leg_line_from_odds(leg, odds_rows)
     if betstack_line and betstack_line.get('line') is not None:
         line_value = analyze_line_value_against_market_line(leg, float(betstack_line['line']), 'betstack_consensus')
@@ -317,6 +317,8 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
         line_value_label=line_value.line_value_label,
         line_value_text=line_value_text,
         line_value_source=line_value.line_value_source,
+        original_leg_text=leg.original_leg_text or leg.raw_text,
+        normalized_line_value=leg.normalized_line_value if leg.normalized_line_value is not None else leg.line,
     )
 
 
@@ -373,7 +375,7 @@ def detect_trap_leg(parsed_legs: list[Leg], context: dict[str, Any] | None = Non
 
 def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
     betstack = BetStackProvider.from_env()
-    odds_rows = betstack.fetch_all_odds(sport='basketball') if betstack.enabled else []
+    odds_rows = betstack.fetch_nba_odds() if betstack.enabled else []
     shared_context = {'betstack_odds_rows': odds_rows}
     analyzed = [analyze_leg_risk(leg, context=shared_context) for leg in parsed_legs]
     if not analyzed:

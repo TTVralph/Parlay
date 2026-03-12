@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
+from math import prod
 from typing import Any
 
 from ..models import AnalyzeLegRisk, AnalyzeSlipResponse, Leg, RewrittenLegSuggestion
-from .slip_risk_analyzer import COMBO_MARKETS, SUPPORTED_MARKETS, analyze_slip_risk
+from .slip_risk_analyzer import COMBO_MARKETS, PLAYER_BASELINES, SUPPORTED_MARKETS, TEAM_BASELINES, analyze_slip_risk
 
 MILESTONE_DOWNGRADE_MAP: dict[float, float] = {
     10.0: 8.0,
@@ -17,6 +18,13 @@ LOWER_RISK_SINGLE_MARKET: dict[str, str] = {
     'player_pr': 'player_points',
     'player_pa': 'player_assists',
     'player_ra': 'player_rebounds',
+}
+
+LINE_DOWNGRADE_BY_MARKET: dict[str, float] = {
+    'player_points': 3.0,
+    'player_rebounds': 2.0,
+    'player_assists': 2.0,
+    'player_threes': 1.0,
 }
 
 
@@ -51,25 +59,62 @@ def _format_leg_text(leg: Leg, override_market: str | None = None, override_line
 def _find_milestone_target(leg: Leg) -> float | None:
     if leg.line is None:
         return None
+    plus_value = leg.line + 0.5
     for milestone, safer in MILESTONE_DOWNGRADE_MAP.items():
-        if abs(float(leg.line) - milestone) < 0.001:
-            return safer
+        if abs(float(plus_value) - milestone) < 0.001:
+            return safer - 0.5
     raw = (leg.display_line or leg.raw_text or '').lower()
     match = re.search(r'\b(10|8|6)\+\b', raw)
     if not match:
         return None
-    return MILESTONE_DOWNGRADE_MAP.get(float(match.group(1)))
+    target = MILESTONE_DOWNGRADE_MAP.get(float(match.group(1)))
+    return (target - 0.5) if target is not None else None
 
 
 
 def _standard_safer_line(leg: Leg) -> float | None:
     if leg.line is None:
         return None
+    step = LINE_DOWNGRADE_BY_MARKET.get(leg.market_type)
+    if step is None:
+        return None
     if leg.direction == 'over':
-        return max(0.0, round(leg.line - 1.0, 1))
+        return max(0.0, round(leg.line - step, 1))
     if leg.direction == 'under':
-        return round(leg.line + 1.0, 1)
+        return round(leg.line + step, 1)
     return None
+
+
+def _baseline_for_leg(leg: Leg) -> float | None:
+    if leg.market_type in PLAYER_BASELINES:
+        return PLAYER_BASELINES[leg.market_type]
+    return TEAM_BASELINES.get(leg.market_type)
+
+
+def _estimate_leg_probability(leg: Leg) -> float:
+    baseline = _baseline_for_leg(leg)
+    if baseline is None or leg.line is None:
+        return 0.52
+    diff = leg.line - baseline
+    scale = {
+        'player_points': 8.0,
+        'player_rebounds': 5.0,
+        'player_assists': 5.0,
+        'player_threes': 3.0,
+        'spread': 8.0,
+        'game_total': 12.0,
+    }.get(leg.market_type, 8.0)
+    if leg.direction == 'under':
+        diff = -diff
+    probability = 0.55 - (diff / scale) * 0.12
+    return max(0.05, min(0.95, round(probability, 4)))
+
+
+def _probability_to_american_odds(probability: float) -> int:
+    p = max(0.0001, min(0.9999, probability))
+    if p >= 0.5:
+        return int(round(-(p / (1.0 - p)) * 100.0))
+    return int(round(((1.0 - p) / p) * 100.0))
 
 
 
@@ -99,7 +144,7 @@ def suggest_safer_leg(leg: Leg, advisory_context: dict[str, Any]) -> dict[str, A
             'rewriteable': True,
             'suggested_leg': rewritten,
             'suggested_leg_text': rewritten.raw_text,
-            'reason': f'Milestone ladder applied ({_line_to_text(leg.line)}+ → {_line_to_text(milestone_target)}+) to reduce volatility.',
+            'reason': 'Milestone ladder applied (10+→8+, 8+→6+, 6+→4+) to reduce volatility.',
             'note': f"{leg.raw_text} → {rewritten.raw_text}",
         }
 
@@ -129,7 +174,7 @@ def suggest_safer_leg(leg: Leg, advisory_context: dict[str, Any]) -> dict[str, A
             'rewriteable': True,
             'suggested_leg': rewritten,
             'suggested_leg_text': rewritten.raw_text,
-            'reason': 'Line moved one safer tier toward baseline.',
+            'reason': 'Line moved down one realistic sportsbook ladder tier by market.',
             'note': f"{leg.raw_text} → {rewritten.raw_text}",
         }
 
@@ -175,6 +220,17 @@ def rewrite_slip_safer(parsed_legs: list[Leg], analysis_result: AnalyzeSlipRespo
 
     rewritten_analysis = analyze_slip_risk(rewritten_legs)
     rewritten_text = '\n'.join(item.raw_text for item in rewritten_legs)
+
+    original_leg_probs = [_estimate_leg_probability(leg) for leg in parsed_legs] or [0.5]
+    rewritten_leg_probs = [_estimate_leg_probability(leg) for leg in rewritten_legs] or [0.5]
+    original_parlay_prob = prod(original_leg_probs)
+    rewritten_parlay_prob = prod(rewritten_leg_probs)
+
+    odds_original = _probability_to_american_odds(original_parlay_prob)
+    odds_rewritten = _probability_to_american_odds(rewritten_parlay_prob)
+    base_prob = max(original_parlay_prob, 1e-6)
+    risk_reduction = max(0.0, round(((rewritten_parlay_prob - original_parlay_prob) / base_prob) * 100.0, 2))
+
     summary = (
         f"Original risk {analysis_result.slip_risk_score:.2f} ({analysis_result.slip_risk_label}) → "
         f"Rewritten risk {rewritten_analysis.slip_risk_score:.2f} ({rewritten_analysis.slip_risk_label}); "
@@ -189,4 +245,7 @@ def rewrite_slip_safer(parsed_legs: list[Leg], analysis_result: AnalyzeSlipRespo
         'changed_legs_count': changed_count,
         'rewrite_notes': notes,
         'original_vs_rewritten_summary': summary,
+        'original_estimated_odds': odds_original,
+        'rewritten_estimated_odds': odds_rewritten,
+        'risk_reduction_percent': risk_reduction,
     }

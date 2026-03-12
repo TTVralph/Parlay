@@ -150,6 +150,9 @@ class BetStackProvider:
             and (not event_label or _looks_like_match(row.get('event_label'), event_label))
         ]
 
+    def fetch_nba_odds(self) -> list[dict[str, Any]]:
+        return self.fetch_all_odds(sport='basketball')
+
     def fetch_all_odds(self, *, sport: str = 'basketball') -> list[dict[str, Any]]:
         if not self.enabled:
             return []
@@ -204,6 +207,12 @@ class BetStackProvider:
             team_specific = [row for row in candidates if _looks_like_match(row.get('team'), leg.team)]
             if team_specific:
                 return team_specific[0]
+
+        target_line = leg.normalized_line_value if leg.normalized_line_value is not None else leg.line
+        if leg.market_type != 'moneyline' and target_line is not None:
+            with_line = [row for row in candidates if row.get('line') is not None]
+            if with_line:
+                candidates = sorted(with_line, key=lambda row: abs(float(row['line']) - float(target_line)))
 
         if leg.market_type != 'moneyline' and leg.direction:
             by_direction = [row for row in candidates if str(row.get('direction') or '').lower() == leg.direction]
