@@ -1020,6 +1020,10 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .sold-meta-label{font-size:11px;opacity:.85;text-transform:uppercase;letter-spacing:.04em;}
     .sold-meta-value{margin-top:3px;font-size:15px;font-weight:800;color:#fff;}
     .sold-context{margin-top:10px;padding:9px;border-radius:10px;background:#fff1f51f;border:1px solid #fecdd544;color:#ffe4e6;font-size:13px;position:relative;z-index:1;}
+    .sold-kill-moment{margin-top:10px;padding:10px;border-radius:10px;background:#fff1f520;border:1px solid #fecdd544;color:#ffe4e6;position:relative;z-index:1;}
+    .sold-kill-title{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;opacity:.9;}
+    .sold-kill-body{margin-top:6px;font-size:13px;line-height:1.4;color:#fff1f2;}
+    .sold-kill-meta{margin-top:6px;font-size:11px;opacity:.85;color:#fecdd5;}
     .sold-other-legs{margin-top:10px;border-radius:12px;border:1px solid #fecdd544;background:#fff1f517;position:relative;z-index:1;}
     .sold-other-legs summary{cursor:pointer;list-style:none;padding:10px 12px;font-size:12px;font-weight:800;color:#ffe4e6;}
     .sold-other-legs summary::-webkit-details-marker{display:none;}
@@ -1657,6 +1661,12 @@ Murray over 2.5 threes'></textarea>
       const finalValue=formatSoldValue(primary.final_value);
       const missBy=formatSoldValue(Math.abs(asNumber(primary.miss_by)||0));
       const context=primary.last_relevant_context?`<div class='sold-context'><strong>Last relevant context:</strong> ${escapeHtml(primary.last_relevant_context)}</div>`:'';
+      const killMomentMeta=(primary.last_relevant_period&&primary.last_relevant_clock)
+        ?`<div class='sold-kill-meta'>${escapeHtml(String(primary.last_relevant_clock))} left in ${escapeHtml(String(primary.last_relevant_period))}</div>`
+        :'';
+      const killMoment=(primary.kill_moment_supported===true&&primary.kill_moment_summary)
+        ?`<div class='sold-kill-moment'><div class='sold-kill-title'>Kill moment</div><div class='sold-kill-body'>${escapeHtml(String(primary.kill_moment_summary))}</div>${killMomentMeta}</div>`
+        :'';
       const market=primary.market_type||primary.market||'';
       const game=primary.event_name||primary.matched_event||'';
       const summary=(target!=='—'&&finalValue!=='—')
@@ -1692,6 +1702,7 @@ Murray over 2.5 threes'></textarea>
         <div class='sold-summary'>${summary}</div>
         ${primaryMeta}
         ${context}
+        ${killMoment}
         ${others}
       </div>`;
     }
