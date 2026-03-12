@@ -409,3 +409,13 @@ def test_analyze_mode_keeps_raw_reason_codes_in_technical_details_only() -> None
     assert "<summary>Show technical details</summary>" in html
     assert "payload.trap_reason_codes.map((code)=>escapeHtml(code)).join(' · ')" in html
     assert "advisoryCell.innerHTML=`<div class='risk-card'>${escapeHtml(humanizeAdvisory(item))}</div>" in html
+
+
+def test_analyze_mode_contains_safer_rewrite_section_markup() -> None:
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "id='saferRewrite'" in html
+    assert 'Rewrite My Slip Safer' in html
+    assert "const saferRewrite=document.getElementById('saferRewrite');" in html

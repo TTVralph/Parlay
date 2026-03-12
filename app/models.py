@@ -374,6 +374,15 @@ class AnalyzeLegRisk(BaseModel):
     line_value_source: Optional[str] = None
 
 
+
+
+class RewrittenLegSuggestion(BaseModel):
+    original_leg: str
+    suggested_leg: str
+    reason_for_change: str
+    changed: bool = False
+    rewriteable: bool = True
+
 class AnalyzeSlipResponse(BaseModel):
     ok: bool
     message: str
@@ -393,6 +402,13 @@ class AnalyzeSlipResponse(BaseModel):
     correlation_risk_label: Literal['low', 'medium', 'high'] = 'low'
     correlation_note: str = ''
     advisory_only: bool = True
+    rewritten_slip_text: str = ''
+    rewritten_legs: list[RewrittenLegSuggestion] = Field(default_factory=list)
+    rewritten_risk_score: float = 0.0
+    rewritten_risk_label: Literal['low', 'medium', 'high'] = 'low'
+    changed_legs_count: int = 0
+    rewrite_notes: list[str] = Field(default_factory=list)
+    original_vs_rewritten_summary: str = ''
 
 
 class TweetIngestRequest(BaseModel):

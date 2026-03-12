@@ -29,6 +29,13 @@ def test_analyze_slip_response_shape() -> None:
     assert 'line_value_score' in first_leg
     assert first_leg['line_value_label'] in {'good', 'neutral', 'bad', 'unknown'}
     assert 'line_value_source' in first_leg
+    assert 'rewritten_slip_text' in body
+    assert isinstance(body['rewritten_legs'], list)
+    assert 'rewritten_risk_score' in body
+    assert body['rewritten_risk_label'] in {'low', 'medium', 'high'}
+    assert 'changed_legs_count' in body
+    assert isinstance(body['rewrite_notes'], list)
+    assert 'original_vs_rewritten_summary' in body
 
 
 def test_analyze_mode_does_not_change_check_slip_shape() -> None:

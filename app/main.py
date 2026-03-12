@@ -27,6 +27,7 @@ from .db.base import Base
 from .db.session import SessionLocal, engine, get_db, run_lightweight_migrations
 from .grader import grade_text, settle_leg
 from .services.slip_risk_analyzer import analyze_slip_risk
+from .services.slip_rewriter import rewrite_slip_safer
 from .ingestion import dump_source_payload, normalize_tweet_payload
 from .models import (
     OddsMatchRequest,
@@ -1138,6 +1139,11 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .mode-muted{opacity:.5;}
     .advisory-banner{margin-top:10px;padding:12px;border-radius:12px;border:1px solid #facc15;background:linear-gradient(180deg,#fef9c3,#fef3c7);color:#92400e;font-size:13px;font-weight:700;}
     .advisory-banner .mini{display:block;margin-top:4px;font-size:12px;font-weight:600;opacity:.86;}
+    .safer-rewrite{border:1px solid var(--border);border-radius:14px;padding:12px;background:var(--surface-elev);}
+    .safer-rewrite h4{margin:0 0 8px;font-size:15px;}
+    .safer-rewrite .rewrite-note{font-size:12px;color:var(--muted);margin-top:6px;}
+    .safer-rewrite .rewrite-leg{padding:8px;border:1px solid var(--border);border-radius:10px;margin-top:8px;background:var(--bg-soft);}
+    .safer-rewrite .rewrite-leg.changed{border-color:#16a34a66;background:#16a34a14;}
     .analyzer-hero{border:1px solid #f59e0b66;background:linear-gradient(160deg,#78350f 0%,#92400e 46%,#b45309 100%);color:#fffbeb;border-radius:14px;padding:12px;box-shadow:0 12px 24px rgba(120,53,15,.24);}
     .analyzer-hero .title{font-size:17px;font-weight:900;line-height:1.2;}
     .analyzer-hero .copy{margin-top:6px;color:#fef3c7;font-size:13px;}
@@ -1251,6 +1257,7 @@ Murray over 2.5 threes'></textarea>
       <div id='analyzeSummaryHero' data-reveal='2' hidden></div>
       <div id='keyTakeaways' class='takeaways-grid' data-reveal='3' hidden></div>
       <div id='correlationSummary' data-reveal='4' hidden></div>
+      <div id='saferRewrite' data-reveal='4' hidden></div>
       <div id='resultSummary' class='result-summary' data-reveal='2' hidden></div>
       <div id='legProgressStrip' class='leg-progress' data-reveal='5' hidden></div>
       <div id='metaSummary' class='result-meta' data-reveal='6' hidden></div>
@@ -1311,6 +1318,7 @@ Murray over 2.5 threes'></textarea>
     const analyzeSummaryHero=document.getElementById('analyzeSummaryHero');
     const keyTakeaways=document.getElementById('keyTakeaways');
     const correlationSummary=document.getElementById('correlationSummary');
+    const saferRewrite=document.getElementById('saferRewrite');
     const resultSummary=document.getElementById('resultSummary');
     const metaSummary=document.getElementById('metaSummary');
     const legProgressStrip=document.getElementById('legProgressStrip');
@@ -2038,6 +2046,8 @@ Murray over 2.5 threes'></textarea>
       keyTakeaways.innerHTML='';
       correlationSummary.hidden=true;
       correlationSummary.innerHTML='';
+      saferRewrite.hidden=true;
+      saferRewrite.innerHTML='';
       legBreakdownHeader.hidden=true;
       legBreakdownHeader.innerHTML='';
     }
@@ -2222,6 +2232,17 @@ Murray over 2.5 threes'></textarea>
         ?`<div class='correlation-panel'><div class='title'>Same-Game Risk</div><div style='margin-top:6px;font-size:13px;'>${escapeHtml(payload.correlation_note||'Same-game legs may move together.')}</div><div style='margin-top:8px;font-size:12px;font-weight:700;'>${Number(payload.same_game_group_count||0)} same-game group(s) · ${Number(payload.same_game_leg_count||0)} leg(s)</div></div>`
         :'';
       correlationSummary.hidden=!hasCorrelation;
+      const rewriteRows=Array.isArray(payload.rewritten_legs)?payload.rewritten_legs:[];
+      const hasRewrite=rewriteRows.length>0;
+      saferRewrite.innerHTML=hasRewrite
+        ?`<div class='safer-rewrite'>
+            <h4>Rewrite My Slip Safer</h4>
+            <div style='font-size:13px;'>${escapeHtml(payload.original_vs_rewritten_summary||'')}</div>
+            <div class='rewrite-note'>Advisory only — safer rewrite is not a guarantee. Lower risk often means lower payout.</div>
+            ${rewriteRows.map((row)=>`<div class='rewrite-leg ${row.changed?'changed':''}'><div><strong>Original:</strong> ${escapeHtml(row.original_leg||'—')}</div><div><strong>Suggested:</strong> ${escapeHtml(row.suggested_leg||'—')}</div><div style='font-size:12px;color:var(--muted);margin-top:4px;'><strong>Why:</strong> ${escapeHtml(row.reason_for_change||'')}</div></div>`).join('')}
+          </div>`
+        :'';
+      saferRewrite.hidden=!hasRewrite;
       diedHere.innerHTML=`
         <div class='analyzer-hero'>
           <div class='title'>Pre-game advisory: highest-risk point detected</div>
@@ -3135,9 +3156,18 @@ def _process_public_analyze_text(text: str) -> AnalyzeSlipResponse:
             supported_leg_count=0,
             unsupported_leg_count=0,
             advisory_only=True,
+            rewritten_slip_text='',
+            rewritten_legs=[],
+            rewritten_risk_score=0.0,
+            rewritten_risk_label='low',
+            changed_legs_count=0,
+            rewrite_notes=[],
+            original_vs_rewritten_summary='',
         )
     parsed = parse_text(normalized)
-    return analyze_slip_risk(parsed)
+    analysis = analyze_slip_risk(parsed)
+    rewrite = rewrite_slip_safer(parsed, analysis)
+    return analysis.model_copy(update=rewrite)
 
 
 @app.post('/analyze-slip', response_model=AnalyzeSlipResponse)
