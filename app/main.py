@@ -1030,6 +1030,10 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .sold-other-list{padding:0 12px 10px;display:flex;flex-direction:column;gap:8px;}
     .sold-other-item{border-top:1px solid #fecdd533;padding-top:8px;font-size:12px;color:#ffe4e6;}
     .sold-other-item:first-child{border-top:none;padding-top:0;}
+    .closeness-card{border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg-soft);color:var(--text);}
+    .closeness-title{font-size:18px;font-weight:800;line-height:1.2;}
+    .closeness-copy{margin-top:6px;font-size:14px;color:var(--muted);}
+    .closeness-meta{margin-top:10px;display:grid;grid-template-columns:1fr;gap:6px;font-size:13px;}
     .autopsy-card.soft{border:1px solid #854d0e33;background:#fed7aa33;color:#92400e;border-radius:12px;padding:12px;}
     .recent-slip-card{display:flex;justify-content:space-between;align-items:stretch;gap:14px;padding:12px;border:1px solid var(--border);border-radius:14px;background:var(--surface-elev);}
     .recent-slip-main{min-width:0;display:flex;flex-direction:column;gap:6px;}.recent-slip-summary{font-weight:800;font-size:15px;line-height:1.2;}
@@ -1707,6 +1711,29 @@ Murray over 2.5 threes'></textarea>
       </div>`;
     }
 
+    function formatMissLegValue(missLeg){
+      if(!missLeg){return '—';}
+      if(typeof missLeg==='string'){return escapeHtml(missLeg);}
+      const label=missLeg.player_or_team||missLeg.leg||'—';
+      const delta=missLeg.delta_display?` (${escapeHtml(String(missLeg.delta_display))})`:'';
+      return `${escapeHtml(String(label))}${delta}`;
+    }
+
+    function buildParlayCloseness(payload){
+      if(payload.parlay_closeness_score===undefined||payload.parlay_closeness_score===null){
+        return '';
+      }
+      const closenessScore=Math.round(Number(payload.parlay_closeness_score));
+      return `<div class='closeness-card'>
+        <div class='closeness-title'>How close was this parlay?</div>
+        <div class='closeness-copy'>Your parlay was ${closenessScore}% of the way to hitting.</div>
+        <div class='closeness-meta'>
+          <div><strong>Closest miss:</strong> ${formatMissLegValue(payload.closest_miss_leg)}</div>
+          <div><strong>Worst miss:</strong> ${formatMissLegValue(payload.worst_miss_leg)}</div>
+        </div>
+      </div>`;
+    }
+
     function renderResultSummary(payload){
       const counts=countLegResults(payload.legs||[]);
       const firstLoss=(payload.legs||[]).find((item)=>item.result==='loss');
@@ -1729,15 +1756,6 @@ Murray over 2.5 threes'></textarea>
       if(hasStake){chips.push(`<span class='meta-chip'>Stake: $${Number(payload.stake_amount).toFixed(2)}</span>`);}
       if(payload.estimated_payout!==undefined&&payload.estimated_payout!==null){chips.push(`<span class='meta-chip'>Est. payout: $${Number(payload.estimated_payout).toFixed(2)}</span>`);}
       if(hasStake&&payload.payout_message){chips.push(`<span class='meta-chip'>${payload.payout_message}</span>`);}
-      if(payload.parlay_closeness_score!==undefined&&payload.parlay_closeness_score!==null){
-        chips.push(`<span class='meta-chip'>Your parlay was ${Math.round(Number(payload.parlay_closeness_score))}% of the way to hitting</span>`);
-      }
-      if(payload.closest_miss_leg&&payload.closest_miss_leg.player_or_team){
-        chips.push(`<span class='meta-chip'>Closest miss: ${escapeHtml(payload.closest_miss_leg.player_or_team)} (${escapeHtml(payload.closest_miss_leg.delta_display||'')})</span>`);
-      }
-      if(payload.worst_miss_leg&&payload.worst_miss_leg.player_or_team){
-        chips.push(`<span class='meta-chip'>Worst miss: ${escapeHtml(payload.worst_miss_leg.player_or_team)} (${escapeHtml(payload.worst_miss_leg.delta_display||'')})</span>`);
-      }
       const graded=counts.won+counts.lost;
       let secondary='';
       if(counts.lost>0&&counts.review>0){
@@ -1754,8 +1772,14 @@ Murray over 2.5 threes'></textarea>
       metaSummary.hidden=false;
       renderProgressStrip(payload.legs||[]);
       const soldHero=buildSoldLegHero(payload);
+      const closenessBlock=buildParlayCloseness(payload);
       if(soldHero){
-        diedHere.innerHTML=soldHero;
+        diedHere.innerHTML=`${soldHero}${closenessBlock?`<div style='margin-top:10px;'>${closenessBlock}</div>`:''}`;
+        diedHere.hidden=false;
+        return;
+      }
+      if(closenessBlock){
+        diedHere.innerHTML=closenessBlock;
         diedHere.hidden=false;
         return;
       }
