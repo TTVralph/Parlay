@@ -218,6 +218,7 @@ class SettlementExplanation(BaseModel):
 class GradeResponse(BaseModel):
     overall: Literal["cashed", "lost", "pending", "needs_review"]
     legs: list[GradedLeg]
+    grading_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class AllSportsGame(BaseModel):

@@ -11,6 +11,15 @@ from app.services.scoreboard_provider import ESPNScoreboardProvider
 
 
 @dataclass
+class SnapshotDiagnostics:
+    available_player_ids: list[str] = field(default_factory=list)
+    available_stat_keys: list[str] = field(default_factory=list)
+    missing_player_stats: list[str] = field(default_factory=list)
+    missing_stat_keys: list[str] = field(default_factory=list)
+    snapshot_build_sources: dict[str, bool] = field(default_factory=dict)
+
+
+@dataclass
 class EventSnapshot:
     event_id: str
     sport: str | None = None
@@ -25,6 +34,33 @@ class EventSnapshot:
     normalized_player_stats: dict[str, dict[str, Any]] = field(default_factory=dict)
     normalized_team_map: dict[str, dict[str, Any]] = field(default_factory=dict)
     normalized_play_by_play: list[PlayByPlayEvent] | None = None
+    diagnostics: SnapshotDiagnostics = field(default_factory=SnapshotDiagnostics)
+
+    def get_stat_coverage(self) -> dict[str, Any]:
+        stat_keys: set[str] = set()
+        missing_stats: dict[str, list[str]] = {}
+        for entry in self.normalized_player_stats.values():
+            player_name = str(entry.get('display_name') or entry.get('player_id') or 'unknown')
+            stats = entry.get('stats') or {}
+            stat_keys.update(str(key) for key in stats.keys())
+            if not stats:
+                missing_stats[player_name] = []
+
+        sources = self.diagnostics.snapshot_build_sources
+        snapshot_source = 'summary'
+        if sources.get('summary') and sources.get('boxscore') and sources.get('pbp'):
+            snapshot_source = 'summary+boxscore+pbp'
+        elif sources.get('summary') and sources.get('boxscore'):
+            snapshot_source = 'summary+boxscore'
+        elif sources.get('pbp'):
+            snapshot_source = 'pbp'
+
+        return {
+            'players': len(self.normalized_player_stats),
+            'stat_keys': sorted(stat_keys),
+            'missing_stats': missing_stats,
+            'snapshot_source': snapshot_source,
+        }
 
 
 class EventSnapshotService:
@@ -159,6 +195,7 @@ class EventSnapshotService:
         if existing is not None:
             if include_play_by_play and existing.normalized_play_by_play is None:
                 existing.normalized_play_by_play = self._play_by_play_provider.get_normalized_events(normalized_event_id)
+                existing.diagnostics.snapshot_build_sources['pbp'] = bool(existing.normalized_play_by_play)
             return existing
 
         summary_normalized = self._gamecast_provider.fetch_normalized(normalized_event_id)
@@ -185,9 +222,39 @@ class EventSnapshotService:
             normalized_player_stats=player_stats,
             normalized_team_map=team_map,
             normalized_play_by_play=None,
+            diagnostics=SnapshotDiagnostics(
+                available_player_ids=sorted(
+                    {
+                        str(entry.get('player_id')).strip()
+                        for entry in player_stats.values()
+                        if str(entry.get('player_id') or '').strip()
+                    }
+                ),
+                available_stat_keys=sorted(
+                    {
+                        str(stat_key)
+                        for entry in player_stats.values()
+                        for stat_key in (entry.get('stats') or {}).keys()
+                    }
+                ),
+                missing_player_stats=sorted(
+                    [
+                        str(entry.get('display_name') or key)
+                        for key, entry in player_stats.items()
+                        if not (entry.get('stats') or {})
+                    ]
+                ),
+                missing_stat_keys=[],
+                snapshot_build_sources={
+                    'summary': summary_raw is not None,
+                    'boxscore': bool(((summary_raw or {}).get('boxscore') or {}).get('players')),
+                    'pbp': False,
+                },
+            ),
         )
         if include_play_by_play:
             snapshot.normalized_play_by_play = self._play_by_play_provider.get_normalized_events(normalized_event_id)
+            snapshot.diagnostics.snapshot_build_sources['pbp'] = bool(snapshot.normalized_play_by_play)
 
         self._snapshots[normalized_event_id] = snapshot
         return snapshot

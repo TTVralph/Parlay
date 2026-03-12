@@ -206,6 +206,10 @@ def test_settle_leg_prefers_snapshot_for_migrated_single_stat_markets(
     assert provider.player_result_calls == 0
     assert graded.settlement_explanation is not None
     assert graded.settlement_diagnostics.get('stat_source') == 'snapshot'
+    snapshot_diag = graded.settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
+    assert snapshot_diag.get('used_snapshot') is True
+    assert snapshot_diag.get('provider_fallback_used') is False
+    assert snapshot_diag.get('requested_stat_key') == snapshot_stat_key
 
 
 @pytest.mark.parametrize(
@@ -254,3 +258,7 @@ def test_settle_leg_snapshot_falls_back_to_provider_when_single_stat_missing(
     assert provider.player_result_calls > 0
     assert graded.settlement_explanation is not None
     assert graded.settlement_diagnostics.get('stat_source') == 'provider'
+    snapshot_diag = graded.settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
+    assert snapshot_diag.get('used_snapshot') is False
+    assert snapshot_diag.get('provider_fallback_used') is True
+    assert snapshot_diag.get('missing_snapshot_stat_key') is not None
