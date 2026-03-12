@@ -349,6 +349,36 @@ class CheckJobStatusResponse(BaseModel):
     error: Optional[str] = None
 
 
+class AnalyzeLegRisk(BaseModel):
+    leg_id: Optional[str] = None
+    raw_leg_text: str
+    market_type: str
+    subject_name: str
+    line: Optional[float] = None
+    estimated_baseline: Optional[float] = None
+    risk_score: float
+    risk_label: Literal['low', 'medium', 'high']
+    explanation: str
+    confidence: float
+    advisory_reason_codes: list[str] = Field(default_factory=list)
+    supported_market: bool = True
+    offered_american_odds: Optional[int] = None
+
+
+class AnalyzeSlipResponse(BaseModel):
+    ok: bool
+    message: str
+    slip_risk_score: float
+    slip_risk_label: Literal['low', 'medium', 'high']
+    weakest_leg: Optional[AnalyzeLegRisk] = None
+    safest_leg: Optional[AnalyzeLegRisk] = None
+    likely_seller: Optional[AnalyzeLegRisk] = None
+    leg_risk_scores: list[AnalyzeLegRisk] = Field(default_factory=list)
+    supported_leg_count: int = 0
+    unsupported_leg_count: int = 0
+    advisory_only: bool = True
+
+
 class TweetIngestRequest(BaseModel):
     tweet_id: Optional[str] = None
     username: Optional[str] = None

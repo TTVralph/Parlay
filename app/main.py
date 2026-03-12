@@ -26,6 +26,7 @@ from .db import models as _db_models  # noqa: F401
 from .db.base import Base
 from .db.session import SessionLocal, engine, get_db, run_lightweight_migrations
 from .grader import grade_text, settle_leg
+from .services.slip_risk_analyzer import analyze_slip_risk
 from .ingestion import dump_source_payload, normalize_tweet_payload
 from .models import (
     OddsMatchRequest,
@@ -45,6 +46,7 @@ from .models import (
     GradedLeg,
     CheckJobCreateResponse,
     CheckJobStatusResponse,
+    AnalyzeSlipResponse,
     IngestGradeResponse,
     OCRExtractResponse,
     ScreenshotParseResponse,
@@ -1048,6 +1050,12 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .mode-description strong{color:var(--text);}
     .mode-hidden{display:none !important;}
     .mode-muted{opacity:.5;}
+    .advisory-banner{margin-top:10px;padding:12px;border-radius:12px;border:1px solid #facc15;background:linear-gradient(180deg,#fef9c3,#fef3c7);color:#92400e;font-size:13px;font-weight:700;}
+    .risk-card{padding:10px;border:1px solid var(--border);border-radius:12px;background:var(--surface-elev);}
+    .risk-chip{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;}
+    .risk-chip.low{background:#dcfce7;color:#166534;}
+    .risk-chip.medium{background:#fef3c7;color:#92400e;}
+    .risk-chip.high{background:#fee2e2;color:#b91c1c;}
     table{width:100%;border-collapse:collapse;} th,td{padding:8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;}
     a{color:var(--primary);} code{background:var(--bg-soft);padding:2px 6px;border-radius:6px;color:var(--primary-2);} .loading-skeleton{display:none;grid-template-columns:1fr;gap:8px;}
     .loading-skeleton.show{display:grid;} .loading-skeleton div{height:14px;border-radius:8px;background:linear-gradient(90deg,var(--bg-soft),var(--surface),var(--bg-soft));background-size:200% 100%;animation:pulse 1.2s infinite;}
@@ -1131,7 +1139,7 @@ Murray over 2.5 threes'></textarea>
       <div id='gradingSkeleton' class='loading-skeleton'><div></div><div></div><div></div></div>
       <details><summary>Show technical details</summary><div id='debugOut' style='margin:8px 0 12px;color:var(--muted);'></div></details>
       <table>
-        <thead><tr><th>Leg</th><th>Result</th><th>Matched event</th></tr></thead>
+        <thead><tr><th id='colLegHeader'>Leg</th><th id='colResultHeader'>Result</th><th id='colThirdHeader'>Matched event</th></tr></thead>
         <tbody id='legsBody'></tbody>
       </table>
       <div id='summaryWrap'>
@@ -1186,6 +1194,9 @@ Murray over 2.5 threes'></textarea>
     const diedHere=document.getElementById('diedHere');
     const debugOut=document.getElementById('debugOut');
     const legsBody=document.getElementById('legsBody');
+    const colLegHeader=document.getElementById('colLegHeader');
+    const colResultHeader=document.getElementById('colResultHeader');
+    const colThirdHeader=document.getElementById('colThirdHeader');
     const gradingSkeleton=document.getElementById('gradingSkeleton');
     const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
     const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
@@ -1220,8 +1231,14 @@ Murray over 2.5 threes'></textarea>
       searchHistorical.closest('label').classList.toggle('mode-hidden',!settleSelected);
       if(settleSelected){
         modeDescription.innerHTML='<strong>Settle Slip:</strong> Post-game grading for settled bets with per-leg outcomes and explanations.';
+        colLegHeader.textContent='Leg';
+        colResultHeader.textContent='Result';
+        colThirdHeader.textContent='Matched event';
       }else{
         modeDescription.innerHTML='<strong>Analyze Slip:</strong> Before you bet, get a pre-game risk read and weakest-leg advisory. This mode is advisory only.';
+        colLegHeader.textContent='Leg';
+        colResultHeader.textContent='Risk';
+        colThirdHeader.textContent='Advisory';
       }
     }
 
@@ -1954,6 +1971,54 @@ Murray over 2.5 threes'></textarea>
       };
     }
 
+    function renderAnalyzeResult(payload){
+      const slipLabel=String(payload.slip_risk_label||'medium').toLowerCase();
+      const score=Number(payload.slip_risk_score||0).toFixed(1);
+      overall.className=slipLabel==='high'?'loss':(slipLabel==='low'?'win':'review');
+      overall.textContent=`🧠 Slip risk: ${slipLabel.toUpperCase()} (${score}/10)`;
+
+      const weakest=payload.weakest_leg;
+      const safest=payload.safest_leg;
+      const seller=payload.likely_seller;
+      resultSummary.innerHTML=`
+        <span class='result-chip'>Weakest leg: ${escapeHtml(weakest?.subject_name||weakest?.raw_leg_text||'—')}</span>
+        <span class='result-chip'>Safest leg: ${escapeHtml(safest?.subject_name||safest?.raw_leg_text||'—')}</span>
+        <span class='result-chip'>Most likely seller: ${escapeHtml(seller?.subject_name||seller?.raw_leg_text||'—')}</span>
+      `;
+      resultSummary.hidden=false;
+
+      metaSummary.innerHTML=`
+        <span class='meta-chip'>Supported legs: ${Number(payload.supported_leg_count||0)}</span>
+        <span class='meta-chip'>Unsupported legs: ${Number(payload.unsupported_leg_count||0)}</span>
+        <span class='meta-chip'>Advisory only — not a guarantee</span>
+      `;
+      metaSummary.hidden=false;
+      legProgressStrip.hidden=true;
+      diedHere.innerHTML="<div class='advisory-banner'>Advisory only — not a guarantee. Use this pre-game read as guidance, not settlement.</div>";
+      diedHere.hidden=false;
+      payoutOut.textContent='';
+      debugOut.innerHTML='';
+
+      legsBody.innerHTML='';
+      for(const item of (payload.leg_risk_scores||[])){
+        const tr=document.createElement('tr');
+        const legCell=document.createElement('td');
+        const riskCell=document.createElement('td');
+        const advisoryCell=document.createElement('td');
+
+        legCell.innerHTML=`<div style="font-weight:800;">${escapeHtml(item.raw_leg_text||'—')}</div><div style="margin-top:4px;font-size:12px;color:var(--muted);">${escapeHtml(item.market_type||'unknown')}</div>`;
+        riskCell.innerHTML=`<span class='risk-chip ${escapeHtml((item.risk_label||'medium').toLowerCase())}'>${escapeHtml(item.risk_label||'medium')}</span><div style='margin-top:6px;font-size:12px;color:var(--muted);'>Score: ${Number(item.risk_score||0).toFixed(1)}/10 · Confidence: ${Number(item.confidence||0).toFixed(2)}</div>`;
+        const reasons=Array.isArray(item.advisory_reason_codes)&&item.advisory_reason_codes.length?`<div style='margin-top:6px;font-size:11px;color:var(--muted);'>${item.advisory_reason_codes.map((code)=>escapeHtml(code)).join(' · ')}</div>`:'';
+        advisoryCell.innerHTML=`<div class='risk-card'>${escapeHtml(item.explanation||'')}</div>${reasons}`;
+
+        tr.append(legCell,riskCell,advisoryCell);
+        legsBody.appendChild(tr);
+      }
+      wrap.hidden=false;
+      msg.textContent='Analyze Slip complete. Advisory only — not a guarantee.';
+    }
+
+
     function resetRenderedSlipResult(){
       legsBody.innerHTML='';
       debugOut.innerHTML='';
@@ -1991,7 +2056,21 @@ Murray over 2.5 threes'></textarea>
           msg.textContent=emptyTextMessage;
           return;
         }
-        msg.textContent='Analyze Slip mode is set for pre-game advisory insights. Risk scoring and weakest-leg analysis will appear here soon.';
+        btn.disabled=true;
+        btn.innerHTML="<span class='spinner'></span>Analyzing your slip...";
+        msg.textContent='Running deterministic pre-game risk heuristics...';
+        try{
+          const res=await fetch('/analyze-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+          const data=await res.json();
+          if(!res.ok){msg.textContent=data.detail||data.message||'Could not analyze this slip right now.';return;}
+          renderAnalyzeResult(data);
+        }catch(err){
+          console.error('Analyze Slip request failed:', err);
+          msg.textContent='Could not analyze this slip right now.';
+        }finally{
+          btn.disabled=false;
+          btn.textContent='Analyze Slip';
+        }
         return;
       }
       if(!text&&!file){
@@ -2784,6 +2863,32 @@ def _run_public_check_job(job_id: str, text: str, stake_amount: float | None = N
             row['result'] = None
             row['error'] = str(exc)
             row['completed_at'] = time.time()
+
+
+def _process_public_analyze_text(text: str) -> AnalyzeSlipResponse:
+    normalized = text.strip()
+    if not normalized:
+        return AnalyzeSlipResponse(
+            ok=False,
+            message='Paste at least one leg first.',
+            slip_risk_score=0.0,
+            slip_risk_label='low',
+            weakest_leg=None,
+            safest_leg=None,
+            likely_seller=None,
+            leg_risk_scores=[],
+            supported_leg_count=0,
+            unsupported_leg_count=0,
+            advisory_only=True,
+        )
+    parsed = parse_text(normalized)
+    return analyze_slip_risk(parsed)
+
+
+@app.post('/analyze-slip', response_model=AnalyzeSlipResponse)
+def public_analyze_slip(request: Request, response: Response, payload: dict = Body(...)) -> AnalyzeSlipResponse:
+    _enforce_public_check_rate_limit(request, response, 'analyze-slip')
+    return _process_public_analyze_text(str(payload.get('text', '')))
 
 
 @app.post('/check')
