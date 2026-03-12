@@ -23,6 +23,41 @@ def test_check_page_has_loading_state_and_friendly_layout():
     assert 'No valid betting legs detected.' in html
 
 
+def test_check_page_renders_mode_toggle_and_settle_default() -> None:
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "id='modeSettleBtn'" in html
+    assert "id='modeAnalyzeBtn'" in html
+    assert 'Settle Slip' in html
+    assert 'Analyze Slip' in html
+    assert "const modeSettle='settle';" in html
+    assert "const modeAnalyze='analyze';" in html
+    assert "let activeSlipMode=modeSettle;" in html
+
+
+def test_check_page_updates_cta_and_hides_settled_only_fields_in_analyze_mode() -> None:
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "btn.textContent=settleSelected?'Check Slip':'Analyze Slip';" in html
+    assert "uploadWrap.classList.toggle('mode-hidden',!settleSelected);" in html
+    assert "searchHistorical.closest('label').classList.toggle('mode-hidden',!settleSelected);" in html
+    assert 'Before you bet, get a pre-game risk read and weakest-leg advisory.' in html
+
+
+def test_analyze_mode_submit_path_does_not_call_grading_logic() -> None:
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert 'if(activeSlipMode===modeAnalyze){' in html
+    assert 'Analyze Slip mode is set for pre-game advisory insights.' in html
+    assert "btn.textContent=activeSlipMode===modeAnalyze?'Analyze Slip':'Check Slip';" in html
+
+
 def test_check_slip_returns_graded_legs_with_event_and_overall():
     client = TestClient(app)
     resp = client.post('/check-slip', json={'text': 'Jokic 25+ pts\nDenver ML\nMurray over 1.5 threes'})
