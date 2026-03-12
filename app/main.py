@@ -2101,7 +2101,14 @@ Murray over 2.5 threes'></textarea>
         const advisoryCell=document.createElement('td');
 
         legCell.innerHTML=`<div style="font-weight:800;">${escapeHtml(item.raw_leg_text||'—')}</div><div style="margin-top:4px;font-size:12px;color:var(--muted);">${escapeHtml(item.market_type||'unknown')}</div>`;
-        riskCell.innerHTML=`<span class='risk-chip ${escapeHtml((item.risk_label||'medium').toLowerCase())}'>${escapeHtml(item.risk_label||'medium')}</span><div style='margin-top:6px;font-size:12px;color:var(--muted);'>Score: ${Number(item.risk_score||0).toFixed(1)}/10 · Confidence: ${Number(item.confidence||0).toFixed(2)}</div>`;
+        const lineLabel=String(item.line_value_label||'neutral').toLowerCase();
+        const lineBadge=lineLabel==='good'
+          ?"<div style='margin-top:6px;font-size:12px;font-weight:700;color:#0f8a3e;'>Good Line ✅</div>"
+          :(lineLabel==='bad'
+            ?"<div style='margin-top:6px;font-size:12px;font-weight:700;color:#b3261e;'>Bad Line ❌</div>"
+            :"<div style='margin-top:6px;font-size:12px;color:var(--muted);'>Line Value: Neutral</div>");
+        const marketLineText=typeof item.market_line==='number' ? ` · Market: ${Number(item.market_line).toFixed(1)}` : '';
+        riskCell.innerHTML=`<span class='risk-chip ${escapeHtml((item.risk_label||'medium').toLowerCase())}'>${escapeHtml(item.risk_label||'medium')}</span><div style='margin-top:6px;font-size:12px;color:var(--muted);'>Score: ${Number(item.risk_score||0).toFixed(1)}/10 · Confidence: ${Number(item.confidence||0).toFixed(2)}${marketLineText}</div>${lineBadge}`;
         const reasons=Array.isArray(item.advisory_reason_codes)&&item.advisory_reason_codes.length?`<div style='margin-top:6px;font-size:11px;color:var(--muted);'>${item.advisory_reason_codes.map((code)=>escapeHtml(code)).join(' · ')}</div>`:'';
         advisoryCell.innerHTML=`<div class='risk-card'>${escapeHtml(item.explanation||'')}</div>${reasons}`;
 

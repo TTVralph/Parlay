@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
+from .line_value_analyzer import SUPPORTED_PROP_MARKETS, analyze_line_value
 from ..models import AnalyzeLegRisk, AnalyzeSlipResponse, Leg
 
 SUPPORTED_MARKETS = {
@@ -179,9 +180,25 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
 
     baseline_text = f'{baseline:.1f}' if baseline is not None else 'n/a'
     line_text = f'{leg.line:.1f}' if leg.line is not None else 'n/a'
+    line_value = analyze_line_value(leg)
+    if leg.market_type in SUPPORTED_PROP_MARKETS and line_value.market_average_line is None:
+        reason_codes.append('line_value_missing_market_data')
+
+    line_value_summary = ''
+    if line_value.market_average_line is not None:
+        diff_text = f'{line_value.line_difference:+.1f}' if line_value.line_difference is not None else 'n/a'
+        line_value_summary = (
+            f' Market avg {line_value.market_average_line:.1f}; '
+            f'line edge {line_value.line_value_label} '
+            f'({diff_text} vs market).'
+        )
+    elif leg.market_type in SUPPORTED_PROP_MARKETS:
+        line_value_summary = ' Market comparison unavailable; line value marked neutral.'
+
     explanation = (
         f"{subject}: {market_type.replace('_', ' ')} line {line_text} vs baseline {baseline_text}; "
         f"risk is {risk_label} from line pressure, price context, and market volatility."
+        f"{line_value_summary}"
     )
 
     return AnalyzeLegRisk(
@@ -198,6 +215,10 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
         advisory_reason_codes=sorted(set(reason_codes)),
         supported_market=supported,
         offered_american_odds=leg.american_odds,
+        market_line=line_value.market_average_line,
+        line_difference=line_value.line_difference,
+        line_value_score=line_value.line_value_score,
+        line_value_label=line_value.line_value_label,
     )
 
 

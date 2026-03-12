@@ -19,6 +19,11 @@ def test_analyze_slip_response_shape() -> None:
     assert isinstance(body['trap_score'], float)
     assert isinstance(body['trap_reason_codes'], list)
     assert isinstance(body['leg_risk_scores'], list)
+    first_leg = body['leg_risk_scores'][0]
+    assert 'market_line' in first_leg
+    assert 'line_difference' in first_leg
+    assert 'line_value_score' in first_leg
+    assert first_leg['line_value_label'] in {'good', 'neutral', 'bad'}
 
 
 def test_analyze_mode_does_not_change_check_slip_shape() -> None:
@@ -42,3 +47,17 @@ def test_unsupported_markets_visible_in_analyze_endpoint() -> None:
     unsupported = [leg for leg in body['leg_risk_scores'] if not leg['supported_market']]
     assert len(unsupported) == 1
     assert 'unsupported_market' in unsupported[0]['advisory_reason_codes']
+
+
+def test_analyze_supported_prop_handles_missing_market_data_gracefully() -> None:
+    client = TestClient(app)
+    res = client.post('/analyze-slip', json={'text': 'Jokic over 24.5 points'})
+    assert res.status_code == 200
+    body = res.json()
+    leg = body['leg_risk_scores'][0]
+    assert leg['market_type'] == 'player_points'
+    assert leg['market_line'] is None
+    assert leg['line_difference'] is None
+    assert leg['line_value_score'] is None
+    assert leg['line_value_label'] == 'neutral'
+    assert 'line_value_missing_market_data' in leg['advisory_reason_codes']

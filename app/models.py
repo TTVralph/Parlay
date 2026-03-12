@@ -363,6 +363,10 @@ class AnalyzeLegRisk(BaseModel):
     advisory_reason_codes: list[str] = Field(default_factory=list)
     supported_market: bool = True
     offered_american_odds: Optional[int] = None
+    market_line: Optional[float] = None
+    line_difference: Optional[float] = None
+    line_value_score: Optional[float] = None
+    line_value_label: Literal['good', 'neutral', 'bad'] = 'neutral'
 
 
 class AnalyzeSlipResponse(BaseModel):
