@@ -5,6 +5,7 @@ from datetime import date, datetime
 from typing import Any
 
 from app.services.daily_event_manifest import DailyEventManifestService
+from app.services.debug_observability import DebugObservabilityService, get_debug_observability_service
 from app.services.event_snapshot import EventSnapshotService
 
 
@@ -30,10 +31,12 @@ class SnapshotHydrator:
         daily_manifest_service: DailyEventManifestService | None = None,
         event_snapshot_service: EventSnapshotService | None = None,
         hydrate_live_events: bool = True,
+        observability_service: DebugObservabilityService | None = None,
     ) -> None:
         self._daily_manifest_service = daily_manifest_service or DailyEventManifestService()
         self._event_snapshot_service = event_snapshot_service or EventSnapshotService()
         self._hydrate_live_events = hydrate_live_events
+        self._observability_service = observability_service or get_debug_observability_service()
 
     @staticmethod
     def _status_bucket(status: str | None) -> str:
@@ -78,7 +81,9 @@ class SnapshotHydrator:
             event_date = event.get('date') or manifest.get('date')
             self._hydrate_one(event_id=event_id, event_date=event_date, summary=summary)
 
-        return summary.to_dict()
+        payload = summary.to_dict()
+        self._observability_service.record_hydration_summary(payload)
+        return payload
 
     def hydrate_events(self, event_ids: list[str]) -> dict[str, int]:
         summary = HydrationSummary()
@@ -89,7 +94,9 @@ class SnapshotHydrator:
                 summary.skipped_stale_or_unneeded += 1
                 continue
             self._hydrate_one(event_id=event_id, event_date=None, summary=summary)
-        return summary.to_dict()
+        payload = summary.to_dict()
+        self._observability_service.record_hydration_summary(payload)
+        return payload
 
     def _hydrate_one(self, *, event_id: str, event_date: str | None, summary: HydrationSummary) -> None:
         cached_before = self._event_snapshot_service._snapshots.get(event_id)  # noqa: SLF001

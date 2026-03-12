@@ -230,6 +230,7 @@ from .services.serializers import (
     ticket_to_response,
     watched_account_to_response,
 )
+from .services.debug_observability import debug_observability_enabled, get_debug_observability_service
 from .x_client import get_x_client
 from .services.vision_parser import OpenAIVisionSlipParser
 
@@ -237,6 +238,12 @@ app = FastAPI(title='Parlay Cash Checker MVP', version='1.9.0')
 logger = logging.getLogger(__name__)
 slip_parser_service = SlipParserService()
 _VISION_SANITY_MODELS = {'gpt-4o-mini', 'gpt-4.1-mini'}
+
+
+def _grade_text_with_observability(*args, **kwargs) -> GradeResponse:
+    result = grade_text(*args, **kwargs)
+    get_debug_observability_service().record_grading_diagnostics(result.grading_diagnostics)
+    return result
 
 
 def _screenshot_parsed_to_grading_text(parsed_screenshot) -> str:
@@ -2281,7 +2288,7 @@ def _process_public_check_text(
         if selected_player_by_leg_id:
             grade_kwargs['selected_player_by_leg_id'] = selected_player_by_leg_id
         grading_text = '\n'.join(parsed_legs)
-        graded = grade_text(grading_text, **grade_kwargs)
+        graded = _grade_text_with_observability(grading_text, **grade_kwargs)
     except Exception:
         return {
             'ok': False,
@@ -3247,7 +3254,7 @@ def grade_endpoint(req: GradeRequest) -> GradeResponse:
         parsed_bet_date = date.fromisoformat(req.bet_date) if req.bet_date else None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail='bet_date must be YYYY-MM-DD') from exc
-    return grade_text(req.text, posted_at=req.posted_at, bet_date=parsed_bet_date)
+    return _grade_text_with_observability(req.text, posted_at=req.posted_at, bet_date=parsed_bet_date)
 
 
 @app.post('/tickets/grade-and-save', response_model=TicketDetailResponse)
@@ -3256,7 +3263,7 @@ def grade_and_save_endpoint(req: GradeRequest, db: Session = Depends(get_db)) ->
         parsed_bet_date = date.fromisoformat(req.bet_date) if req.bet_date else None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail='bet_date must be YYYY-MM-DD') from exc
-    result = grade_text(req.text, posted_at=req.posted_at, bet_date=parsed_bet_date)
+    result = _grade_text_with_observability(req.text, posted_at=req.posted_at, bet_date=parsed_bet_date)
     ticket = save_graded_ticket(db, req.text, result, posted_at=req.posted_at)
     enqueue_review_if_needed(db, ticket, result)
     ticket = get_ticket(db, ticket.id)
@@ -3337,7 +3344,7 @@ def manual_regrade_endpoint(ticket_id: str, req: ManualTicketRegradeRequest, db:
 def ingest_tweet_grade(req: TweetIngestRequest) -> IngestGradeResponse:
     normalized = normalize_tweet_payload(req.model_dump(exclude_none=True))
     financials = extract_financials(normalized['raw_text'])
-    result = grade_text(normalized['cleaned_text'], posted_at=req.posted_at)
+    result = _grade_text_with_observability(normalized['cleaned_text'], posted_at=req.posted_at)
     return IngestGradeResponse(
         source_type='tweet',
         source_ref=normalized['source_ref'],
@@ -3357,7 +3364,7 @@ def ingest_tweet_grade(req: TweetIngestRequest) -> IngestGradeResponse:
 def ingest_tweet_grade_and_save(req: TweetIngestRequest, db: Session = Depends(get_db)) -> TicketDetailResponse:
     normalized = normalize_tweet_payload(req.model_dump(exclude_none=True))
     financials = extract_financials(normalized['raw_text'])
-    result = grade_text(normalized['cleaned_text'], posted_at=req.posted_at)
+    result = _grade_text_with_observability(normalized['cleaned_text'], posted_at=req.posted_at)
     ticket = save_graded_ticket(
         db,
         normalized['cleaned_text'],
@@ -3388,7 +3395,7 @@ def ingest_x_fetch_and_grade(req: XFetchRequest) -> IngestGradeResponse:
     normalized = normalize_tweet_payload(payload)
     effective_posted_at = payload.get('posted_at')
     financials = extract_financials(normalized['raw_text'])
-    result = grade_text(normalized['cleaned_text'], posted_at=effective_posted_at)
+    result = _grade_text_with_observability(normalized['cleaned_text'], posted_at=effective_posted_at)
     return IngestGradeResponse(
         source_type='tweet',
         source_ref=normalized['source_ref'],
@@ -3414,7 +3421,7 @@ def ingest_x_fetch_grade_and_save(req: XFetchRequest, db: Session = Depends(get_
     normalized = normalize_tweet_payload(payload)
     effective_posted_at = payload.get('posted_at')
     financials = extract_financials(normalized['raw_text'])
-    result = grade_text(normalized['cleaned_text'], posted_at=effective_posted_at)
+    result = _grade_text_with_observability(normalized['cleaned_text'], posted_at=effective_posted_at)
     ticket = save_graded_ticket(
         db,
         normalized['cleaned_text'],
@@ -3504,6 +3511,13 @@ async def debug_vision_sanity(
     )
 
 
+@app.get('/admin/debug/snapshots')
+def admin_debug_snapshots_endpoint(_: str = Depends(require_admin)) -> dict[str, object]:
+    if not debug_observability_enabled():
+        raise HTTPException(status_code=404, detail='Debug observability endpoint disabled')
+    return get_debug_observability_service().get_observability_snapshot()
+
+
 @app.post('/ingest/screenshot/grade', response_model=IngestGradeResponse)
 async def ingest_screenshot_grade(
     request: Request,
@@ -3527,7 +3541,7 @@ async def ingest_screenshot_grade(
     parsed_bet_date = date.fromisoformat(bet_date) if bet_date else None
     screenshot_default_date = date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None
     grading_text = grading_text or parsed_slip.cleaned_text
-    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date, screenshot_default_date=screenshot_default_date, code_path='screenshot_parse_grading')
+    result = _grade_text_with_observability(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date, screenshot_default_date=screenshot_default_date, code_path='screenshot_parse_grading')
     return IngestGradeResponse(
         source_type='screenshot',
         source_ref=file.filename or 'upload',
@@ -3565,7 +3579,7 @@ async def ingest_screenshot_grade_and_save(
     parsed_bet_date = date.fromisoformat(bet_date) if bet_date else None
     screenshot_default_date = date.fromisoformat(parsed_screenshot.detected_bet_date) if parsed_screenshot.detected_bet_date else None
     grading_text = grading_text or parsed_slip.cleaned_text
-    result = grade_text(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date, screenshot_default_date=screenshot_default_date, code_path='saved_screenshot_grading')
+    result = _grade_text_with_observability(grading_text, posted_at=parsed_posted_at, bet_date=parsed_bet_date, screenshot_default_date=screenshot_default_date, code_path='saved_screenshot_grading')
     ticket = save_graded_ticket(
         db,
         grading_text,
