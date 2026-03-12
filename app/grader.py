@@ -370,6 +370,94 @@ def _event_status(provider: ResultsProvider, event_id: str | None) -> str | None
 
 
 
+def _is_final_event_status(status: str | None) -> bool:
+    return str(status or '').strip().lower() in {'final', 'complete', 'completed', 'closed', 'settled', 'post'}
+
+
+def _to_int_score(value: object) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
+
+
+def _normalized_team_key(value: str | None) -> str:
+    return ''.join(ch for ch in str(value or '').lower() if ch.isalnum())
+
+
+def _snapshot_team_side(event_snapshot: EventSnapshot, team: str | None) -> str | None:
+    if not team:
+        return None
+    normalized = _normalized_team_key(team)
+    if not normalized:
+        return None
+
+    def _candidates(team_obj: dict[str, object]) -> set[str]:
+        return {
+            _normalized_team_key(str(team_obj.get('id') or '')),
+            _normalized_team_key(str(team_obj.get('abbr') or '')),
+            _normalized_team_key(str(team_obj.get('name') or '')),
+        }
+
+    home_candidates = _candidates(event_snapshot.home_team or {})
+    away_candidates = _candidates(event_snapshot.away_team or {})
+    for key, team_obj in (event_snapshot.normalized_team_map or {}).items():
+        team_side = None
+        key_norm = _normalized_team_key(str(key))
+        obj_candidates = _candidates(team_obj)
+        if key_norm in home_candidates or obj_candidates & home_candidates:
+            team_side = 'home'
+        elif key_norm in away_candidates or obj_candidates & away_candidates:
+            team_side = 'away'
+        if team_side and normalized in ({key_norm} | obj_candidates):
+            return team_side
+
+    if normalized in home_candidates:
+        return 'home'
+    if normalized in away_candidates:
+        return 'away'
+    return None
+
+
+def _snapshot_team_result_payload(event_snapshot: EventSnapshot) -> dict[str, object]:
+    result = dict(event_snapshot.normalized_event_result or {})
+    event_status = str(result.get('event_status') or event_snapshot.event_status or '').strip() or None
+    home_score = result.get('home_score')
+    away_score = result.get('away_score')
+    if not isinstance(home_score, int):
+        home_score = _to_int_score((event_snapshot.home_team or {}).get('score'))
+    if not isinstance(away_score, int):
+        away_score = _to_int_score((event_snapshot.away_team or {}).get('score'))
+    margin = result.get('margin')
+    if not isinstance(margin, int) and isinstance(home_score, int) and isinstance(away_score, int):
+        margin = home_score - away_score
+    combined_total = result.get('combined_total')
+    if not isinstance(combined_total, int) and isinstance(home_score, int) and isinstance(away_score, int):
+        combined_total = home_score + away_score
+    winner = result.get('winner')
+    if winner not in {'home', 'away', 'push'} and isinstance(margin, int):
+        if margin > 0:
+            winner = 'home'
+        elif margin < 0:
+            winner = 'away'
+        else:
+            winner = 'push'
+    return {
+        'event_status': event_status,
+        'is_final': bool(result.get('is_final')) if result.get('is_final') is not None else _is_final_event_status(event_status),
+        'home_score': home_score,
+        'away_score': away_score,
+        'margin': margin,
+        'combined_total': combined_total,
+        'winner': winner,
+    }
+
+
 def _extract_candidate_count_from_notes(notes: list[str], key: str) -> int | None:
     prefix = f'diagnostic: {key}='
     for note in notes:
@@ -413,6 +501,10 @@ def _default_settlement_diagnostics(leg: Leg) -> dict[str, object]:
             'missing_snapshot_stat_key': None,
             'missing_snapshot_stat_keys': [],
             'snapshot_coverage': None,
+            'event_status_used': None,
+            'team_snapshot_fields_used': [],
+            'missing_snapshot_event_fields': [],
+            'settlement_path': 'provider',
         },
     }
 
@@ -718,6 +810,7 @@ def settle_leg(
         )
 
     if leg.market_type in {'moneyline', 'spread', 'game_total'}:
+        snapshot_diag = settlement_diagnostics.get('snapshot_stat_diagnostics')
         team_key = leg.team
         lookup_team = team_key
         if leg.market_type == 'game_total' and not lookup_team:
@@ -727,6 +820,105 @@ def settle_leg(
                 lookup_team = home
         if not lookup_team:
             return explained(settlement='unmatched', reason='No team/event context identified', reason_code=reason_codes.MISSING_SETTLEMENT_INPUTS, reason_message='No team/event context identified', explanation_reason='no valid same-team game found')
+
+        snapshot_settlement = None
+        if isinstance(snapshot_diag, dict):
+            snapshot_diag['requested_stat_key'] = leg.market_type
+            snapshot_diag['player_id_resolved'] = False
+            snapshot_diag['player_snapshot_found'] = False
+            snapshot_diag['player_match_result'] = 'not_applicable_team_market'
+
+        if event_snapshot is not None and isinstance(snapshot_diag, dict):
+            payload = _snapshot_team_result_payload(event_snapshot)
+            snapshot_diag['event_status_used'] = payload.get('event_status')
+            snapshot_diag['team_snapshot_fields_used'] = ['event_status', 'home_score', 'away_score', 'margin', 'combined_total', 'winner']
+            missing_fields: list[str] = []
+            if not payload.get('is_final'):
+                missing_fields.append('event_not_final')
+            if payload.get('home_score') is None:
+                missing_fields.append('home_score')
+            if payload.get('away_score') is None:
+                missing_fields.append('away_score')
+
+            team_side = _snapshot_team_side(event_snapshot, leg.team)
+            if leg.market_type in {'moneyline', 'spread'} and not team_side:
+                missing_fields.append('team_side')
+            if leg.market_type == 'spread' and leg.line is None:
+                missing_fields.append('line')
+            if leg.market_type == 'game_total' and (leg.line is None or leg.direction is None):
+                missing_fields.append('line_or_direction')
+
+            snapshot_diag['missing_snapshot_event_fields'] = missing_fields
+            snapshot_diag['missing_snapshot_stat_keys'] = list(missing_fields)
+            snapshot_diag['missing_snapshot_stat_key'] = missing_fields[0] if missing_fields else None
+
+            if not missing_fields:
+                snapshot_diag['used_snapshot'] = True
+                snapshot_diag['provider_fallback_used'] = False
+                snapshot_diag['settlement_path'] = 'snapshot'
+                settlement_diagnostics['stat_source'] = 'snapshot'
+                settlement_diagnostics['stat_lookup_result'] = 'found'
+                settlement_diagnostics['stat_extraction_worked'] = True
+                margin = int(payload['margin'])
+                combined_total = int(payload['combined_total'])
+                if leg.market_type == 'moneyline':
+                    won = (margin > 0 and team_side == 'home') or (margin < 0 and team_side == 'away')
+                    snapshot_settlement = explained(
+                        settlement='win' if won else 'loss',
+                        actual_value=1.0 if won else 0.0,
+                        reason=f'{leg.team} in {leg.event_label}: ' + ('team won game' if won else 'team lost game'),
+                        reason_code=reason_codes.ACTUAL_STAT_ABOVE_LINE if won else reason_codes.ACTUAL_STAT_BELOW_LINE,
+                        reason_message='Team won game' if won else 'Team lost game',
+                        explanation_reason='event resolved',
+                    )
+                elif leg.market_type == 'spread':
+                    covered_value = margin + float(leg.line)
+                    if covered_value == 0:
+                        snapshot_settlement = explained(
+                            settlement='push',
+                            actual_value=float(margin),
+                            reason=f'{leg.team} margin {margin} landed exactly on spread {leg.line}',
+                            reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH,
+                            reason_message=f'{margin} landed exactly on spread {leg.line}',
+                            explanation_reason='event resolved',
+                        )
+                    else:
+                        won = covered_value > 0
+                        snapshot_settlement = explained(
+                            settlement='win' if won else 'loss',
+                            actual_value=float(margin),
+                            reason=f'{leg.team} margin {margin} vs spread {leg.line} in {leg.event_label}',
+                            reason_code=reason_codes.ACTUAL_STAT_ABOVE_LINE if won else reason_codes.ACTUAL_STAT_BELOW_LINE,
+                            reason_message=f'{margin} vs spread {leg.line}',
+                            explanation_reason='event resolved',
+                        )
+                elif leg.market_type == 'game_total':
+                    if combined_total == leg.line:
+                        snapshot_settlement = explained(
+                            settlement='push',
+                            actual_value=float(combined_total),
+                            reason='Game total landed exactly on line',
+                            reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH,
+                            reason_message=f'{combined_total} landed exactly on line {leg.line}',
+                            explanation_reason='event resolved',
+                        )
+                    else:
+                        won = combined_total > leg.line if leg.direction == 'over' else combined_total < leg.line
+                        comparator = 'above' if combined_total > leg.line else 'below'
+                        snapshot_settlement = explained(
+                            settlement='win' if won else 'loss',
+                            actual_value=float(combined_total),
+                            reason=f'Game total {combined_total} vs {leg.direction} {leg.line} in {leg.event_label}',
+                            reason_code=reason_codes.ACTUAL_STAT_ABOVE_LINE if comparator == 'above' else reason_codes.ACTUAL_STAT_BELOW_LINE,
+                            reason_message=f'{combined_total} is {comparator} {leg.line}',
+                            explanation_reason='event resolved',
+                        )
+
+            if snapshot_settlement is not None:
+                return snapshot_settlement
+            snapshot_diag['provider_fallback_used'] = True
+            snapshot_diag['settlement_path'] = 'provider_fallback'
+
         team_result = provider.get_team_result(lookup_team, event_id=leg.event_id)
         if not team_result:
             status = _event_status(provider, leg.event_id)

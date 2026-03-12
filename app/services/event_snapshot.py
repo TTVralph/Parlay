@@ -38,6 +38,7 @@ class EventSnapshot:
     raw_play_by_play: dict[str, Any] | None = None
     normalized_player_stats: dict[str, dict[str, Any]] = field(default_factory=dict)
     normalized_team_map: dict[str, dict[str, Any]] = field(default_factory=dict)
+    normalized_event_result: dict[str, Any] = field(default_factory=dict)
     normalized_play_by_play: list[PlayByPlayEvent] | None = None
     built_at: str | None = None
     persisted_at: str | None = None
@@ -223,6 +224,48 @@ class EventSnapshotService:
                     team_map[str(key)] = team_obj
         return home_obj, away_obj, team_map
 
+    @staticmethod
+    def _coerce_score(value: Any) -> int | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return int(float(text))
+        except ValueError:
+            return None
+
+    def _normalized_event_result(
+        self,
+        *,
+        event_status: str | None,
+        home_team: dict[str, Any],
+        away_team: dict[str, Any],
+    ) -> dict[str, Any]:
+        home_score = self._coerce_score(home_team.get('score'))
+        away_score = self._coerce_score(away_team.get('score'))
+        margin = (home_score - away_score) if home_score is not None and away_score is not None else None
+        winner = None
+        if margin is not None and margin != 0:
+            winner = 'home' if margin > 0 else 'away'
+        combined_total = (home_score + away_score) if home_score is not None and away_score is not None else None
+        return {
+            'event_status': event_status,
+            'is_final': self._is_final_status(event_status),
+            'home_team_id': home_team.get('id'),
+            'away_team_id': away_team.get('id'),
+            'home_team_name': home_team.get('name'),
+            'away_team_name': away_team.get('name'),
+            'home_team_abbr': home_team.get('abbr'),
+            'away_team_abbr': away_team.get('abbr'),
+            'home_score': home_score,
+            'away_score': away_score,
+            'winner': winner,
+            'margin': margin,
+            'combined_total': combined_total,
+        }
+
     def _player_stats_from_summary(self, summary: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
         if not summary:
             return {}
@@ -333,12 +376,13 @@ class EventSnapshotService:
         competition_date = None
         if summary_raw:
             competition_date = (((summary_raw.get('header') or {}).get('competitions') or [{}])[0].get('date'))
+        event_status = ((summary_normalized or {}).get('status') or {}).get('state') if summary_normalized else None
         snapshot = EventSnapshot(
             event_id=normalized_event_id,
             sport='NBA',
             league='NBA',
             event_date=self._parse_event_date(competition_date or event_date),
-            event_status=((summary_normalized or {}).get('status') or {}).get('state') if summary_normalized else None,
+            event_status=event_status,
             home_team=home_team,
             away_team=away_team,
             raw_scoreboard_event=scoreboard_event,
@@ -346,6 +390,11 @@ class EventSnapshotService:
             raw_play_by_play=summary_raw,
             normalized_player_stats=player_stats,
             normalized_team_map=team_map,
+            normalized_event_result=self._normalized_event_result(
+                event_status=event_status,
+                home_team=home_team,
+                away_team=away_team,
+            ),
             normalized_play_by_play=None,
             built_at=self._now_iso(),
             persisted_at=None,
@@ -378,7 +427,7 @@ class EventSnapshotService:
                     'boxscore': bool(((summary_raw or {}).get('boxscore') or {}).get('players')),
                     'pbp': False,
                 },
-                event_status=((summary_normalized or {}).get('status') or {}).get('state') if summary_normalized else None,
+                event_status=event_status,
                 built_at=self._now_iso(),
                 persisted_at=None,
                 snapshot_origin='rebuilt',

@@ -55,6 +55,7 @@ class SnapshotStore:
             'away_team': snapshot.away_team,
             'normalized_player_stats': snapshot.normalized_player_stats,
             'normalized_team_stats': snapshot.normalized_team_map,
+            'normalized_event_result': snapshot.normalized_event_result,
             'metadata': {
                 'raw_scoreboard_event': snapshot.raw_scoreboard_event,
                 'raw_summary': snapshot.raw_summary,
@@ -107,6 +108,7 @@ class SnapshotStore:
             raw_play_by_play=metadata.get('raw_play_by_play'),
             normalized_player_stats=payload.get('normalized_player_stats') or {},
             normalized_team_map=payload.get('normalized_team_stats') or {},
+            normalized_event_result=payload.get('normalized_event_result') or {},
             normalized_play_by_play=normalized_play_by_play,
             diagnostics=diagnostics,
         )
