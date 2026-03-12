@@ -2067,10 +2067,17 @@ Murray over 2.5 threes'></textarea>
       const weakest=payload.weakest_leg;
       const safest=payload.safest_leg;
       const seller=payload.likely_seller;
+      const trap=payload.trap_leg;
+      const trapScore=Number(payload.trap_score||0).toFixed(1);
+      const trapReasons=Array.isArray(payload.trap_reason_codes)&&payload.trap_reason_codes.length
+        ?`<span class='result-chip'>Trap reasons: ${payload.trap_reason_codes.map((code)=>escapeHtml(code)).join(' · ')}</span>`
+        :'';
       resultSummary.innerHTML=`
         <span class='result-chip'>Weakest leg: ${escapeHtml(weakest?.subject_name||weakest?.raw_leg_text||'—')}</span>
         <span class='result-chip'>Safest leg: ${escapeHtml(safest?.subject_name||safest?.raw_leg_text||'—')}</span>
         <span class='result-chip'>Most likely seller: ${escapeHtml(seller?.subject_name||seller?.raw_leg_text||'—')}</span>
+        <span class='result-chip'>🚨 Trap leg: ${escapeHtml(trap?.subject_name||trap?.raw_leg_text||'—')} (${trapScore}/10)</span>
+        ${trapReasons}
       `;
       resultSummary.hidden=false;
 
@@ -2963,6 +2970,9 @@ def _process_public_analyze_text(text: str) -> AnalyzeSlipResponse:
             weakest_leg=None,
             safest_leg=None,
             likely_seller=None,
+            trap_leg=None,
+            trap_score=0.0,
+            trap_reason_codes=[],
             leg_risk_scores=[],
             supported_leg_count=0,
             unsupported_leg_count=0,

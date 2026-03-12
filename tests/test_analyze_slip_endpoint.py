@@ -15,6 +15,9 @@ def test_analyze_slip_response_shape() -> None:
     assert body['weakest_leg'] is not None
     assert body['safest_leg'] is not None
     assert body['likely_seller'] is not None
+    assert body['trap_leg'] is not None
+    assert isinstance(body['trap_score'], float)
+    assert isinstance(body['trap_reason_codes'], list)
     assert isinstance(body['leg_risk_scores'], list)
 
 

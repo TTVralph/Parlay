@@ -373,6 +373,9 @@ class AnalyzeSlipResponse(BaseModel):
     weakest_leg: Optional[AnalyzeLegRisk] = None
     safest_leg: Optional[AnalyzeLegRisk] = None
     likely_seller: Optional[AnalyzeLegRisk] = None
+    trap_leg: Optional[AnalyzeLegRisk] = None
+    trap_score: float = 0.0
+    trap_reason_codes: list[str] = Field(default_factory=list)
     leg_risk_scores: list[AnalyzeLegRisk] = Field(default_factory=list)
     supported_leg_count: int = 0
     unsupported_leg_count: int = 0

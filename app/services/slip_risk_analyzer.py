@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from ..models import AnalyzeLegRisk, AnalyzeSlipResponse, Leg
@@ -72,6 +73,14 @@ def _baseline_for_leg(leg: Leg) -> float | None:
     if leg.market_type in PLAYER_BASELINES:
         return PLAYER_BASELINES[leg.market_type]
     return TEAM_BASELINES.get(leg.market_type)
+
+
+
+def _has_alt_line_marker(leg: Leg) -> bool:
+    raw = leg.raw_text.strip().lower()
+    if raw.endswith('+'):
+        return True
+    return bool(re.search(r'\b\d+(?:\.\d+)?\+', raw))
 
 
 def _line_penalty(leg: Leg, baseline: float | None) -> tuple[float, str | None]:
@@ -148,7 +157,7 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
         penalties.append(1.5)
         reason_codes.append('combo_market_inflation_penalty')
 
-    if leg.raw_text.strip().endswith('+'):
+    if _has_alt_line_marker(leg):
         penalties.append(0.9)
         reason_codes.append('alt_line_inflation_penalty')
 
@@ -192,6 +201,57 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
     )
 
 
+def detect_trap_leg(parsed_legs: list[Leg]) -> tuple[AnalyzeLegRisk | None, float, list[str]]:
+    if not parsed_legs:
+        return None, 0.0, []
+
+    trap_candidates: list[tuple[float, AnalyzeLegRisk, list[str]]] = []
+    for leg in parsed_legs:
+        analyzed = analyze_leg_risk(leg)
+        baseline = _baseline_for_leg(leg)
+        implied_probability = _implied_probability(leg.american_odds)
+        reason_codes: list[str] = []
+        trap_score = 0.0
+
+        if baseline is None or leg.line is None:
+            trap_score += 0.6
+            reason_codes.append('trap_missing_baseline_fallback')
+        else:
+            delta = abs(leg.line - baseline)
+            if leg.market_type == 'spread':
+                line_pressure = _clamp(delta / 2.5, 0.0, 4.0)
+            elif leg.market_type == 'game_total':
+                line_pressure = _clamp(delta / 6.5, 0.0, 4.0)
+            else:
+                line_pressure = _clamp(delta / 3.6, 0.0, 4.0)
+            trap_score += line_pressure
+            if line_pressure > 0.0:
+                reason_codes.append('trap_line_distance_penalty')
+
+        if leg.market_type in COMBO_MARKETS:
+            trap_score += 1.5
+            reason_codes.append('trap_combo_market_inflation_penalty')
+
+        if _has_alt_line_marker(leg):
+            trap_score += 1.0
+            reason_codes.append('trap_alt_line_penalty')
+
+        if implied_probability is None:
+            trap_score += 0.7
+            reason_codes.append('trap_missing_odds_penalty')
+        elif implied_probability < 0.45:
+            trap_score += 1.8
+            reason_codes.append('trap_longshot_odds_penalty')
+        elif implied_probability < 0.5:
+            trap_score += 1.0
+            reason_codes.append('trap_plus_money_odds_penalty')
+
+        trap_candidates.append((round(_clamp(trap_score, 0.0, 10.0), 2), analyzed, sorted(set(reason_codes))))
+
+    score, trap_leg, codes = max(trap_candidates, key=lambda item: (item[0], item[1].risk_score, item[1].confidence * -1))
+    return trap_leg, score, codes
+
+
 def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
     analyzed = [analyze_leg_risk(leg) for leg in parsed_legs]
     if not analyzed:
@@ -203,6 +263,9 @@ def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
             weakest_leg=None,
             safest_leg=None,
             likely_seller=None,
+            trap_leg=None,
+            trap_score=0.0,
+            trap_reason_codes=[],
             leg_risk_scores=[],
             supported_leg_count=0,
             unsupported_leg_count=0,
@@ -221,6 +284,7 @@ def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
     weakest = max(analyzed, key=lambda item: (item.risk_score, item.confidence * -1))
     safest = min(analyzed, key=lambda item: (item.risk_score, item.confidence * -1))
     likely_seller = weakest
+    trap_leg, trap_score, trap_reason_codes = detect_trap_leg(parsed_legs)
 
     supported_count = sum(1 for leg in analyzed if leg.supported_market)
     unsupported_count = len(analyzed) - supported_count
@@ -233,6 +297,9 @@ def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
         weakest_leg=weakest,
         safest_leg=safest,
         likely_seller=likely_seller,
+        trap_leg=trap_leg,
+        trap_score=trap_score,
+        trap_reason_codes=trap_reason_codes,
         leg_risk_scores=analyzed,
         supported_leg_count=supported_count,
         unsupported_leg_count=unsupported_count,
