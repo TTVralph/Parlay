@@ -31,7 +31,7 @@ def test_check_slip_generates_public_link_and_page():
     body = response.json()
     assert body['ok'] is True
     assert body.get('public_id')
-    assert body.get('public_url') == f"/parlay/{body['public_id']}"
+    assert body.get('public_url') == f"/r/{body['public_id']}"
 
     page = client.get(body['public_url'])
     assert page.status_code == 200
@@ -51,7 +51,7 @@ def test_check_slip_invalid_submission_does_not_persist_public_slip():
 
 def test_public_parlay_page_has_graceful_invalid_id_state():
     client = TestClient(app)
-    page = client.get('/parlay/NOT-VALID')
+    page = client.get('/r/NOT-VALID')
     assert page.status_code == 404
     assert "couldn't open that shared slip" in page.text
     assert 'public ID format is invalid' in page.text
@@ -59,7 +59,7 @@ def test_public_parlay_page_has_graceful_invalid_id_state():
 
 def test_public_parlay_page_has_graceful_not_found_state():
     client = TestClient(app)
-    page = client.get('/parlay/aaaaaaaa')
+    page = client.get('/r/aaaaaaaa')
     assert page.status_code == 404
     assert 'This public slip was not found.' in page.text
     assert 'Check a new slip' in page.text
@@ -80,7 +80,7 @@ def test_check_slip_saved_to_recent_tracker_feed():
     items = recents.json()['items']
     assert len(items) >= 1
     first = items[0]
-    assert first['public_url'].startswith('/parlay/')
+    assert first['public_url'].startswith('/r/')
     assert first['summary']
     assert isinstance(first['leg_statuses'], list)
     assert first['share_url'] == first['public_url']

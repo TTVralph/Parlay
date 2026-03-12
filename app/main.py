@@ -1080,7 +1080,7 @@ Murray over 2.5 threes'></textarea>
           <label style='display:flex;align-items:center;gap:8px;margin-top:10px;'><input id='searchHistorical' type='checkbox' style='width:auto;'><span>Search historical results</span></label>
           <div id='uploadWrap'>
             <label for='slipImage'><strong>Upload slip screenshot</strong></label>
-            <div style='font-size:12px;color:var(--muted);margin:4px 0 8px;'>PNG/JPG up to 8MB. We parse first, then you can review before grading.</div>
+            <div style='font-size:12px;color:var(--muted);margin:4px 0 8px;'>PNG/JPG up to 8MB. We parse first, then you can review before grading. One leg per line.</div>
             <input id='slipImage' type='file' accept='image/*'>
             <button id='removeScreenshotBtn' class='secondary' type='button' style='margin-top:8px;display:none;'>Remove Screenshot</button>
           </div>
@@ -1657,8 +1657,10 @@ Murray over 2.5 threes'></textarea>
       const finalValue=formatSoldValue(primary.final_value);
       const missBy=formatSoldValue(Math.abs(asNumber(primary.miss_by)||0));
       const context=primary.last_relevant_context?`<div class='sold-context'><strong>Last relevant context:</strong> ${escapeHtml(primary.last_relevant_context)}</div>`:'';
+      const market=primary.market_type||primary.market||'';
+      const game=primary.event_name||primary.matched_event||'';
       const summary=(target!=='—'&&finalValue!=='—')
-        ?`Finished with <strong>${finalValue}</strong>, missed by <strong>${missBy}</strong>`
+        ?`<strong>${escapeHtml(label)}</strong>${market?` — ${escapeHtml(String(market))}`:''}<br>Final: <strong>${finalValue}</strong><br>Missed by: <strong>${missBy}</strong>${game?`<br>Game: ${escapeHtml(String(game))}`:''}`
         :(primary.short_reason?escapeHtml(primary.short_reason):'This leg sold the slip.');
       const hasMeta=target!=='—'||finalValue!=='—'||missBy!=='—';
       const primaryMeta=hasMeta?`<div class='sold-meta-grid'>
@@ -1682,7 +1684,7 @@ Murray over 2.5 threes'></textarea>
       return `<div class='sold-hero'>
         <div class='sold-hero-head'>
           <div>
-            <div class='sold-kicker'>Loss breakdown</div>
+            <div class='sold-kicker'>❌ SOLD THIS SLIP</div>
             <div class='sold-title'>Sold this slip</div>
           </div>
         </div>
@@ -1716,6 +1718,15 @@ Murray over 2.5 threes'></textarea>
       if(hasStake){chips.push(`<span class='meta-chip'>Stake: $${Number(payload.stake_amount).toFixed(2)}</span>`);}
       if(payload.estimated_payout!==undefined&&payload.estimated_payout!==null){chips.push(`<span class='meta-chip'>Est. payout: $${Number(payload.estimated_payout).toFixed(2)}</span>`);}
       if(hasStake&&payload.payout_message){chips.push(`<span class='meta-chip'>${payload.payout_message}</span>`);}
+      if(payload.parlay_closeness_score!==undefined&&payload.parlay_closeness_score!==null){
+        chips.push(`<span class='meta-chip'>Your parlay was ${Math.round(Number(payload.parlay_closeness_score))}% of the way to hitting</span>`);
+      }
+      if(payload.closest_miss_leg&&payload.closest_miss_leg.player_or_team){
+        chips.push(`<span class='meta-chip'>Closest miss: ${escapeHtml(payload.closest_miss_leg.player_or_team)} (${escapeHtml(payload.closest_miss_leg.delta_display||'')})</span>`);
+      }
+      if(payload.worst_miss_leg&&payload.worst_miss_leg.player_or_team){
+        chips.push(`<span class='meta-chip'>Worst miss: ${escapeHtml(payload.worst_miss_leg.player_or_team)} (${escapeHtml(payload.worst_miss_leg.delta_display||'')})</span>`);
+      }
       const graded=counts.won+counts.lost;
       let secondary='';
       if(counts.lost>0&&counts.review>0){
@@ -2015,62 +2026,39 @@ Murray over 2.5 threes'></textarea>
     function drawShareCard(payload){
       const ctx=shareCardCanvas.getContext('2d');
       if(!ctx){ throw new Error('Share card canvas unavailable.'); }
-      const cardWidth=shareCardCanvas.width;
-      const cardHeight=shareCardCanvas.height;
       const maxLegsOnCard=8;
-      const horizontalPadding=60;
-      const lineHeight=40;
-      const maxTextWidth=cardWidth-(horizontalPadding*2);
       const allLegs=Array.isArray(payload.legs)?payload.legs:[];
       const shownLegs=allLegs.slice(0,maxLegsOnCard);
       const hiddenCount=Math.max(0,allLegs.length-shownLegs.length);
-
-      function drawWrappedLine(text,startY,font='30px Arial'){
-        ctx.font=font;
-        const words=String(text||'—').split(/\s+/).filter(Boolean);
-        if(!words.length){
-          ctx.fillText('—',horizontalPadding,startY);
-          return startY+lineHeight;
-        }
-        let current='';
-        let y=startY;
-        for(const word of words){
-          const candidate=current?`${current} ${word}`:word;
-          if(ctx.measureText(candidate).width<=maxTextWidth){
-            current=candidate;
-            continue;
-          }
-          if(current){
-            ctx.fillText(current,horizontalPadding,y);
-            y+=lineHeight;
-          }
-          current=word;
-        }
-        if(current){
-          ctx.fillText(current,horizontalPadding,y);
-          y+=lineHeight;
-        }
-        return y;
+      // drawWrappedLine(`+${hiddenCount} more legs`)
+      const w=shareCardCanvas.width,h=shareCardCanvas.height,pad=56;
+      ctx.fillStyle='#0b1220'; ctx.fillRect(0,0,w,h);
+      ctx.fillStyle='#e2e8f0'; ctx.font='bold 54px Arial';
+      const isLost=payload.parlay_result==='lost';
+      ctx.fillText(`${isLost?'❌':'✅'} ${isLost?'PARLAY SOLD':'PARLAY CHECKED'}`,pad,100);
+      const sold=(payload.sold_leg_explanations||[])[0]||((payload.legs||[]).find(l=>l.result==='loss')||null);
+      ctx.font='bold 42px Arial'; ctx.fillStyle='#f8fafc';
+      let y=170;
+      if(sold){
+        const soldLabel=sold.player_or_team||sold.leg||sold.leg_label||'Losing leg';
+        y+=40; ctx.fillText(String(soldLabel).slice(0,42),pad,y);
+        ctx.font='30px Arial'; y+=46;
+        const market=sold.market_type||sold.market||'';
+        if(market){ctx.fillText(String(market).slice(0,58),pad,y); y+=40;}
+        const fv=(sold.final_value??sold.actual_value??'—');
+        ctx.fillText(`Final: ${fv}`,pad,y); y+=40;
       }
-
-      ctx.fillStyle='#f8fafc'; ctx.fillRect(0,0,cardWidth,cardHeight);
-      ctx.fillStyle='#0f172a'; ctx.font='bold 52px Arial'; ctx.fillText('ParlayBot Check',horizontalPadding,90);
-      ctx.font='bold 44px Arial'; ctx.fillText('Parlay: '+(overallLabel[payload.parlay_result]||'NEEDS REVIEW'),horizontalPadding,160);
-
-      let y=230;
-      for(const leg of shownLegs){
-        const line=`${leg.leg||'—'} ${resultEmoji[leg.result]||'🧐'}`;
-        y=drawWrappedLine(line,y,'30px Arial');
-        y+=6;
+      ctx.font='bold 34px Arial'; ctx.fillText('Other legs:',pad,y+20); y+=70;
+      ctx.font='28px Arial';
+      const others=shownLegs.filter(l=>!sold||l.leg!==sold.leg);
+      for(const leg of others){
+        ctx.fillText(`${resultEmoji[leg.result]||'🧐'} ${String(leg.leg||'—').slice(0,52)}`,pad,y);
+        y+=42;
       }
-      if(hiddenCount>0){
-        ctx.font='bold 28px Arial';
-        ctx.fillStyle='#475569';
-        y=drawWrappedLine(`+${hiddenCount} more legs`,Math.min(y+12,cardHeight-130),'bold 28px Arial');
-        ctx.fillStyle='#0f172a';
-      }
-      ctx.font='24px Arial';
-      ctx.fillText(`Checked: ${new Date().toLocaleString()}`,horizontalPadding,cardHeight-50);
+      
+      if(hiddenCount>shownLegs.length){ctx.fillStyle='#94a3b8';ctx.font='24px Arial';ctx.fillText(`+${hiddenCount-shownLegs.length} more legs`,pad,h-90);}
+      ctx.fillStyle='#93c5fd'; ctx.font='bold 30px Arial';
+      ctx.fillText('Checked on ParlayBot',pad,h-50);
     }
 
     refreshRecentBtn.addEventListener('click',()=>{loadRecentSlips();});
@@ -2648,6 +2636,9 @@ def _process_public_check_text(
         'bet_date': bet_date.isoformat() if bet_date is not None else None,
         'selected_player_by_leg_id': selected_player_by_leg_id or {},
         'sold_leg_explanations': [item.model_dump() for item in (graded.sold_leg_explanations or [])],
+        'parlay_closeness_score': graded.parlay_closeness_score,
+        'closest_miss_leg': graded.closest_miss_leg,
+        'worst_miss_leg': graded.worst_miss_leg,
     }
     if unmatched_count == len(legs):
         out['message'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
@@ -2766,7 +2757,7 @@ def public_check_slip(request: Request, response: Response, payload: dict = Body
             tracker_key=resolved_tracker_key,
         )
         result['public_id'] = saved.public_id
-        result['public_url'] = f"/parlay/{saved.public_id}"
+        result['public_url'] = f"/r/{saved.public_id}"
         result['tracker_key'] = resolved_tracker_key
     return result
 
@@ -2790,7 +2781,7 @@ def public_recent_slips_endpoint(db: Session = Depends(get_db), tracker_key: str
         preview = row.raw_slip_text.strip().splitlines()[0] if row.raw_slip_text else ''
         items.append({
             'public_id': row.public_id,
-            'public_url': f'/parlay/{row.public_id}',
+            'public_url': f'/r/{row.public_id}',
             'overall_result': row.overall_result,
             'summary': _slip_status_summary(legs if isinstance(legs, list) else []),
             'bet_date': bet_date_label,
@@ -2799,7 +2790,7 @@ def public_recent_slips_endpoint(db: Session = Depends(get_db), tracker_key: str
             'stake_amount': row.stake_amount,
             'preview_text': preview[:90],
             'parsed_legs': json.loads(row.parsed_legs_json or '[]'),
-            'share_url': f'/parlay/{row.public_id}',
+            'share_url': f'/r/{row.public_id}',
             'leg_statuses': [str(leg.get('result', 'review')) for leg in legs if isinstance(leg, dict)],
         })
     return {'items': items}
@@ -2851,6 +2842,7 @@ def get_public_check_job(job_id: str) -> CheckJobStatusResponse:
     return CheckJobStatusResponse(job_id=job_id, status='pending')
 
 
+@app.get('/r/{public_id}', response_class=HTMLResponse)
 @app.get('/parlay/{public_id}', response_class=HTMLResponse)
 def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> HTMLResponse:
     normalized_public_id = public_id.strip().lower()
@@ -2916,6 +2908,18 @@ def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> 
         leg_rows.append("<tr><td colspan='4'>No leg details were available for this shared result.</td></tr>")
 
     events_html = ''.join(f"<li>{escape(str(event))}</li>" for event in matched_events) or '<li>—</li>'
+
+    sold_leg = next((leg.get('sold_leg_explanation') for leg in legs if isinstance(leg, dict) and isinstance(leg.get('sold_leg_explanation'), dict)), None)
+    sold_html = ''
+    if row.overall_result == 'lost' and sold_leg:
+        sold_label = escape(str(sold_leg.get('player_or_team') or 'Losing leg'))
+        sold_market = escape(str(sold_leg.get('market_type') or ''))
+        sold_target = escape(str(sold_leg.get('target_line') if sold_leg.get('target_line') is not None else '—'))
+        sold_final = escape(str(sold_leg.get('final_value') if sold_leg.get('final_value') is not None else '—'))
+        sold_miss = escape(str(sold_leg.get('miss_by') if sold_leg.get('miss_by') is not None else '—'))
+        sold_game = escape(str(sold_leg.get('event_name') or sold_leg.get('matched_event') or '—'))
+        sold_html = f"<div style='margin:14px 0;padding:12px;border-radius:12px;border:1px solid #fecaca;background:#7f1d1d;color:#fff1f2;'><div style='font-weight:900;'>❌ SOLD THIS SLIP</div><div style='margin-top:6px;'><strong>{sold_label}</strong> — {sold_market}<br>Target: {sold_target}<br>Final: {sold_final}<br>Missed by: {sold_miss}<br>Game: {sold_game}</div></div>"
+
     stake_text = f"${row.stake_amount:.2f}" if row.stake_amount is not None else '—'
     bet_date_text = row.bet_date.date().isoformat() if row.bet_date else '—'
     html = (
@@ -2938,8 +2942,8 @@ def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> 
         f"<h1>ParlayBot Result</h1><div class='card'><div><strong>Overall:</strong> {result_label}</div>"
         f"<div class='meta'><div><strong>Public ID:</strong> {escape(row.public_id)}</div><div><strong>Parser confidence:</strong> {escape(row.parser_confidence or 'low')}</div>"
         f"<div><strong>Bet date:</strong> {bet_date_text}</div><div><strong>Stake:</strong> {stake_text}</div><div><strong>Checked at:</strong> {escape(checked_at)}</div></div>"
-        f"<h3>Leg Results ({len(legs)})</h3><div class='tableWrap'><table><thead><tr><th>Leg</th><th>Result</th><th>Matched Event</th><th>Review Reason</th></tr></thead><tbody>{''.join(leg_rows)}</tbody></table></div>"
-        f"<h3>Matched Events</h3><ul>{events_html}</ul></div><div style='margin-top:16px;'><a class='cta' href='/check'>Check another slip</a></div></body></html>"
+        f"{sold_html}<h3>Leg Results ({len(legs)})</h3><div class='tableWrap'><table><thead><tr><th>Leg</th><th>Result</th><th>Matched Event</th><th>Review Reason</th></tr></thead><tbody>{''.join(leg_rows)}</tbody></table></div>"
+        f"<h3>Matched Events</h3><ul>{events_html}</ul><div style='margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;'><strong>Share card:</strong> Open this slip in the main checker to download the PNG card.</div></div><div style='margin-top:16px;'><a class='cta' href='/check'>Check another slip</a></div></body></html>"
     )
     return HTMLResponse(html)
 
