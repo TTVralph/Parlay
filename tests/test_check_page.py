@@ -93,7 +93,7 @@ def test_check_page_shows_bet_date_input():
     html = page.text
     assert 'Bet Date' in html
     assert "id='slipDate'" in html
-    assert 'Optional, but strongly recommended' in html
+    assert 'optional but strongly recommended' in html
 
 
 def test_check_page_form_submit_prevents_navigation_and_submits_in_place():
