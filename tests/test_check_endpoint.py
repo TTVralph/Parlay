@@ -327,6 +327,46 @@ def test_check_multiple_event_candidates_maps_multiple_games_reason_code(monkeyp
     assert body['legs'][0]['review_details']['review_reason_code'] == 'MULTIPLE_GAMES_MATCHED'
 
 
+
+
+def test_check_unsupported_market_review_uses_unsupported_reason_code(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg, SettlementExplanation
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        leg = Leg(
+            raw_text='Race to 10 points - Denver Nuggets',
+            sport='NBA',
+            market_type='moneyline',
+            team='Denver Nuggets',
+            confidence=0.86,
+            notes=['Unsupported market -> safe review preserve']
+        )
+        explanation = SettlementExplanation(
+            raw_leg_text=leg.raw_text,
+            settlement_reason_code='unsupported_market',
+            settlement_reason='Unsupported market',
+            settlement_reason_text='Special market support is limited for this leg.',
+            result='unmatched',
+            grading_confidence=0.21,
+        )
+        graded = GradedLeg(
+            leg=leg,
+            settlement='unmatched',
+            reason='x',
+            review_reason='unsupported market',
+            settlement_explanation=explanation,
+            settlement_diagnostics={'unmatched_reason_code': 'unsupported_market'},
+        )
+        return GradeResponse(overall='needs_review', legs=[graded])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'Denver ML'}).json()
+    details = body['legs'][0]['review_details']
+    assert body['legs'][0]['result'] == 'review'
+    assert details['review_reason_code'] == 'UNSUPPORTED_MARKET'
+    assert 'Recognized but not fully supported yet' in details['review_reason_text']
 def test_check_valid_leg_does_not_include_review_details(monkeypatch):
     from app.models import GradeResponse, GradedLeg, Leg
 

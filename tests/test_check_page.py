@@ -280,6 +280,27 @@ def test_check_page_renders_structured_review_reason_fallback_ui():
     assert '<strong>Final settlement:</strong>' in html
 
 
+def test_check_page_renders_unsupported_market_review_messaging_and_badges():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert 'function isUnsupportedSpecialMarketReview(item)' in html
+    assert 'Recognized but not fully supported yet. This market was kept for review instead of being dropped. Special/time-window market support is still limited.' in html
+    assert 'Unsupported market' in html
+    assert 'Special market' in html
+    assert 'Time-window market' in html
+
+
+def test_check_page_keeps_ambiguity_review_copy_distinct_from_unsupported_market_copy():
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert 'Needs manual review. We could not confidently resolve this leg.' in html
+    assert 'Recognized but not fully supported yet. This market was kept for review instead of being dropped. Special/time-window market support is still limited.' in html
+
+
 def test_check_page_renders_subtle_fuzzy_resolution_message_in_main_table():
     client = TestClient(app)
     page = client.get('/check')

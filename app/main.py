@@ -1403,8 +1403,41 @@ Murray over 2.5 threes'></textarea>
       return labels[details.player_resolution_status]||'Review';
     }
 
+    function isUnsupportedSpecialMarketReview(item){
+      const details=item.review_details||item.resolution_details||null;
+      const reasonCode=String(details?.review_reason_code||'').toUpperCase();
+      const unmatchedReason=String(item.unmatched_reason_code||'').toLowerCase();
+      const settlementReason=String(item.settlement_reason_code||'').toLowerCase();
+      const rawContext=[
+        item.leg,
+        item.normalized_market,
+        item.settlement_reason_text,
+        item.review_reason,
+        item.review_reason_text,
+        details?.review_reason_text,
+        ...(item.notes||[]),
+        ...(item.event_resolution_warnings||[]),
+      ].join(' ').toLowerCase();
+      const hasSpecialMarketHint=/(first\\s+half|first\\s+[0-9]+\\s+minutes|first\\s+to|race\\s+to|special|time-window|time window|sequence)/.test(rawContext);
+      return reasonCode==='UNSUPPORTED_MARKET'
+        || unmatchedReason==='unsupported_market'
+        || settlementReason==='unsupported_market'
+        || (rawContext.includes('unsupported market')||rawContext.includes('market mapping missing'))
+        || hasSpecialMarketHint;
+    }
+
+    function unsupportedMarketBadgeLabel(item){
+      const context=[item.leg,item.normalized_market,item.settlement_reason_text,...(item.notes||[])].join(' ').toLowerCase();
+      if(/first\\s+half|first\\s+[0-9]+\\s+minutes|time-window|time window/.test(context)){return 'Time-window market';}
+      if(/race\\s+to|first\\s+to|sequence/.test(context)){return 'Special market';}
+      return 'Unsupported market';
+    }
+
     function bestReviewReason(item){
       const details=item.review_details||item.resolution_details||null;
+      if(isUnsupportedSpecialMarketReview(item)){
+        return 'Recognized but not fully supported yet. This market was kept for review instead of being dropped. Special/time-window market support is still limited.';
+      }
       if(details&&details.review_reason_text){return details.review_reason_text;}
       return item.event_review_reason_text||item.review_reason_text||item.did_you_mean||item.review_reason||item.explanation_reason||'Needs manual review. We could not confidently resolve this leg.';
     }
@@ -1462,7 +1495,11 @@ Murray over 2.5 threes'></textarea>
 
         const needsReview=status==='review'||status==='unmatched';
         if(needsReview){
-          legCell.innerHTML+=`<div class='review-panel'><div class='review-reason'>${escapeHtml(bestReviewReason(item)||'We could not confidently resolve this leg yet.')}</div></div>`;
+          const unsupportedMarketReview=isUnsupportedSpecialMarketReview(item);
+          const reviewBadge=unsupportedMarketReview
+            ?`<div class='review-title'>${escapeHtml(unsupportedMarketBadgeLabel(item))}</div>`
+            :'';
+          legCell.innerHTML+=`<div class='review-panel'>${reviewBadge}<div class='review-reason'>${escapeHtml(bestReviewReason(item)||'We could not confidently resolve this leg yet.')}</div></div>`;
         }
 
         const candidateGames=(item.candidate_games||[]).length
@@ -2214,6 +2251,7 @@ _REVIEW_REASON_TEXT_BY_CODE: dict[str, str] = {
     'EVENT_NOT_FOUND': 'No matching game was found for the resolved team/date.',
     'MULTIPLE_GAMES_MATCHED': 'Multiple possible games were found for this player. Select the correct one.',
     'NEARBY_DATE_CANDIDATES_ONLY': 'Only nearby-date games were found; confirm the correct date.',
+    'UNSUPPORTED_MARKET': 'Recognized but not fully supported yet. This market was kept for review instead of being dropped.',
 }
 
 
@@ -2245,6 +2283,9 @@ def _review_reason_code(item: GradedLeg, *, did_you_mean: str | None) -> str | N
     reason_text = ((item.review_reason_text or item.review_reason or item.explanation_reason or '')).lower()
     notes = ' | '.join(item.leg.notes).lower()
     unmatched_reason_code = str((item.settlement_diagnostics or {}).get('unmatched_reason_code') or '').lower()
+    settlement_reason_code = str(
+        (item.settlement_explanation.settlement_reason_code if item.settlement_explanation else '') or ''
+    ).lower()
     identity_method = item.identity_match_method or item.leg.identity_match_method
     identity_confidence = item.identity_match_confidence or item.leg.identity_match_confidence
     if (item.selection_error_code or item.leg.selection_error_code) == 'INVALID_SELECTED_PLAYER_ID':
@@ -2257,6 +2298,14 @@ def _review_reason_code(item: GradedLeg, *, did_you_mean: str | None) -> str | N
         return 'PLAYER_AMBIGUOUS'
     if did_you_mean or 'player not found' in reason_text or 'likely refers to' in reason_text:
         return 'PLAYER_UNRESOLVED'
+    if (
+        unmatched_reason_code == 'unsupported_market'
+        or settlement_reason_code == 'unsupported_market'
+        or 'unsupported market' in reason_text
+        or 'market mapping missing' in reason_text
+        or 'special market support is limited' in reason_text
+    ):
+        return 'UNSUPPORTED_MARKET'
     event_reason_code = (item.event_review_reason_code or item.leg.event_review_reason_code or '').lower()
     if event_reason_code == 'nearby_date_candidates_only':
         return 'NEARBY_DATE_CANDIDATES_ONLY'
