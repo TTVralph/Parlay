@@ -355,6 +355,44 @@ def _default_settlement_diagnostics(leg: Leg) -> dict[str, object]:
         'event_review_reason_code': leg.event_review_reason_code,
         'event_review_reason_text': leg.event_review_reason_text,
         'event_date_match_quality': leg.event_date_match_quality,
+        'snapshot_stat_diagnostics': {
+            'used_snapshot': False,
+            'provider_fallback_used': False,
+            'requested_stat_key': None,
+            'player_id_resolved': bool(leg.resolved_player_id),
+            'player_snapshot_found': False,
+            'missing_snapshot_stat_key': None,
+            'snapshot_coverage': None,
+        },
+    }
+
+
+def _aggregate_snapshot_run_diagnostics(graded: list[GradedLeg]) -> dict[str, object]:
+    snapshot_stats_used = 0
+    provider_fallbacks = 0
+    missing_snapshot_keys: set[str] = set()
+    players_missing_stats: set[str] = set()
+
+    for item in graded:
+        settlement_diag = item.settlement_diagnostics or {}
+        snapshot_diag = settlement_diag.get('snapshot_stat_diagnostics') or {}
+        if snapshot_diag.get('used_snapshot'):
+            snapshot_stats_used += 1
+        if snapshot_diag.get('provider_fallback_used'):
+            provider_fallbacks += 1
+        missing_key = snapshot_diag.get('missing_snapshot_stat_key')
+        if missing_key:
+            missing_snapshot_keys.add(str(missing_key))
+        if snapshot_diag.get('player_id_resolved') and not snapshot_diag.get('player_snapshot_found'):
+            player_name = item.resolved_player_name or (item.leg.player if item.leg else None)
+            if player_name:
+                players_missing_stats.add(str(player_name))
+
+    return {
+        'snapshot_stats_used': snapshot_stats_used,
+        'provider_fallbacks': provider_fallbacks,
+        'missing_snapshot_keys': sorted(missing_snapshot_keys),
+        'players_missing_stats': sorted(players_missing_stats),
     }
 
 def _review_reason_from_notes(leg: Leg) -> str:
@@ -718,7 +756,14 @@ def settle_leg(
     snapshot_supported_markets = set(_SNAPSHOT_SINGLE_STAT_MARKETS) | set(_SNAPSHOT_COMBO_STAT_MARKETS)
     used_snapshot = False
     snapshot_entry = None
+    snapshot_diag = settlement_diagnostics.get('snapshot_stat_diagnostics')
+    if isinstance(snapshot_diag, dict):
+        snapshot_diag['player_id_resolved'] = bool(leg.resolved_player_id)
     if event_snapshot is not None and leg.market_type in snapshot_supported_markets:
+        if isinstance(snapshot_diag, dict):
+            requested_stat_key = _SNAPSHOT_SINGLE_STAT_MARKETS.get(leg.market_type) or _SNAPSHOT_COMBO_STAT_MARKETS.get(leg.market_type)
+            snapshot_diag['requested_stat_key'] = requested_stat_key
+            snapshot_diag['snapshot_coverage'] = event_snapshot.get_stat_coverage()
         snapshot_entry = _snapshot_player_entry(
             event_snapshot,
             player_id=leg.resolved_player_id,
@@ -726,6 +771,8 @@ def settle_leg(
         )
         if snapshot_entry:
             matched_boxscore_player_name = snapshot_entry.get('display_name')
+            if isinstance(snapshot_diag, dict):
+                snapshot_diag['player_snapshot_found'] = True
 
     detail_lookup = getattr(provider, 'get_player_result_details', None)
     actual_value = None
@@ -734,16 +781,26 @@ def settle_leg(
         combo_stat_key = _SNAPSHOT_COMBO_STAT_MARKETS.get(leg.market_type)
         if single_stat_key is not None:
             actual_value = get_player_stat(event_snapshot, leg.resolved_player_id, single_stat_key, player_name=player_lookup_name)
+            if isinstance(snapshot_diag, dict) and actual_value is None:
+                snapshot_diag['missing_snapshot_stat_key'] = single_stat_key
         elif combo_stat_key is not None:
             actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, combo_stat_key, player_name=player_lookup_name)
+            if isinstance(snapshot_diag, dict) and actual_value is None:
+                snapshot_diag['missing_snapshot_stat_key'] = combo_stat_key
         used_snapshot = actual_value is not None
+        if isinstance(snapshot_diag, dict):
+            snapshot_diag['used_snapshot'] = used_snapshot
 
     if actual_value is None and callable(detail_lookup):
+        if isinstance(snapshot_diag, dict) and event_snapshot is not None and leg.market_type in snapshot_supported_markets:
+            snapshot_diag['provider_fallback_used'] = True
         details = detail_lookup(player_lookup_name, leg.market_type, event_id=leg.event_id)
         if details:
             actual_value = details.get('actual_value')
             matched_boxscore_player_name = details.get('matched_boxscore_player_name')
     if actual_value is None:
+        if isinstance(snapshot_diag, dict) and event_snapshot is not None and leg.market_type in snapshot_supported_markets:
+            snapshot_diag['provider_fallback_used'] = True
         actual_value = provider.get_player_result(player_lookup_name, leg.market_type, event_id=leg.event_id)
 
     component_values_dict = None
@@ -923,6 +980,10 @@ def grade_text(
         for leg in resolved_legs
     ]
 
+    run_snapshot_diagnostics = _aggregate_snapshot_run_diagnostics(graded)
+    if 'debug' in (code_path or '').lower():
+        print(f"snapshot diagnostics: {run_snapshot_diagnostics}")
+
     settlements = [item.settlement for item in graded]
     if any(settlement == 'loss' for settlement in settlements):
         overall = 'lost'
@@ -933,4 +994,4 @@ def grade_text(
     else:
         overall = 'needs_review'
 
-    return GradeResponse(overall=overall, legs=graded)
+    return GradeResponse(overall=overall, legs=graded, grading_diagnostics={'snapshot': run_snapshot_diagnostics})
