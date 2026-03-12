@@ -17,7 +17,7 @@ class OCRFallbackParser:
     def parse(self, image_bytes: bytes, filename: str | None = None) -> ParsedSlip:
         ocr = get_ocr_provider()
         ocr_result = ocr.extract_text(filename or 'upload', image_bytes)
-        parsed = parse_screenshot_text(ocr_result.raw_text, ocr_result.cleaned_text)
+        parsed = parse_screenshot_text(ocr_result.raw_text, ocr_result.cleaned_text, include_debug=self._debug_mode)
         legs = [ParsedSlipLeg(
             sport='NBA' if leg.stat_type else None,
             player_name=leg.player_name,

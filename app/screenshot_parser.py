@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from .models import Leg, ParsedScreenshotLeg, ParsedScreenshotResponse
+from .models import Leg, ParsedScreenshotLeg, ParsedScreenshotResponse, ScreenshotParseDebug
 from .parser import parse_text
 from .services.player_name_suggester import suggest_player_name
 
@@ -96,7 +96,7 @@ _LEG_WITH_DIRECTION = re.compile(
 _MARKET_FOLLOWUP_LINE = re.compile(r'^(?P<market>Triple\s*-?\s*Double|Double\s*-?\s*Double)$', re.I)
 _YES_NO_ONLY = re.compile(r'^(Yes|No)$', re.I)
 _DIRECTION_LINE_ONLY = re.compile(r'^(?P<dir>O|U|Over|Under)\s*(?P<line>\d+(?:\.\d+)?)$', re.I)
-_MARKET_ONLY_LINE = re.compile(r'^(?P<market>Pts|Points|Reb|Rebs|Rebounds|Ast|Asts|Assists|PRA|Pts\s*\+\s*Ast|Pts\s*\+\s*Reb|Reb\s*\+\s*Ast|3PM|3PT|Threes|Three\s+Pointers)$', re.I)
+_MARKET_ONLY_LINE = re.compile(r'^(?P<market>Pts|Points|Reb|Rebs|Rebounds|Ast|Asts|Assists|PRA|Pts\s*\+\s*Ast|Pts\s*\+\s*Reb|Reb\s*\+\s*Ast|Rebounds\s*\+\s*Assists|Points\s*\+\s*Assists|Points\s*\+\s*Rebounds|3PM|3PT|Threes|Three\s+Pointers)$', re.I)
 _ALT_MARKET_PHRASE = re.compile(
     r'^(?:TO\s+(?:SCORE|RECORD)\s+)?(?P<line>\d+(?:\.\d+)?)\s*\+\s*(?P<market>POINTS|REBOUNDS|ASSISTS|PRA)\b',
     re.I,
@@ -128,14 +128,16 @@ def _is_market_fragment_line(line: str) -> bool:
     )
 
 
-def _reconstruct_grouped_sgp_lines(lines: list[str]) -> list[str]:
+def _reconstruct_grouped_sgp_lines(lines: list[str]) -> tuple[list[str], bool]:
     reconstructed: list[str] = []
+    grouped_triggered = False
     idx = 0
     while idx < len(lines):
         line = lines[idx]
         reconstructed.append(line)
         if _looks_like_player_name_line(line):
-            for look_ahead in (1, 2):
+            fragments: list[str] = []
+            for look_ahead in range(1, 4):
                 next_idx = idx + look_ahead
                 if next_idx >= len(lines):
                     break
@@ -143,11 +145,15 @@ def _reconstruct_grouped_sgp_lines(lines: list[str]) -> list[str]:
                 if _is_noise_line(candidate):
                     continue
                 if _is_market_fragment_line(candidate):
-                    reconstructed.append(candidate)
-                    idx = next_idx
+                    fragments.append(candidate)
+                    continue
                 break
+            if fragments:
+                grouped_triggered = True
+                reconstructed.extend(fragments)
+                idx += len(fragments)
         idx += 1
-    return reconstructed
+    return reconstructed, grouped_triggered
 
 
 
@@ -367,14 +373,37 @@ def _title_name(raw_name: str) -> str:
     return re.sub(r'\s+', ' ', raw_name).strip()
 
 
-def normalize_sportsbook_ocr_text(text: str) -> str:
+def _build_screenshot_parse_stages(text: str) -> tuple[str, ScreenshotParseDebug]:
     raw_lines = text.replace('\r', '\n').split('\n')
     normalized_lines = [_normalize_line_text(line) for line in raw_lines]
     cleaned_lines = [line for line in normalized_lines if line]
-    reconstructed_lines = _reconstruct_grouped_sgp_lines(cleaned_lines)
+    reconstructed_lines, grouped_triggered = _reconstruct_grouped_sgp_lines(cleaned_lines)
     filtered_lines = [line for line in reconstructed_lines if line and not _is_noise_line(line)]
     leg_candidates = _build_leg_candidates(filtered_lines)
-    return '\n'.join(line for line in leg_candidates if line).strip()
+    normalized_text = '\n'.join(line for line in leg_candidates if line).strip()
+    non_empty_raw_lines = [line for line in raw_lines if line.strip()]
+    return normalized_text, ScreenshotParseDebug(
+        raw_ocr_text=text,
+        raw_lines=non_empty_raw_lines,
+        normalized_lines=cleaned_lines,
+        reconstructed_lines=reconstructed_lines,
+        filtered_lines=filtered_lines,
+        leg_candidates=leg_candidates,
+        grouped_sgp_reconstruction_triggered=grouped_triggered,
+        summary={
+            'raw_line_count': len(non_empty_raw_lines),
+            'normalized_line_count': len(cleaned_lines),
+            'reconstructed_line_count': len(reconstructed_lines),
+            'filtered_line_count': len(filtered_lines),
+            'leg_candidate_count': len(leg_candidates),
+            'grouped_sgp_reconstruction_triggered': grouped_triggered,
+        },
+    )
+
+
+def normalize_sportsbook_ocr_text(text: str) -> str:
+    normalized, _ = _build_screenshot_parse_stages(text)
+    return normalized
 
 
 def _detect_bet_date(text: str) -> str | None:
@@ -447,9 +476,9 @@ def _leg_to_parsed(leg: Leg) -> ParsedScreenshotLeg:
     )
 
 
-def parse_screenshot_text(raw_text: str, cleaned_text: str) -> ParsedScreenshotResponse:
+def parse_screenshot_text(raw_text: str, cleaned_text: str, *, include_debug: bool = False) -> ParsedScreenshotResponse:
     parse_warnings: list[str] = []
-    sportsbook_normalized = normalize_sportsbook_ocr_text(cleaned_text or raw_text)
+    sportsbook_normalized, parse_debug = _build_screenshot_parse_stages(cleaned_text or raw_text)
     parse_input = _normalize_ocr_text_for_parsing(sportsbook_normalized)
     legs = parse_text(parse_input)
 
@@ -484,10 +513,23 @@ def parse_screenshot_text(raw_text: str, cleaned_text: str) -> ParsedScreenshotR
     if not parsed_legs:
         parse_warnings.append('No complete prop legs were confidently extracted from the screenshot.')
 
+    if include_debug:
+        summary = parse_debug.summary
+        parse_warnings.append(
+            'debug_summary: raw_lines={raw} reconstructed={reconstructed} filtered={filtered} candidates={candidates} grouped_reconstruction={grouped}'.format(
+                raw=summary.get('raw_line_count', 0),
+                reconstructed=summary.get('reconstructed_line_count', 0),
+                filtered=summary.get('filtered_line_count', 0),
+                candidates=summary.get('leg_candidate_count', 0),
+                grouped=summary.get('grouped_sgp_reconstruction_triggered', False),
+            )
+        )
+
     return ParsedScreenshotResponse(
         raw_text=raw_text,
         parsed_legs=parsed_legs,
         detected_bet_date=_detect_bet_date(raw_text),
         parse_warnings=parse_warnings,
         confidence='medium' if parsed_legs else 'low',
+        parse_debug=parse_debug if include_debug else None,
     )

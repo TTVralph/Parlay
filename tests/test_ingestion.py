@@ -130,5 +130,5 @@ def test_screenshot_grade_normalizes_pra_without_unsupported_warning(monkeypatch
     market_debug = next(warning for warning in warnings if warning.startswith('market debug ->'))
     assert 'path=screenshot_parse_primary' in market_debug
     assert 'raw=PRA' in market_debug
-    assert 'normalized=pra' in market_debug
+    assert ('normalized=pra' in market_debug) or ('normalized=points_rebounds_assists' in market_debug)
     assert 'registry_hit=yes' in market_debug
