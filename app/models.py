@@ -358,15 +358,19 @@ class AnalyzeLegRisk(BaseModel):
     estimated_baseline: Optional[float] = None
     risk_score: float
     risk_label: Literal['low', 'medium', 'high']
+    short_advisory_text: str = ''
     explanation: str
     confidence: float
     advisory_reason_codes: list[str] = Field(default_factory=list)
     supported_market: bool = True
     offered_american_odds: Optional[int] = None
+    market_average_line: Optional[float] = None
+    user_line: Optional[float] = None
     market_line: Optional[float] = None
     line_difference: Optional[float] = None
     line_value_score: Optional[float] = None
-    line_value_label: Literal['good', 'neutral', 'bad'] = 'neutral'
+    line_value_label: Literal['good', 'neutral', 'bad', 'unknown'] = 'unknown'
+    line_value_text: str = 'Line value unknown'
 
 
 class AnalyzeSlipResponse(BaseModel):
@@ -383,6 +387,10 @@ class AnalyzeSlipResponse(BaseModel):
     leg_risk_scores: list[AnalyzeLegRisk] = Field(default_factory=list)
     supported_leg_count: int = 0
     unsupported_leg_count: int = 0
+    same_game_group_count: int = 0
+    same_game_leg_count: int = 0
+    correlation_risk_label: Literal['low', 'medium', 'high'] = 'low'
+    correlation_note: str = ''
     advisory_only: bool = True
 
 
