@@ -4,7 +4,8 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
-from .line_value_analyzer import SUPPORTED_PROP_MARKETS, analyze_line_value
+from .betstack_provider import BetStackProvider
+from .line_value_analyzer import SUPPORTED_PROP_MARKETS, analyze_line_value, analyze_line_value_against_market_line
 from ..models import AnalyzeLegRisk, AnalyzeSlipResponse, Leg
 
 SUPPORTED_MARKETS = {
@@ -122,9 +123,9 @@ def _odds_adjustment(odds_ctx: _OddsContext) -> tuple[float, list[str]]:
     return 0.2, codes
 
 
-def _line_value_text(line_label: str, has_market_data: bool) -> str:
+def _line_value_text(line_label: str, has_market_data: bool, source: str | None = None) -> str:
     if not has_market_data:
-        return 'Line value unknown'
+        return 'Consensus line unavailable. Using statistical baseline.'
     if line_label == 'good':
         return 'Good line versus market consensus'
     if line_label == 'bad':
@@ -132,7 +133,7 @@ def _line_value_text(line_label: str, has_market_data: bool) -> str:
     return 'Neutral line versus market consensus'
 
 
-def _friendly_explanation(subject: str, market_type: str, risk_label: str, line_value_label: str, has_market_data: bool) -> str:
+def _friendly_explanation(subject: str, market_type: str, risk_label: str, line_value_label: str, has_market_data: bool, line_source: str | None = None) -> str:
     market_name = market_type.replace('_', ' ')
     market_part = f'{subject}: {market_name} leg graded as {risk_label} risk.'
     if has_market_data:
@@ -141,14 +142,14 @@ def _friendly_explanation(subject: str, market_type: str, risk_label: str, line_
             'bad': 'Market check says your number is worse than the average book line.',
         }.get(line_value_label, 'Market check says this line is close to average.')
     else:
-        line_part = 'Market comparison unavailable, so line value is unknown.'
+        line_part = 'Consensus line unavailable. Using statistical baseline.'
     return f'{market_part} {line_part}'
 
 
-def _short_advisory_text(risk_label: str, confidence: float, has_market_data: bool) -> str:
+def _short_advisory_text(risk_label: str, confidence: float, has_market_data: bool, line_source: str | None = None) -> str:
     confidence_label = 'high' if confidence >= 0.8 else ('medium' if confidence >= 0.55 else 'low')
     if not has_market_data:
-        return f'{risk_label.title()} risk read with {confidence_label} confidence. Limited confidence due to missing market data.'
+        return f'{risk_label.title()} risk read with {confidence_label} confidence. Consensus line unavailable. Using statistical baseline.'
     return f'{risk_label.title()} risk read with {confidence_label} confidence.'
 
 
@@ -259,7 +260,24 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
     confidence = _clamp(parse_conf, 0.2, 0.98)
     confidence = round(confidence if supported else confidence * 0.65, 2)
 
-    line_value = analyze_line_value(leg)
+    betstack = BetStackProvider.from_env()
+    betstack_line = betstack.lookup_leg_line(leg)
+    if betstack_line and betstack_line.get('line') is not None:
+        line_value = analyze_line_value_against_market_line(leg, float(betstack_line['line']), 'betstack_consensus')
+    elif betstack_line and leg.market_type == 'moneyline' and betstack_line.get('american_odds') is not None:
+        line_value = analyze_line_value_against_market_line(leg, float(betstack_line['american_odds']), 'betstack_consensus')
+    else:
+        line_value = analyze_line_value(leg)
+        if line_value.market_average_line is None:
+            line_value = line_value.__class__(
+                market_average_line=line_value.market_average_line,
+                user_line=line_value.user_line,
+                line_difference=line_value.line_difference,
+                line_value_score=line_value.line_value_score,
+                line_value_label=line_value.line_value_label,
+                line_value_source='statistical_baseline',
+                providers_used=line_value.providers_used,
+            )
     has_market_data = line_value.market_average_line is not None
     if leg.market_type in SUPPORTED_PROP_MARKETS and not has_market_data:
         reason_codes.append('line_value_missing_market_data')
@@ -269,9 +287,9 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
             reason_codes.append('line_value_unknown')
         reason_codes.append('market_comparison_unavailable')
 
-    explanation = _friendly_explanation(subject, market_type, risk_label, line_value.line_value_label, has_market_data)
-    short_advisory_text = _short_advisory_text(risk_label, confidence, has_market_data)
-    line_value_text = _line_value_text(line_value.line_value_label, has_market_data)
+    explanation = _friendly_explanation(subject, market_type, risk_label, line_value.line_value_label, has_market_data, line_value.line_value_source)
+    short_advisory_text = _short_advisory_text(risk_label, confidence, has_market_data, line_value.line_value_source)
+    line_value_text = _line_value_text(line_value.line_value_label, has_market_data, line_value.line_value_source)
 
     return AnalyzeLegRisk(
         leg_id=leg.leg_id,
@@ -295,6 +313,7 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
         line_value_score=line_value.line_value_score,
         line_value_label=line_value.line_value_label,
         line_value_text=line_value_text,
+        line_value_source=line_value.line_value_source,
     )
 
 

@@ -32,6 +32,7 @@ class LineValueAnalysis:
     line_difference: float | None
     line_value_score: float | None
     line_value_label: str
+    line_value_source: str | None = None
     providers_used: tuple[str, ...] = ()
 
 
@@ -177,5 +178,19 @@ def analyze_line_value(leg: Leg) -> LineValueAnalysis:
         line_difference=line_diff,
         line_value_score=score,
         line_value_label=label,
+        line_value_source='market_consensus',
         providers_used=tuple(sorted(deduped.keys())),
+    )
+
+
+def analyze_line_value_against_market_line(leg: Leg, market_line: float, source: str) -> LineValueAnalysis:
+    user_line, line_diff, score = _score_line_value(leg, market_line)
+    return LineValueAnalysis(
+        market_average_line=round(market_line, 2),
+        user_line=user_line,
+        line_difference=line_diff,
+        line_value_score=score,
+        line_value_label=_label_from_score(score),
+        line_value_source=source,
+        providers_used=(source,),
     )

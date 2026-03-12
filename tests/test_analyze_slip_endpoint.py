@@ -28,6 +28,7 @@ def test_analyze_slip_response_shape() -> None:
     assert 'line_difference' in first_leg
     assert 'line_value_score' in first_leg
     assert first_leg['line_value_label'] in {'good', 'neutral', 'bad', 'unknown'}
+    assert 'line_value_source' in first_leg
 
 
 def test_analyze_mode_does_not_change_check_slip_shape() -> None:
@@ -64,7 +65,8 @@ def test_analyze_supported_prop_handles_missing_market_data_gracefully() -> None
     assert leg['line_difference'] is None
     assert leg['line_value_score'] is None
     assert leg['line_value_label'] == 'unknown'
-    assert leg['line_value_text'] == 'Line value unknown'
+    assert leg['line_value_text'] == 'Consensus line unavailable. Using statistical baseline.'
+    assert leg['line_value_source'] == 'statistical_baseline'
     assert 'risk read' in leg['short_advisory_text']
 
 
