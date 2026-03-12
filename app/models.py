@@ -229,6 +229,11 @@ class SoldLegExplanation(BaseModel):
     event_id: Optional[str] = None
     play_by_play_supported: bool = False
     last_relevant_context: Optional[str] = None
+    kill_moment_supported: bool = False
+    kill_moment_summary: Optional[str] = None
+    last_relevant_play_text: Optional[str] = None
+    last_relevant_period: Optional[str] = None
+    last_relevant_clock: Optional[str] = None
     explanation_source: Literal['snapshot_only', 'snapshot_plus_pbp'] = 'snapshot_only'
 
 
