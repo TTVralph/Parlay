@@ -231,3 +231,38 @@ def test_inline_alt_market_phrases_parse_with_ocr_spacing_variants() -> None:
         'Nikola Jokic 12+ Assists',
         'Aaron Gordon 32+ Points + Rebounds + Assists',
     ]
+
+
+def test_top_grouped_sgp_lines_are_reconstructed_and_parsed() -> None:
+    raw = """
+    Same Game Parlay
+    Lakers @ Celtics
+    LeBron James
+    Points
+    Over 24.5
+    Anthony Davis
+    Rebounds
+    Under 11.5
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert normalized.splitlines() == [
+        'LeBron James Over 24.5 Points',
+        'Anthony Davis Under 11.5 Rebounds',
+    ]
+
+
+def test_mixed_sgp_and_standalone_dark_theme_style_lines_parse() -> None:
+    raw = """
+    same game parlay
+    warriors @ celtics
+    stephen curry
+    assists
+    o 5.5
+    Jayson Tatum Over 29.5 Pts
+    """
+    normalized = normalize_sportsbook_ocr_text(raw)
+    assert 'stephen curry Over 5.5 Assists' in normalized
+    parsed = parse_screenshot_text(raw, raw)
+    labels = [leg.normalized_label for leg in parsed.parsed_legs]
+    assert 'Stephen Curry Over 5.5 Assists' in labels
+    assert 'Jayson Tatum Over 29.5 Points' in labels

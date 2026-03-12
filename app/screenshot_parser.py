@@ -105,11 +105,58 @@ _INLINE_ALT_MARKET = re.compile(
     r"^(?!TO\b)(?P<name>[A-Za-z\-'’\. ]+?)\s+(?:TO\s+(?:SCORE|RECORD)\s+)?(?P<line>\d+(?:\.\d+)?)\s*\+\s*(?P<market>POINTS|REBOUNDS|ASSISTS|PRA)\b",
     re.I,
 )
+_PLAYER_NAME_LINE = re.compile(r"^[A-Za-z][A-Za-z\-'’\.]+(?:\s+[A-Za-z][A-Za-z\-'’\.]+){1,3}$")
+
+
+def _looks_like_player_name_line(line: str) -> bool:
+    if not _PLAYER_NAME_LINE.match(line):
+        return False
+    lowered = line.lower()
+    blocked = {'over', 'under', 'yes', 'no', 'points', 'assists', 'rebounds', 'threes', 'parlay'}
+    return not any(token in lowered.split() for token in blocked)
+
+
+def _is_market_fragment_line(line: str) -> bool:
+    return bool(
+        _OU_MARKET_LINE.match(line)
+        or _DIRECTION_LINE_ONLY.match(line)
+        or _MARKET_ONLY_LINE.match(line)
+        or _YES_NO_LINE.match(line)
+        or _YES_NO_ONLY.match(line)
+        or _MARKET_FOLLOWUP_LINE.match(line)
+        or _ALT_MARKET_PHRASE.match(line)
+    )
+
+
+def _reconstruct_grouped_sgp_lines(lines: list[str]) -> list[str]:
+    reconstructed: list[str] = []
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        reconstructed.append(line)
+        if _looks_like_player_name_line(line):
+            for look_ahead in (1, 2):
+                next_idx = idx + look_ahead
+                if next_idx >= len(lines):
+                    break
+                candidate = lines[next_idx]
+                if _is_noise_line(candidate):
+                    continue
+                if _is_market_fragment_line(candidate):
+                    reconstructed.append(candidate)
+                    idx = next_idx
+                break
+        idx += 1
+    return reconstructed
+
+
 
 
 def _is_noise_line(line: str) -> bool:
     lowered = line.lower()
     if any(noise in lowered for noise in _NOISE_KEYWORDS):
+        if 'same game parlay' in lowered and any(token in lowered for token in ('over', 'under', '+', 'yes', 'no')):
+            return False
         return True
     if _ODDS_ONLY_LINE.match(line):
         return True
@@ -118,6 +165,8 @@ def _is_noise_line(line: str) -> bool:
     if 'bet slip' in lowered:
         return True
     if lowered in {'draftkings', 'fanduel', 'bet365', 'betmgm', 'bet slip'}:
+        return True
+    if '@' in line and all(part.strip() for part in line.split('@', 1)):
         return True
     return bool(_MATCHUP_TIME_LINE.match(line))
 
@@ -152,6 +201,7 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
     pending_yes_no_name: str | None = None
     pending_yes_no_market: str | None = None
     pending_yes_no_selection: str | None = None
+    pending_market_only: str | None = None
     pending_direction: str | None = None
     pending_line: str | None = None
 
@@ -188,6 +238,10 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
 
         direction_only = _DIRECTION_LINE_ONLY.match(line)
         if direction_only and current_player:
+            if pending_market_only:
+                normalized.append(_format_ou_leg(current_player, direction_only.group('dir'), direction_only.group('line'), pending_market_only))
+                pending_market_only = None
+                continue
             pending_direction = direction_only.group('dir')
             pending_line = direction_only.group('line')
             continue
@@ -199,6 +253,16 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
                 pending_direction = None
                 pending_line = None
                 continue
+
+        market_only = _MARKET_ONLY_LINE.match(line)
+        if market_only and current_player:
+            if pending_direction and pending_line:
+                normalized.append(_format_ou_leg(current_player, pending_direction, pending_line, market_only.group('market')))
+                pending_direction = None
+                pending_line = None
+            else:
+                pending_market_only = market_only.group('market')
+            continue
 
         if pending_yes_no_name and _YES_NO_ONLY.match(line):
             pending_yes_no_selection = line.title()
@@ -229,11 +293,14 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
             normalized.append(f'{current_player} {market} {selection}')
             continue
 
-        if _PLAYER_ONLY_LINE.match(line) and not _MARKET_FOLLOWUP_LINE.match(line):
+        if _looks_like_player_name_line(line) and not _MARKET_FOLLOWUP_LINE.match(line):
             current_player = _title_name(line)
             pending_yes_no_name = current_player
             pending_yes_no_market = None
             pending_yes_no_selection = None
+            pending_market_only = None
+            pending_direction = None
+            pending_line = None
             continue
 
         alt_market = _ALT_MARKET_PHRASE.match(line)
@@ -303,8 +370,10 @@ def _title_name(raw_name: str) -> str:
 def normalize_sportsbook_ocr_text(text: str) -> str:
     raw_lines = text.replace('\r', '\n').split('\n')
     normalized_lines = [_normalize_line_text(line) for line in raw_lines]
-    cleaned_lines = [line for line in normalized_lines if line and not _is_noise_line(line)]
-    leg_candidates = _build_leg_candidates(cleaned_lines)
+    cleaned_lines = [line for line in normalized_lines if line]
+    reconstructed_lines = _reconstruct_grouped_sgp_lines(cleaned_lines)
+    filtered_lines = [line for line in reconstructed_lines if line and not _is_noise_line(line)]
+    leg_candidates = _build_leg_candidates(filtered_lines)
     return '\n'.join(line for line in leg_candidates if line).strip()
 
 
