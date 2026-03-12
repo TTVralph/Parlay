@@ -8,6 +8,7 @@ from .models import Leg
 from .identity_resolution import get_canonical_player_identity, normalize_entity_name, resolve_player_identity
 from .providers.base import EventInfo, ResultsProvider
 from .services.nba_game_resolver import resolve_player_game
+from .services.daily_event_manifest import DailyEventManifestService
 from .services.scoreboard_provider import ESPNScoreboardProvider
 
 AMBIGUOUS_EVENT_WARNING = 'multiple games found for resolved team on date'
@@ -319,6 +320,7 @@ def resolve_leg_events(
     bet_date: date | None = None,
     screenshot_default_date: date | None = None,
     scoreboard_provider: ESPNScoreboardProvider | None = None,
+    daily_manifest_service: DailyEventManifestService | None = None,
 ) -> list[Leg]:
     explicit_slip_date = bet_date
     slip_default_date = explicit_slip_date or screenshot_default_date or (posted_at if isinstance(posted_at, date) and not isinstance(posted_at, datetime) else None)
@@ -339,6 +341,7 @@ def resolve_leg_events(
         anchor_input = None
     anchor = anchor_input
     scoreboard_provider = scoreboard_provider or ESPNScoreboardProvider()
+    daily_manifest_service = daily_manifest_service or DailyEventManifestService(scoreboard_provider=scoreboard_provider)
 
     resolved: list[Leg] = []
     resolved_event_ids: set[str] = set()
@@ -505,11 +508,19 @@ def resolve_leg_events(
             and (not player_team or not opponent)
         )
         if should_use_scoreboard:
-            scoreboard_hits = scoreboard_provider.resolve_event_candidates(
-                slip_default_date.isoformat(),
-                team_query=leg.resolved_team or player_team,
-                opponent_query=opponent,
-            )
+            manifest = None
+            try:
+                manifest = daily_manifest_service.get_daily_manifest('NBA', slip_default_date)
+                scoreboard_hits = daily_manifest_service.find_candidate_events_for_leg(manifest, leg)
+            except Exception:
+                scoreboard_hits = []
+
+            if not scoreboard_hits:
+                scoreboard_hits = scoreboard_provider.resolve_event_candidates(
+                    slip_default_date.isoformat(),
+                    team_query=leg.resolved_team or player_team,
+                    opponent_query=opponent,
+                )
             candidates, narrowed_by_scoreboard = _narrow_candidates_with_scoreboard(candidates, scoreboard_hits)
             if narrowed_by_scoreboard:
                 resolution_warnings.append('scoreboard_date_narrowing_used')
