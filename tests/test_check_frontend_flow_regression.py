@@ -31,7 +31,7 @@ def test_screenshot_parse_then_check_flow_stays_in_place() -> None:
     assert 'setScreenshotUploadBusy(true);' in script
     assert 'setScreenshotUploadBusy(false);' in script
     assert 'resetScreenshotInputValue();' in script
-    assert "Screenshot parsed. Review/edit the text, then click Check Slip." in script
+    assert "Screenshot parsed. Review/edit the text, then click ${activeSlipMode===modeAnalyze?'Analyze Slip':'Check Slip'}." in script
     assert "Screenshot parsed with limited confidence. Existing text was preserved for safety." in script
     assert "return;" in script  # first submit exits after parsing
     assert "const existingSlipText=slip.value.trim();" in script
@@ -55,7 +55,20 @@ def test_upload_input_is_clickable_after_parse_success_and_low_confidence_paths(
     assert 'slipImage.disabled=screenshotParseInFlight;' in script
     assert 'removeScreenshotBtn.disabled=screenshotParseInFlight;' in script
     assert "uploadWrap.classList.toggle('is-busy',screenshotParseInFlight);" in script
-    assert "msg.textContent=parsedLegs.length?'Screenshot parsed. Review/edit the text, then click Check Slip.':'Screenshot parsed with limited confidence. Existing text was preserved for safety.';" in script
+    assert "msg.textContent=parsedLegs.length" in script
+    assert "?`Screenshot parsed. Review/edit the text, then click ${activeSlipMode===modeAnalyze?'Analyze Slip':'Check Slip'}.`" in script
+    assert " :'Screenshot parsed with limited confidence. Existing text was preserved for safety.';" in script
+
+
+def test_analyze_mode_uses_screenshot_parse_before_analyzer_call() -> None:
+    script = _check_page_script()
+    assert "const shouldParseScreenshot=Boolean(file)&&screenshotNeedsParse;" in script
+    assert "if(shouldParseScreenshot){" in script
+    assert "}else if(activeSlipMode===modeAnalyze){" in script
+    assert "res=await fetch('/analyze-slip'" in script
+    assert "res=await fetch('/check-slip'" in script
+    assert "resetRenderedSlipResult();" in script
+    assert 'Analyze Slip complete. Advisory only — not a guarantee.' in script
 
 
 def test_upload_input_state_resets_after_screenshot_removal() -> None:
