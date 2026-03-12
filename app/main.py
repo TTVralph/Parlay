@@ -919,7 +919,91 @@ def allsports_test_page() -> HTMLResponse:
 
 @app.get('/', response_class=HTMLResponse)
 def public_home_page() -> HTMLResponse:
-    html = """<!doctype html><html><head><title>ParlayBot</title><style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:760px;color:#0f172a;}h1{margin:0 0 10px;}p{margin:0 0 18px;color:#475569;}.actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;}a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;}.cta{background:#0f172a;color:#fff;}.secondary{border:1px solid #cbd5e1;color:#0f172a;}</style></head><body><h1>Did This Parlay Cash?</h1><p>Paste your bet slip and instantly see if it hit.</p><div class='actions'><a class='cta' href='/check'>Check a Slip</a></div></body></html>"""
+    html = """<!doctype html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8' />
+  <meta name='viewport' content='width=device-width, initial-scale=1' />
+  <title>ParlayBot</title>
+  <style>
+    :root{--bg:#070b14;--bg-soft:#0b1220;--surface:#111a2d;--surface-elev:#16223a;--border:#263954;--text:#f8fbff;--muted:#95a5c4;--primary:#3b82f6;--primary-2:#60a5fa;color-scheme:dark;}
+    :root[data-theme='light']{--bg:#edf3ff;--bg-soft:#e2ebfb;--surface:#ffffff;--surface-elev:#f8fbff;--border:#cfddf1;--text:#0f172a;--muted:#475569;--primary:#2563eb;--primary-2:#1d4ed8;color-scheme:light;}
+    *{box-sizing:border-box;}
+    body{margin:0;font-family:Inter,system-ui,Arial,Helvetica,sans-serif;background:radial-gradient(1200px 600px at 5% -10%,#1d4ed833,transparent 65%),radial-gradient(1000px 600px at 95% -20%,#9333ea2e,transparent 62%),var(--bg);color:var(--text);}
+    .shell{max-width:1080px;margin:0 auto;padding:28px 18px 44px;}
+    .hero{border:1px solid var(--border);background:linear-gradient(160deg,var(--surface) 0%,var(--surface-elev) 60%,#1e3a8a26 100%);border-radius:26px;padding:28px;box-shadow:0 20px 60px #02061766;}
+    .kicker{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;border:1px solid #60a5fa55;background:#60a5fa22;color:#bfdbfe;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;}
+    h1{margin:16px 0 10px;font-size:clamp(32px,6vw,56px);line-height:1.02;letter-spacing:-.02em;max-width:14ch;}
+    .hero-sub{margin:0;max-width:64ch;color:var(--muted);font-size:clamp(16px,2.2vw,20px);line-height:1.55;}
+    .actions{margin-top:22px;display:flex;gap:12px;flex-wrap:wrap;}
+    .btn{text-decoration:none;border-radius:14px;padding:13px 18px;font-weight:800;letter-spacing:.01em;display:inline-flex;align-items:center;justify-content:center;min-height:46px;}
+    .btn-primary{background:linear-gradient(180deg,var(--primary),var(--primary-2));color:#fff;border:1px solid #1d4ed8;}
+    .btn-secondary{border:1px solid var(--border);background:var(--bg-soft);color:var(--text);}
+    .section-title{margin:28px 0 12px;font-size:24px;letter-spacing:-.01em;}
+    .features{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;}
+    .feature{border:1px solid var(--border);background:var(--surface);border-radius:16px;padding:16px;}
+    .feature h3{margin:0 0 6px;font-size:16px;}
+    .feature p{margin:0;color:var(--muted);line-height:1.5;font-size:14px;}
+    .example{margin-top:12px;border:1px solid #7f1d1d66;background:linear-gradient(140deg,#450a0a 0%,#7f1d1d 60%,#991b1b 100%);border-radius:16px;padding:16px;color:#fff1f2;}
+    .example h3{margin:0 0 4px;font-size:14px;letter-spacing:.05em;text-transform:uppercase;opacity:.95;}
+    .example .headline{font-size:24px;font-weight:900;margin-bottom:6px;}
+    .example p{margin:0;color:#fecdd3;line-height:1.5;}
+    .chips{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;}
+    .chip{border-radius:999px;padding:5px 10px;font-size:12px;font-weight:800;border:1px solid #fecdd588;background:#fff1f526;color:#ffe4e6;}
+    @media (max-width:860px){.features{grid-template-columns:1fr;}.hero{padding:22px;}.shell{padding:18px 14px 34px;}}
+  </style>
+</head>
+<body>
+  <main class='shell'>
+    <section class='hero'>
+      <div class='kicker'>ParlayBot · Slip Intelligence</div>
+      <h1>Find the Leg That Sold Your Parlay</h1>
+      <p class='hero-sub'>ParlayBot grades settled bet slips leg-by-leg, highlights the exact leg that broke the ticket, and explains the kill moment. Use the new pre-game analyzer to identify fragile legs before you place the bet.</p>
+      <div class='actions'>
+        <a class='btn btn-primary' href='/check?mode=settle'>Check a Settled Slip</a>
+        <a class='btn btn-secondary' href='/check?mode=analyze'>Analyze a Parlay Before You Bet</a>
+      </div>
+    </section>
+
+    <h2 class='section-title'>What you get</h2>
+    <section class='features'>
+      <article class='feature'>
+        <h3>Sold Leg Detection</h3>
+        <p>Pinpoint the exact leg that flipped your ticket from live to dead, with plain-language reasoning tied to the market.</p>
+      </article>
+      <article class='feature'>
+        <h3>Kill Moment Explanation</h3>
+        <p>See the specific game sequence that killed the slip so you understand not just what lost, but when and why.</p>
+      </article>
+      <article class='feature'>
+        <h3>Pre-Game Slip Analyzer</h3>
+        <p>Before locking your parlay, run an advisory pass to surface weaker legs and get a risk-forward read.</p>
+      </article>
+    </section>
+
+    <section class='example'>
+      <h3>Example result preview</h3>
+      <div class='headline'>LOST · Sold by Luka Dončić O31.5 PTS</div>
+      <p>Kill moment: Entered the 4th quarter at 26 points and finished with 30 after foul trouble limited closing usage.</p>
+      <div class='chips'>
+        <span class='chip'>Hit legs: 4</span>
+        <span class='chip'>Missed legs: 1</span>
+        <span class='chip'>Confidence: High</span>
+      </div>
+    </section>
+  </main>
+  <script>
+    (function(){
+      const root=document.documentElement;
+      const stored=localStorage.getItem('parlay_theme_mode')||'system';
+      if(stored==='light'){root.setAttribute('data-theme','light');return;}
+      if(stored==='dark'){root.setAttribute('data-theme','dark');return;}
+      const prefersDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;
+      root.setAttribute('data-theme',prefersDark?'dark':'light');
+    })();
+  </script>
+</body>
+</html>"""
     return HTMLResponse(html)
 
 
@@ -1243,8 +1327,11 @@ Murray over 2.5 threes'></textarea>
     }
 
     function initSlipMode(){
+      const params=new URLSearchParams(window.location.search);
+      const queryMode=params.get('mode');
+      const querySelected=queryMode===modeAnalyze?modeAnalyze:(queryMode===modeSettle?modeSettle:null);
       const stored=localStorage.getItem(slipModeStorageKey);
-      applySlipMode(stored===modeAnalyze?modeAnalyze:modeSettle);
+      applySlipMode(querySelected||(stored===modeAnalyze?modeAnalyze:modeSettle));
       modeSettleBtn.addEventListener('click',()=>applySlipMode(modeSettle));
       modeAnalyzeBtn.addEventListener('click',()=>applySlipMode(modeAnalyze));
     }
