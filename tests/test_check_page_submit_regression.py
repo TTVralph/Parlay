@@ -9,6 +9,13 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
+def _check_page_html() -> str:
+    client = TestClient(app)
+    response = client.get('/check')
+    assert response.status_code == 200
+    return response.text
+
+
 def _extract_check_page_script() -> str:
     client = TestClient(app)
     response = client.get('/check')
@@ -55,3 +62,24 @@ def test_check_page_script_shows_non_blocking_payout_message() -> None:
 
     assert 'else if(data.payout_message)' in script
     assert 'payoutOut.textContent=data.payout_message;' in script
+
+
+def test_check_page_buttons_use_explicit_non_submit_types_for_spa_controls() -> None:
+    html = _check_page_html()
+
+    assert "id='checkBtn' type='button'" in html
+    assert "id='refreshRecentBtn' class='secondary' type='button'" in html
+    assert "id='removeScreenshotBtn' class='secondary' type='button'" in html
+    assert 'button type="button" class="secondary" data-apply-leg="${item.legIndex}">Apply</button>' in html
+
+
+def test_check_page_script_binds_manual_click_handlers_for_async_flows() -> None:
+    script = _extract_check_page_script()
+
+    assert "btn.addEventListener('click',async()=>{" in script
+    assert "form.addEventListener('submit',async(event)=>{" in script
+    assert "event.preventDefault();" in script
+    assert "res=await fetch('/ingest/screenshot/parse'" in script
+    assert "res=await fetch('/check-slip'" in script
+    assert "pickBtn.type='button';" in script
+    assert "resetGameBtn.type='button';" in script
