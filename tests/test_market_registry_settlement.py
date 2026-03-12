@@ -28,6 +28,8 @@ class RegistryProvider:
             'player_steals': 1.0,
             'player_blocks': 2.0,
             'player_turnovers': 3.0,
+            'player_double_double': 0.0,
+            'player_triple_double': 0.0,
         }
 
     def get_event_info(self, event_id: str):
@@ -262,3 +264,118 @@ def test_settle_leg_snapshot_falls_back_to_provider_when_single_stat_missing(
     assert snapshot_diag.get('used_snapshot') is False
     assert snapshot_diag.get('provider_fallback_used') is True
     assert snapshot_diag.get('missing_snapshot_stat_key') is not None
+
+
+def test_settle_leg_snapshot_prefers_double_double_derived_market() -> None:
+    provider = RegistryProvider()
+    leg = Leg(
+        raw_text='Nikola Jokic double double',
+        sport='NBA',
+        market_type='player_double_double',
+        player='Nikola Jokic',
+        direction='yes',
+        line=1.0,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Boston Celtics @ Denver Nuggets',
+        resolved_team='Denver Nuggets',
+    )
+    snapshot = EventSnapshot(
+        event_id='evt-1',
+        home_team={'name': 'Denver Nuggets'},
+        away_team={'name': 'Boston Celtics'},
+        normalized_player_stats={
+            'nikolajokic': {
+                'player_id': '15',
+                'display_name': 'Nikola Jokic',
+                'stats': {'PTS': 31.0, 'REB': 12.0, 'AST': 9.0, 'STL': 2.0, 'BLK': 2.0},
+            }
+        },
+    )
+
+    graded = settle_leg(leg, provider, event_snapshot=snapshot)
+
+    assert graded.settlement == 'win'
+    assert graded.actual_value == 2.0
+    assert provider.player_result_calls == 0
+    snapshot_diag = graded.settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
+    assert snapshot_diag.get('used_snapshot') is True
+    assert snapshot_diag.get('provider_fallback_used') is False
+    assert snapshot_diag.get('required_component_stat_keys') == ['PTS', 'REB', 'AST', 'STL', 'BLK']
+    assert snapshot_diag.get('player_match_result') == 'matched'
+
+
+def test_settle_leg_snapshot_fallback_for_triple_double_when_component_missing() -> None:
+    provider = RegistryProvider()
+    provider.values['player_triple_double'] = 1.0
+    leg = Leg(
+        raw_text='Nikola Jokic triple double',
+        sport='NBA',
+        market_type='player_triple_double',
+        player='Nikola Jokic',
+        direction='yes',
+        line=1.0,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Boston Celtics @ Denver Nuggets',
+        resolved_team='Denver Nuggets',
+    )
+    snapshot = EventSnapshot(
+        event_id='evt-1',
+        home_team={'name': 'Denver Nuggets'},
+        away_team={'name': 'Boston Celtics'},
+        normalized_player_stats={
+            'nikolajokic': {
+                'player_id': '15',
+                'display_name': 'Nikola Jokic',
+                'stats': {'PTS': 31.0, 'REB': 12.0, 'AST': 10.0, 'STL': 2.0},
+            }
+        },
+    )
+
+    graded = settle_leg(leg, provider, event_snapshot=snapshot)
+
+    assert graded.settlement == 'win'
+    assert provider.player_result_calls > 0
+    snapshot_diag = graded.settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
+    assert snapshot_diag.get('used_snapshot') is False
+    assert snapshot_diag.get('provider_fallback_used') is True
+    assert snapshot_diag.get('missing_snapshot_stat_keys') == ['BLK']
+
+
+def test_settle_leg_snapshot_fallback_for_derived_market_when_player_match_fails() -> None:
+    provider = RegistryProvider()
+    provider.values['player_double_double'] = 1.0
+    leg = Leg(
+        raw_text='Nikola Jokic double double',
+        sport='NBA',
+        market_type='player_double_double',
+        player='Nikola Jokic',
+        direction='yes',
+        line=1.0,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Boston Celtics @ Denver Nuggets',
+        resolved_team='Denver Nuggets',
+        resolved_player_id='15',
+    )
+    snapshot = EventSnapshot(
+        event_id='evt-1',
+        home_team={'name': 'Denver Nuggets'},
+        away_team={'name': 'Boston Celtics'},
+        normalized_player_stats={
+            'somebodyelse': {
+                'player_id': '42',
+                'display_name': 'Someone Else',
+                'stats': {'PTS': 31.0, 'REB': 12.0, 'AST': 10.0, 'STL': 2.0, 'BLK': 1.0},
+            }
+        },
+    )
+
+    graded = settle_leg(leg, provider, event_snapshot=snapshot)
+
+    assert graded.settlement == 'win'
+    assert provider.player_result_calls > 0
+    snapshot_diag = graded.settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
+    assert snapshot_diag.get('player_match_result') == 'not_found'
+    assert snapshot_diag.get('provider_fallback_used') is True

@@ -117,6 +117,12 @@ _SNAPSHOT_COMBO_STAT_MARKETS = {
 }
 
 
+_SNAPSHOT_DERIVED_MARKET_COMPONENTS = {
+    'player_double_double': ('PTS', 'REB', 'AST', 'STL', 'BLK'),
+    'player_triple_double': ('PTS', 'REB', 'AST', 'STL', 'BLK'),
+}
+
+
 def _snapshot_player_entry(
     snapshot: EventSnapshot,
     *,
@@ -180,6 +186,34 @@ def get_player_combo_stat(
             return None
         values.append(value)
     return float(sum(values))
+
+
+def get_player_milestone_stat(
+    snapshot: EventSnapshot,
+    player_id: str | None,
+    market_type: str,
+    *,
+    player_name: str | None = None,
+) -> tuple[float | None, list[str]]:
+    component_keys = list(_SNAPSHOT_DERIVED_MARKET_COMPONENTS.get(market_type) or ())
+    if not component_keys:
+        return None, []
+
+    component_values: list[float] = []
+    missing_keys: list[str] = []
+    for key in component_keys:
+        value = get_player_stat(snapshot, player_id, key, player_name=player_name)
+        if value is None:
+            missing_keys.append(key)
+            continue
+        component_values.append(value)
+
+    if missing_keys:
+        return None, missing_keys
+
+    qualifying_categories = sum(1 for value in component_values if value >= 10.0)
+    threshold = 3 if market_type == 'player_triple_double' else 2
+    return (2.0 if qualifying_categories >= threshold else 0.0), []
 
 
 def _select_event_sequence_winner(market_type: str, events: list[PlayByPlayEvent]) -> str | None:
@@ -359,9 +393,12 @@ def _default_settlement_diagnostics(leg: Leg) -> dict[str, object]:
             'used_snapshot': False,
             'provider_fallback_used': False,
             'requested_stat_key': None,
+            'required_component_stat_keys': [],
             'player_id_resolved': bool(leg.resolved_player_id),
             'player_snapshot_found': False,
+            'player_match_result': 'not_attempted',
             'missing_snapshot_stat_key': None,
+            'missing_snapshot_stat_keys': [],
             'snapshot_coverage': None,
         },
     }
@@ -407,12 +444,17 @@ def _aggregate_snapshot_run_diagnostics(graded: list[GradedLeg]) -> dict[str, ob
         market_snapshot_details.append({
             'market_type': market_type,
             'stat_family': stat_family,
+            'snapshot_used': bool(snapshot_diag.get('used_snapshot')),
+            'provider_fallback': bool(snapshot_diag.get('provider_fallback_used')),
             'used_snapshot': bool(snapshot_diag.get('used_snapshot')),
             'provider_fallback_used': bool(snapshot_diag.get('provider_fallback_used')),
             'requested_stat_key': requested_stat_key,
+            'required_component_stat_keys': list(snapshot_diag.get('required_component_stat_keys') or []),
             'player_id_resolved': bool(snapshot_diag.get('player_id_resolved')),
             'player_snapshot_found': bool(snapshot_diag.get('player_snapshot_found')),
+            'player_match_result': snapshot_diag.get('player_match_result'),
             'missing_snapshot_stat_key': snapshot_diag.get('missing_snapshot_stat_key'),
+            'missing_snapshot_stat_keys': list(snapshot_diag.get('missing_snapshot_stat_keys') or []),
             'event_id': str(((leg.event_id or leg.matched_event_id) if leg else '') or ''),
             'sport': str((leg.sport if leg else '') or ''),
             'league': str((leg.sport if leg else '') or ''),
@@ -424,6 +466,9 @@ def _aggregate_snapshot_run_diagnostics(graded: list[GradedLeg]) -> dict[str, ob
         missing_key = snapshot_diag.get('missing_snapshot_stat_key')
         if missing_key:
             missing_snapshot_keys.add(str(missing_key))
+        for key in snapshot_diag.get('missing_snapshot_stat_keys') or []:
+            if key:
+                missing_snapshot_keys.add(str(key))
         if snapshot_diag.get('player_id_resolved') and not snapshot_diag.get('player_snapshot_found'):
             player_name = item.resolved_player_name or (item.leg.player if item.leg else None)
             if player_name:
@@ -799,7 +844,7 @@ def settle_leg(
             settlement_diagnostics['settlement_failure_reason'] = 'market mapping missing'
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.MARKET_MAPPING_MISSING
 
-    snapshot_supported_markets = set(_SNAPSHOT_SINGLE_STAT_MARKETS) | set(_SNAPSHOT_COMBO_STAT_MARKETS)
+    snapshot_supported_markets = set(_SNAPSHOT_SINGLE_STAT_MARKETS) | set(_SNAPSHOT_COMBO_STAT_MARKETS) | set(_SNAPSHOT_DERIVED_MARKET_COMPONENTS)
     used_snapshot = False
     snapshot_entry = None
     snapshot_diag = settlement_diagnostics.get('snapshot_stat_diagnostics')
@@ -807,8 +852,9 @@ def settle_leg(
         snapshot_diag['player_id_resolved'] = bool(leg.resolved_player_id)
     if event_snapshot is not None and leg.market_type in snapshot_supported_markets:
         if isinstance(snapshot_diag, dict):
-            requested_stat_key = _SNAPSHOT_SINGLE_STAT_MARKETS.get(leg.market_type) or _SNAPSHOT_COMBO_STAT_MARKETS.get(leg.market_type)
+            requested_stat_key = _SNAPSHOT_SINGLE_STAT_MARKETS.get(leg.market_type) or _SNAPSHOT_COMBO_STAT_MARKETS.get(leg.market_type) or leg.market_type
             snapshot_diag['requested_stat_key'] = requested_stat_key
+            snapshot_diag['required_component_stat_keys'] = list(_SNAPSHOT_DERIVED_MARKET_COMPONENTS.get(leg.market_type) or [])
             snapshot_diag['snapshot_coverage'] = event_snapshot.get_stat_coverage()
         snapshot_entry = _snapshot_player_entry(
             event_snapshot,
@@ -819,6 +865,9 @@ def settle_leg(
             matched_boxscore_player_name = snapshot_entry.get('display_name')
             if isinstance(snapshot_diag, dict):
                 snapshot_diag['player_snapshot_found'] = True
+                snapshot_diag['player_match_result'] = 'matched'
+        elif isinstance(snapshot_diag, dict):
+            snapshot_diag['player_match_result'] = 'not_found'
 
     detail_lookup = getattr(provider, 'get_player_result_details', None)
     actual_value = None
@@ -829,10 +878,18 @@ def settle_leg(
             actual_value = get_player_stat(event_snapshot, leg.resolved_player_id, single_stat_key, player_name=player_lookup_name)
             if isinstance(snapshot_diag, dict) and actual_value is None:
                 snapshot_diag['missing_snapshot_stat_key'] = single_stat_key
+                snapshot_diag['missing_snapshot_stat_keys'] = [single_stat_key]
         elif combo_stat_key is not None:
             actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, combo_stat_key, player_name=player_lookup_name)
             if isinstance(snapshot_diag, dict) and actual_value is None:
                 snapshot_diag['missing_snapshot_stat_key'] = combo_stat_key
+                snapshot_diag['missing_snapshot_stat_keys'] = [combo_stat_key]
+        elif leg.market_type in _SNAPSHOT_DERIVED_MARKET_COMPONENTS:
+            actual_value, missing_keys = get_player_milestone_stat(event_snapshot, leg.resolved_player_id, leg.market_type, player_name=player_lookup_name)
+            if isinstance(snapshot_diag, dict):
+                snapshot_diag['required_component_stat_keys'] = list(_SNAPSHOT_DERIVED_MARKET_COMPONENTS[leg.market_type])
+                snapshot_diag['missing_snapshot_stat_keys'] = list(missing_keys)
+                snapshot_diag['missing_snapshot_stat_key'] = missing_keys[0] if missing_keys else None
         used_snapshot = actual_value is not None
         if isinstance(snapshot_diag, dict):
             snapshot_diag['used_snapshot'] = used_snapshot
@@ -911,6 +968,26 @@ def settle_leg(
         settlement_diagnostics['unmatched_reason_code'] = reason_codes.STAT_NOT_FOUND
         review_reason = 'combo component stats incomplete' if market_entry and market_entry.get('market_type') == 'combo_stat' else 'Matched event but no stat result'
         return explained(settlement='unmatched', reason='Matched event but no stat result', reason_code=reason_codes.MISSING_STAT_SOURCE, reason_message='Matched event but no stat result', review_reason=review_reason, explanation_reason='Matched event but no stat result', player_found_in_boxscore=appeared, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
+
+    if leg.direction in {'yes', 'no'}:
+        is_yes = actual_value >= 1.0
+        won = is_yes if leg.direction == 'yes' else not is_yes
+        reason_code = reason_codes.ACTUAL_STAT_ABOVE_LINE if won else reason_codes.ACTUAL_STAT_BELOW_LINE
+        readable = 'milestone achieved' if is_yes else 'milestone not achieved'
+        settlement_diagnostics['stat_extraction_worked'] = True
+        return explained(
+            settlement='win' if won else 'loss',
+            actual_value=float(actual_value),
+            reason=f'{player_lookup_name} in {leg.event_label}: {readable}',
+            reason_code=reason_code,
+            reason_message=readable,
+            explanation_reason='event resolved',
+            component_values=component_values_dict,
+            stat_components=stat_components,
+            computed_total=computed_total,
+            matched_boxscore_player_name=matched_boxscore_player_name or leg.resolved_player_name or leg.player,
+            player_found_in_boxscore=True,
+        )
 
     if leg.direction == 'over':
         won = actual_value > leg.line
