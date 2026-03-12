@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from typing import Any
 
 import httpx
@@ -12,6 +13,7 @@ from app.models import Leg
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = 'https://api.betstack.com/v1'
+_CACHE_DURATION_SECONDS = 60
 _SUPPORTED_MARKETS = {
     'moneyline',
     'spread',
@@ -77,6 +79,10 @@ def _normalize_market(raw: Any) -> str | None:
     return _MARKET_ALIASES.get(cleaned)
 
 
+def _normalize_entity(value: str | None) -> str:
+    return ' '.join(sorted(_tokenize(value)))
+
+
 def _extract_rows(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
@@ -105,6 +111,8 @@ def _looks_like_match(haystack: str | None, needle: str | None) -> bool:
 
 
 class BetStackProvider:
+    _all_odds_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
     def __init__(self, api_key: str | None = None, *, base_url: str = _DEFAULT_BASE_URL, timeout_seconds: float = 8.0) -> None:
         self._api_key = (api_key or '').strip()
         self._base_url = base_url.rstrip('/')
@@ -119,55 +127,78 @@ class BetStackProvider:
         return bool(self._api_key)
 
     def fetch_event_odds(self, *, sport: str = 'basketball', event_id: str | None = None, event_label: str | None = None, team: str | None = None) -> list[dict[str, Any]]:
-        if not self.enabled:
-            return []
-        payload = self._request_json('/odds/consensus', params={'sport': sport, 'event_id': event_id})
-        rows = [self._normalize_event_market_row(row) for row in _extract_rows(payload)]
-        normalized = [row for row in rows if row]
+        normalized = self.fetch_all_odds(sport=sport)
         return [
             row
             for row in normalized
-            if (not event_id or row.get('event_id') == event_id)
+            if row.get('market_type') in {'moneyline', 'spread', 'game_total'}
+            and (not event_id or row.get('event_id') == event_id)
             and (not event_label or _looks_like_match(row.get('event_label'), event_label))
             and (not team or _looks_like_match(row.get('team'), team) or _looks_like_match(row.get('opponent'), team))
         ]
 
     def fetch_player_prop_lines(self, *, sport: str = 'basketball', player_name: str, event_id: str | None = None, event_label: str | None = None) -> list[dict[str, Any]]:
-        if not self.enabled or not player_name:
+        if not player_name:
             return []
-        payload = self._request_json('/odds/player-props/consensus', params={'sport': sport, 'event_id': event_id, 'player': player_name})
-        rows = [self._normalize_player_prop_row(row) for row in _extract_rows(payload)]
-        normalized = [row for row in rows if row]
+        normalized = self.fetch_all_odds(sport=sport)
         return [
             row
             for row in normalized
-            if _looks_like_match(row.get('player'), player_name)
+            if row.get('market_type') not in {'moneyline', 'spread', 'game_total'}
+            and _looks_like_match(row.get('player'), player_name)
             and (not event_id or row.get('event_id') == event_id)
             and (not event_label or _looks_like_match(row.get('event_label'), event_label))
         ]
 
+    def fetch_all_odds(self, *, sport: str = 'basketball') -> list[dict[str, Any]]:
+        if not self.enabled:
+            return []
+
+        cache_key = f'{self._api_key}:{sport}'
+        cached = self._all_odds_cache.get(cache_key)
+        now = time.monotonic()
+        if cached and now - cached[0] < _CACHE_DURATION_SECONDS:
+            return cached[1]
+
+        payload = self._request_json('/odds/consensus', params={'sport': sport})
+        rows = [self._normalize_any_row(row) for row in _extract_rows(payload)]
+        normalized = [row for row in rows if row]
+        self._all_odds_cache[cache_key] = (now, normalized)
+        return normalized
+
     def lookup_leg_line(self, leg: Leg) -> dict[str, Any] | None:
+        return self.lookup_leg_line_from_odds(leg, self.fetch_all_odds(sport='basketball'))
+
+    def lookup_leg_line_from_odds(self, leg: Leg, odds_rows: list[dict[str, Any]]) -> dict[str, Any] | None:
         if not self.enabled or leg.market_type not in _SUPPORTED_MARKETS:
             return None
 
-        if leg.market_type.startswith('player_') and leg.player:
-            rows = self.fetch_player_prop_lines(
-                sport='basketball',
-                player_name=leg.player,
-                event_id=leg.event_id or leg.matched_event_id or leg.selected_event_id,
-                event_label=leg.event_label or leg.matched_event_label or leg.selected_event_label,
-            )
-        else:
-            rows = self.fetch_event_odds(
-                sport='basketball',
-                event_id=leg.event_id or leg.matched_event_id or leg.selected_event_id,
-                event_label=leg.event_label or leg.matched_event_label or leg.selected_event_label,
-                team=leg.team,
-            )
+        leg_player = _normalize_entity(leg.player)
+        leg_team = _normalize_entity(leg.team)
+        leg_market = _normalize_market(leg.market_type)
+        leg_event_id = leg.event_id or leg.matched_event_id or leg.selected_event_id
+        leg_event_label = leg.event_label or leg.matched_event_label or leg.selected_event_label
 
-        candidates = [row for row in rows if row.get('market_type') == leg.market_type]
+        candidates = [row for row in odds_rows if row.get('market_type') == leg_market]
+        if leg_event_id:
+            candidates = [row for row in candidates if row.get('event_id') == leg_event_id]
+        elif leg_event_label:
+            candidates = [row for row in candidates if _looks_like_match(row.get('event_label'), leg_event_label)]
         if not candidates:
             return None
+
+        if leg.market_type.startswith('player_') and leg_player:
+            player_specific = [row for row in candidates if row.get('normalized_player') == leg_player]
+            if player_specific:
+                candidates = player_specific
+        elif leg_team:
+            team_specific = [
+                row
+                for row in candidates
+                if row.get('normalized_team') == leg_team or row.get('normalized_opponent') == leg_team
+            ]
+            if team_specific:
+                candidates = team_specific
 
         if leg.market_type == 'moneyline' and leg.team:
             team_specific = [row for row in candidates if _looks_like_match(row.get('team'), leg.team)]
@@ -180,6 +211,15 @@ class BetStackProvider:
                 return by_direction[0]
 
         return candidates[0]
+
+    def _normalize_any_row(self, row: dict[str, Any]) -> dict[str, Any] | None:
+        normalized = self._normalize_player_prop_row(row) or self._normalize_event_market_row(row)
+        if not normalized:
+            return None
+        normalized['normalized_player'] = _normalize_entity(normalized.get('player'))
+        normalized['normalized_team'] = _normalize_entity(normalized.get('team'))
+        normalized['normalized_opponent'] = _normalize_entity(normalized.get('opponent'))
+        return normalized
 
     def _request_json(self, path: str, params: dict[str, Any]) -> Any:
         url = f'{self._base_url}{path}'
