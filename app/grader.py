@@ -6,6 +6,7 @@ from datetime import date, datetime
 from .models import GradeResponse, GradedLeg, Leg
 from .services import grade_reason_codes as reason_codes
 from .services.settlement_explainer import build_settlement_explanation, with_explanation
+from .services.leg_explainer import explain_sold_legs
 from .services.market_registry import MARKET_REGISTRY, player_market_to_canonical
 from .services.play_by_play_provider import ESPNPlayByPlayProvider, PlayByPlayEvent
 from .services.provider_router import ProviderRouter
@@ -1322,4 +1323,16 @@ def grade_text(
     else:
         overall = 'needs_review'
 
-    return GradeResponse(overall=overall, legs=graded, grading_diagnostics={'snapshot': run_snapshot_diagnostics})
+    response = GradeResponse(overall=overall, legs=graded, grading_diagnostics={'snapshot': run_snapshot_diagnostics})
+    try:
+        sold_leg_explanations = explain_sold_legs(response, snapshots_by_event_id)
+    except Exception:
+        sold_leg_explanations = []
+    response.sold_leg_explanations = sold_leg_explanations
+    if sold_leg_explanations:
+        by_event_market = {(item.event_id, item.market_type): item for item in sold_leg_explanations}
+        for idx, graded_leg in enumerate(response.legs):
+            explanation = by_event_market.get((graded_leg.leg.event_id, graded_leg.leg.market_type))
+            if explanation is not None and graded_leg.settlement == 'loss':
+                response.legs[idx].sold_leg_explanation = explanation
+    return response
