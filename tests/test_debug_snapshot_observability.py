@@ -225,3 +225,41 @@ def test_market_readiness_endpoint_shape(monkeypatch) -> None:
     assert set(body.keys()) >= {'markets', 'thresholds', 'recent_grading_runs_count'}
     assert 'player_points' in body['markets']
     assert set(body['markets']['player_points'].keys()) >= {'runs', 'snapshot_successes', 'provider_fallbacks', 'fallback_rate', 'missing_snapshot_keys', 'players_missing_stats', 'status'}
+
+
+def test_period_snapshot_availability_report_shape(tmp_path: Path) -> None:
+    snapshots_dir = tmp_path / 'snapshots'
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+    (snapshots_dir / 'evt-1.json').write_text(
+        '{"event_id":"evt-1","normalized_period_results":[{"period_number":1,"period_label":"Q1","is_score_complete":true,"source":"summary_competitor_linescores"},{"period_number":2,"period_label":"Q2","is_score_complete":true,"source":"summary_competitor_linescores"},{"period_number":3,"period_label":"Q3","is_score_complete":true,"source":"summary_competitor_linescores"},{"period_number":4,"period_label":"Q4","is_score_complete":true,"source":"summary_competitor_linescores"}]}'
+    )
+    (snapshots_dir / 'evt-2.json').write_text(
+        '{"event_id":"evt-2","normalized_period_results":[{"period_number":1,"period_label":"Q1","is_score_complete":true,"source":"summary_competitor_linescores"},{"period_number":2,"period_label":"Q2","is_score_complete":false,"source":"summary_competitor_linescores"}]}'
+    )
+    (snapshots_dir / 'evt-3.json').write_text('{"event_id":"evt-3","normalized_period_results":[]}')
+
+    service = get_debug_observability_service().__class__(snapshot_store=SnapshotStore(base_dir=snapshots_dir))
+    report = service.get_period_snapshot_availability_report(max_snapshots=10)
+
+    assert set(report.keys()) >= {'totals', 'period_labels_available', 'period_extraction_sources', 'window'}
+    assert report['totals']['events_with_period_data'] == 2
+    assert report['totals']['events_with_complete_first_half'] == 1
+    assert report['totals']['events_with_complete_quarters'] == 1
+    assert report['totals']['events_with_missing_period_scoring'] == 1
+    assert report['period_labels_available']['Q1'] == 2
+
+
+def test_period_readiness_endpoint_shape(monkeypatch, tmp_path: Path) -> None:
+    _reset_observability()
+    monkeypatch.setenv('PARLAY_ENABLE_DEBUG_OBSERVABILITY', '1')
+    service = get_debug_observability_service()
+    service._snapshot_store = SnapshotStore(base_dir=tmp_path / 'snapshots')  # noqa: SLF001
+
+    snapshot_path = tmp_path / 'snapshots' / 'evt-1.json'
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text('{"event_id":"evt-1","normalized_period_results":[{"period_number":1,"period_label":"Q1","is_score_complete":true,"source":"summary_competitor_linescores"},{"period_number":2,"period_label":"Q2","is_score_complete":true,"source":"summary_competitor_linescores"}]}')
+
+    response = client.get('/admin/debug/period-readiness', headers=_admin_headers())
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) >= {'totals', 'period_labels_available', 'period_extraction_sources', 'window'}

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict, deque
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 from threading import Lock
@@ -68,6 +69,82 @@ class DebugObservabilityService:
         return {
             'snapshot_dir': str(snapshot_dir),
             'persisted_files': persisted_files,
+        }
+
+    @staticmethod
+    def _label_is_quarter(label: str) -> bool:
+        text = str(label or '').strip().lower()
+        return text in {'1', '2', '3', '4', 'q1', 'q2', 'q3', 'q4', '1st', '2nd', '3rd', '4th'}
+
+    @staticmethod
+    def _label_is_first_half(label: str) -> bool:
+        text = str(label or '').strip().lower()
+        return text in {'1', '2', 'q1', 'q2', '1st', '2nd', 'h1', '1h', 'first half', 'first-half'}
+
+    def get_period_snapshot_availability_report(self, *, max_snapshots: int = 250) -> dict[str, Any]:
+        snapshot_dir = Path(self._snapshot_store._base_dir)  # noqa: SLF001
+        files = sorted(snapshot_dir.glob('*.json'), key=lambda path: path.stat().st_mtime, reverse=True)
+        selected = files[: max(1, int(max_snapshots))]
+
+        totals = {
+            'snapshots_scanned': 0,
+            'events_with_period_data': 0,
+            'events_missing_period_data': 0,
+            'events_with_complete_first_half': 0,
+            'events_with_complete_quarters': 0,
+            'events_with_missing_period_scoring': 0,
+        }
+        label_availability: Counter[str] = Counter()
+        source_counts: Counter[str] = Counter()
+
+        for path in selected:
+            totals['snapshots_scanned'] += 1
+            try:
+                snapshot = json.loads(path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                continue
+
+            periods = snapshot.get('normalized_period_results') or []
+            if not isinstance(periods, list) or not periods:
+                totals['events_missing_period_data'] += 1
+                continue
+
+            totals['events_with_period_data'] += 1
+            complete_by_label: dict[str, bool] = {}
+            quarter_complete: dict[int, bool] = {1: False, 2: False, 3: False, 4: False}
+            for item in periods:
+                if not isinstance(item, dict):
+                    continue
+                label = str(item.get('period_label') or item.get('period_number') or '').strip()
+                if not label:
+                    continue
+                label_availability[label] += 1
+                is_complete = bool(item.get('is_score_complete'))
+                complete_by_label[label] = is_complete
+                source = str(item.get('source') or '').strip()
+                if source:
+                    source_counts[source] += 1
+
+                number = item.get('period_number')
+                if isinstance(number, int) and number in quarter_complete:
+                    quarter_complete[number] = is_complete
+
+            if any(not complete for complete in complete_by_label.values()):
+                totals['events_with_missing_period_scoring'] += 1
+
+            if quarter_complete[1] and quarter_complete[2]:
+                totals['events_with_complete_first_half'] += 1
+            if all(quarter_complete.values()):
+                totals['events_with_complete_quarters'] += 1
+
+        return {
+            'totals': totals,
+            'period_labels_available': dict(sorted(label_availability.items())),
+            'period_extraction_sources': dict(sorted(source_counts.items())),
+            'window': {
+                'max_snapshots': max(1, int(max_snapshots)),
+                'snapshot_dir': str(snapshot_dir),
+            },
         }
 
     def _aggregate_grading_history(self) -> dict[str, Any]:
@@ -310,6 +387,7 @@ class DebugObservabilityService:
         return {
             **grading,
             'market_readiness': market_readiness,
+            'period_readiness': self.get_period_snapshot_availability_report(),
             'recent_hydration_summary': latest_hydration,
             'recent_hydration_runs': hydration_history,
             'recent_hydration_runs_count': len(hydration_history),

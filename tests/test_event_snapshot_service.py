@@ -133,6 +133,65 @@ def test_event_snapshot_play_by_play_enrichment_is_lazy_and_cached(tmp_path) -> 
     assert pbp.calls == ['evt-1']
 
 
+def test_event_snapshot_extracts_period_results_and_diagnostics(tmp_path) -> None:
+    class _PeriodGamecastProvider(_FakeGamecastProvider):
+        def fetch_normalized(self, event_id: str) -> dict[str, Any] | None:
+            payload = super().fetch_normalized(event_id)
+            competitors = payload['raw']['header']['competitions'][0]['competitors']
+            competitors[0]['linescores'] = [{'value': '28', 'displayValue': 'Q1'}, {'value': '22', 'displayValue': 'Q2'}]
+            competitors[1]['linescores'] = [{'value': '21', 'displayValue': 'Q1'}, {'value': '20', 'displayValue': 'Q2'}]
+            return payload
+
+    service = EventSnapshotService(
+        scoreboard_provider=_FakeScoreboardProvider(),
+        gamecast_provider=_PeriodGamecastProvider(),
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=SnapshotStore(base_dir=tmp_path / 'snapshots'),
+    )
+
+    snapshot = service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    assert snapshot is not None
+    assert len(snapshot.normalized_period_results) == 2
+    assert snapshot.normalized_period_results[0]['period_label'] == 'Q1'
+    assert snapshot.normalized_period_results[0]['combined_total'] == 49
+    assert snapshot.normalized_period_results[1]['cumulative_home_score'] == 50
+    assert snapshot.diagnostics.period_data_present is True
+    assert snapshot.diagnostics.available_period_labels == ['Q1', 'Q2']
+    assert snapshot.diagnostics.period_scores_complete_by_label == {'Q1': True, 'Q2': True}
+    assert snapshot.diagnostics.period_extraction_source == 'summary_competitor_linescores'
+
+
+def test_snapshot_store_round_trip_includes_period_results(tmp_path) -> None:
+    store = SnapshotStore(base_dir=tmp_path / 'snapshots')
+    snapshot = EventSnapshot(
+        event_id='evt-periods',
+        normalized_period_results=[
+            {
+                'period_number': 1,
+                'period_label': 'Q1',
+                'home_score': 25,
+                'away_score': 20,
+                'combined_total': 45,
+                'is_score_complete': True,
+                'source': 'summary_competitor_linescores',
+            }
+        ],
+    )
+    snapshot.diagnostics.period_data_present = True
+    snapshot.diagnostics.available_period_labels = ['Q1']
+    snapshot.diagnostics.period_scores_complete_by_label = {'Q1': True}
+    snapshot.diagnostics.period_extraction_source = 'summary_competitor_linescores'
+
+    store.save_snapshot('evt-periods', snapshot)
+    loaded = store.load_snapshot('evt-periods')
+
+    assert loaded is not None
+    assert loaded.normalized_period_results[0]['period_label'] == 'Q1'
+    assert loaded.diagnostics.period_data_present is True
+    assert loaded.diagnostics.available_period_labels == ['Q1']
+
+
 def test_request_cache_hit_miss_behavior_still_works_with_snapshot_service(monkeypatch, tmp_path) -> None:
     from app.services.gamecast_provider import ESPNGamecastProvider
 
