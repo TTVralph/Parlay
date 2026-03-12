@@ -398,6 +398,17 @@ class PrimaryParserDebug(BaseModel):
     primary_parsed_leg_count: int = 0
 
 
+class ScreenshotParseDebug(BaseModel):
+    raw_ocr_text: str
+    raw_lines: list[str] = Field(default_factory=list)
+    normalized_lines: list[str] = Field(default_factory=list)
+    reconstructed_lines: list[str] = Field(default_factory=list)
+    filtered_lines: list[str] = Field(default_factory=list)
+    leg_candidates: list[str] = Field(default_factory=list)
+    grouped_sgp_reconstruction_triggered: bool = False
+    summary: dict[str, int | bool] = Field(default_factory=dict)
+
+
 class ParsedScreenshotResponse(BaseModel):
     raw_text: str
     parsed_legs: list[ParsedScreenshotLeg] = Field(default_factory=list)
@@ -409,6 +420,7 @@ class ParsedScreenshotResponse(BaseModel):
     primary_pre_fallback_result: Optional['ParsedScreenshotResponse'] = None
     fallback_reason: Optional[str] = None
     debug_artifacts: Optional[dict[str, str]] = None
+    parse_debug: Optional[ScreenshotParseDebug] = None
 
 class OCRExtractResponse(BaseModel):
     filename: str

@@ -266,3 +266,43 @@ def test_mixed_sgp_and_standalone_dark_theme_style_lines_parse() -> None:
     labels = [leg.normalized_label for leg in parsed.parsed_legs]
     assert 'Stephen Curry Over 5.5 Assists' in labels
     assert 'Jayson Tatum Over 29.5 Points' in labels
+
+
+def test_top_grouped_sgp_repeatability_is_deterministic() -> None:
+    raw = """
+    Same Game Parlay
+    Suns @ Rockets
+    Kevin Durant
+    Points
+    Over 24.5
+    Alperen Sengun
+    Rebounds + Assists
+    Under 15.5
+    Jalen Green Over 2.5 Threes
+    """
+    runs = [parse_screenshot_text(raw, raw) for _ in range(5)]
+    outputs = [[leg.normalized_label for leg in run.parsed_legs] for run in runs]
+    assert all(output == outputs[0] for output in outputs)
+    assert 'Kevin Durant Over 24.5 Points' in outputs[0]
+    assert 'Alperen Sengun Under 15.5 Rebounds + Assists' in outputs[0]
+    assert 'Jalen Green Over 2.5 Threes' in outputs[0]
+
+
+def test_parse_debug_stages_expose_grouped_reconstruction() -> None:
+    raw = """
+    same game parlay
+    suns @ rockets
+    kevin durant
+    points
+    over 24.5
+    alperen sengun
+    rebounds + assists
+    under 15.5
+    """
+    parsed = parse_screenshot_text(raw, raw, include_debug=True)
+    assert parsed.parse_debug is not None
+    assert parsed.parse_debug.grouped_sgp_reconstruction_triggered is True
+    assert parsed.parse_debug.summary['raw_line_count'] >= 6
+    assert parsed.parse_debug.summary['leg_candidate_count'] >= 2
+    assert any('kevin durant' in line.lower() for line in parsed.parse_debug.normalized_lines)
+    assert any('Under 15.5 Rebounds + Assists' in line for line in parsed.parse_debug.leg_candidates)

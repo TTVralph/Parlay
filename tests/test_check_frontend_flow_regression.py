@@ -28,8 +28,11 @@ def test_submit_handler_stays_async_and_prevents_refresh() -> None:
 def test_screenshot_parse_then_check_flow_stays_in_place() -> None:
     script = _check_page_script()
     assert "res=await fetch('/ingest/screenshot/parse'" in script
-    assert "msg.textContent='Screenshot parsed. Review/edit the text, then click Check Slip.';" in script
+    assert "Screenshot parsed. Review/edit the text, then click Check Slip." in script
+    assert "Screenshot parsed with limited confidence. Existing text was preserved for safety." in script
     assert "return;" in script  # first submit exits after parsing
+    assert "const existingSlipText=slip.value.trim();" in script
+    assert "}else if(body.cleaned_text&&!existingSlipText){" in script
     assert "res=await fetch('/check-slip'" in script
 
 

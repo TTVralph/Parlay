@@ -243,13 +243,32 @@ _VISION_SANITY_MODELS = {'gpt-4o-mini', 'gpt-4.1-mini'}
 
 def _grade_text_with_observability(*args, **kwargs) -> GradeResponse:
     result = grade_text(*args, **kwargs)
-    get_debug_observability_service().record_grading_diagnostics(result.grading_diagnostics)
+    diagnostics = getattr(result, 'grading_diagnostics', None)
+    if isinstance(diagnostics, dict):
+        get_debug_observability_service().record_grading_diagnostics(diagnostics)
     return result
 
 
 def _screenshot_parsed_to_grading_text(parsed_screenshot) -> str:
     return '\n'.join(leg.normalized_label for leg in parsed_screenshot.parsed_legs)
 
+
+
+
+def _screenshot_parse_debug_enabled() -> bool:
+    explicit = os.getenv('PARLAY_ENABLE_SCREENSHOT_PARSE_DEBUG', '').strip().lower()
+    if explicit in {'1', 'true', 'yes', 'on'}:
+        return True
+    if explicit in {'0', 'false', 'no', 'off'}:
+        return False
+    environment = (
+        os.getenv('PARLAY_ENV')
+        or os.getenv('APP_ENV')
+        or os.getenv('ENV')
+        or os.getenv('FASTAPI_ENV')
+        or ''
+    ).strip().lower()
+    return environment in {'dev', 'development', 'local', 'test', 'testing'}
 
 def _parse_screenshot_with_vision(content: bytes, filename: str | None):
     parsed = slip_parser_service.parse(content, filename=filename)
@@ -294,6 +313,7 @@ def _parse_screenshot_with_vision(content: bytes, filename: str | None):
             primary_pre_fallback_result=_to_response(parsed_obj.primary_result, include_primary=False) if include_primary and parsed_obj.primary_result else None,
             fallback_reason=parsed_obj.fallback_reason,
             debug_artifacts=parsed_obj.debug_artifacts,
+            parse_debug=getattr(parsed_obj, 'parse_debug', None) if _screenshot_parse_debug_enabled() else None,
         )
 
     return _to_response(parsed)
@@ -1739,18 +1759,19 @@ Murray over 2.5 threes'></textarea>
           const parsedLegObjects=parsed.parsed_legs||[];
           const parsedLegs=parsedLegObjects.map((item)=>item.normalized_label||item.raw_leg_text).filter(Boolean);
           collectPlayerNameSuggestions(parsedLegObjects);
+          const existingSlipText=slip.value.trim();
           if(parsedLegs.length){
-            slip.value=parsedLegs.join('\\n');
+            slip.value=parsedLegs.join('\n');
             slip.dispatchEvent(new Event('input',{bubbles:true}));
-          }else if(body.cleaned_text){
-            const cleanedLines=String(body.cleaned_text).split(/\\r?\\n/).map((line)=>line.trim()).filter(Boolean);
-            slip.value=cleanedLines.join('\\n');
+          }else if(body.cleaned_text&&!existingSlipText){
+            const cleanedLines=String(body.cleaned_text).split(/\r?\n/).map((line)=>line.trim()).filter(Boolean);
+            slip.value=cleanedLines.join('\n');
             slip.dispatchEvent(new Event('input',{bubbles:true}));
           }
           if(!slipDate.value&&parsed.detected_bet_date){slipDate.value=parsed.detected_bet_date;}
           screenshotNeedsParse=false;
           parsedScreenshotSignature=screenshotSignature;
-          msg.textContent='Screenshot parsed. Review/edit the text, then click Check Slip.';
+          msg.textContent=parsedLegs.length?'Screenshot parsed. Review/edit the text, then click Check Slip.':'Screenshot parsed with limited confidence. Existing text was preserved for safety.';
           removeScreenshotBtn.style.display='inline-block';
           wrap.hidden=true;
           gradingSkeleton.classList.remove('show');
