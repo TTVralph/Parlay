@@ -1041,6 +1041,13 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .recent-slip-side{display:flex;flex-direction:column;gap:8px;align-items:flex-end;}.recent-slip-progress{width:100%;height:6px;border-radius:999px;background:var(--bg-soft);overflow:hidden;}
     .recent-slip-progress-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#22c55e,#16a34a);} .recent-slip-progress-fill.review{background:linear-gradient(90deg,#f59e0b,#d97706);} .recent-slip-progress-fill.loss{background:linear-gradient(90deg,#f43f5e,#dc2626);}
     .empty-polish{border:1px dashed var(--border);border-radius:12px;padding:12px;background:var(--bg-soft);color:var(--muted);}
+    .mode-toggle{display:inline-flex;gap:6px;padding:6px;border-radius:999px;border:1px solid var(--border);background:var(--bg-soft);margin-top:10px;}
+    .mode-option{margin-top:0;padding:9px 14px;border-radius:999px;border:1px solid transparent;background:transparent;color:var(--muted);font-size:13px;font-weight:800;}
+    .mode-option.active{background:linear-gradient(180deg,var(--primary),var(--primary-2));color:#fff;box-shadow:0 8px 20px #1d4ed844;}
+    .mode-description{margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);font-size:13px;color:var(--muted);}
+    .mode-description strong{color:var(--text);}
+    .mode-hidden{display:none !important;}
+    .mode-muted{opacity:.5;}
     table{width:100%;border-collapse:collapse;} th,td{padding:8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;}
     a{color:var(--primary);} code{background:var(--bg-soft);padding:2px 6px;border-radius:6px;color:var(--primary-2);} .loading-skeleton{display:none;grid-template-columns:1fr;gap:8px;}
     .loading-skeleton.show{display:grid;} .loading-skeleton div{height:14px;border-radius:8px;background:linear-gradient(90deg,var(--bg-soft),var(--surface),var(--bg-soft));background-size:200% 100%;animation:pulse 1.2s infinite;}
@@ -1066,6 +1073,13 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
         </div>
       </div>
       <p style='margin-top:0;font-size:12px;'>MLB/NFL grading is beta preview only. NBA grading is currently the most reliable.</p>
+      <div>
+        <div style='font-size:11px;font-weight:800;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;'>Mode</div>
+        <div class='mode-toggle' role='tablist' aria-label='Slip mode selector'>
+          <button id='modeSettleBtn' type='button' class='mode-option active' role='tab' aria-selected='true'>Settle Slip</button>
+          <button id='modeAnalyzeBtn' type='button' class='mode-option' role='tab' aria-selected='false'>Analyze Slip</button>
+        </div>
+      </div>
       <div id='samples'>
         <button type='button' class='sample' data-sample='sample_nba_props'>NBA Props</button>
         <button type='button' class='sample' data-sample='sample_mlb'>MLB Mix (Beta)</button>
@@ -1075,6 +1089,7 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     <div class='grid' style='margin-top:14px;'>
       <div class='card'>
         <h2 class='panel-title'>Slip input</h2>
+        <div id='modeDescription' class='mode-description'><strong>Settle Slip:</strong> Post-game grading for settled bets with per-leg outcomes and explanations.</div>
         <form id='checkForm'>
           <textarea id='slip' placeholder='Jokic over 24.5 points
 Denver ML
@@ -1138,6 +1153,9 @@ Murray over 2.5 threes'></textarea>
       sample_nfl:'Chiefs ML\\nMahomes over 265.5 passing yards\\nKelce over 68.5 receiving yards'
     };
     const form=document.getElementById('checkForm');
+    const modeSettleBtn=document.getElementById('modeSettleBtn');
+    const modeAnalyzeBtn=document.getElementById('modeAnalyzeBtn');
+    const modeDescription=document.getElementById('modeDescription');
     const slip=document.getElementById('slip');
     const stakeAmount=document.getElementById('stakeAmount');
     const slipImage=document.getElementById('slipImage');
@@ -1172,6 +1190,9 @@ Murray over 2.5 threes'></textarea>
     const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
     const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
     const screenshotGradeEndpoint='/ingest/screenshot/grade';
+    const slipModeStorageKey='parlay_slip_mode';
+    const modeSettle='settle';
+    const modeAnalyze='analyze';
     const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
     const overallTone={cashed:'win',lost:'loss',still_live:'review',needs_review:'review'};
     const emptyTextMessage='Paste at least one leg first.';
@@ -1184,6 +1205,32 @@ Murray over 2.5 threes'></textarea>
     let screenshotParseInFlight=false;
     let parsedScreenshotSignature=null;
     let latestPlayerSuggestions=[];
+    let activeSlipMode=modeSettle;
+
+    function applySlipMode(mode){
+      activeSlipMode=mode===modeAnalyze?modeAnalyze:modeSettle;
+      localStorage.setItem(slipModeStorageKey,activeSlipMode);
+      const settleSelected=activeSlipMode===modeSettle;
+      modeSettleBtn.classList.toggle('active',settleSelected);
+      modeAnalyzeBtn.classList.toggle('active',!settleSelected);
+      modeSettleBtn.setAttribute('aria-selected',String(settleSelected));
+      modeAnalyzeBtn.setAttribute('aria-selected',String(!settleSelected));
+      btn.textContent=settleSelected?'Check Slip':'Analyze Slip';
+      uploadWrap.classList.toggle('mode-hidden',!settleSelected);
+      searchHistorical.closest('label').classList.toggle('mode-hidden',!settleSelected);
+      if(settleSelected){
+        modeDescription.innerHTML='<strong>Settle Slip:</strong> Post-game grading for settled bets with per-leg outcomes and explanations.';
+      }else{
+        modeDescription.innerHTML='<strong>Analyze Slip:</strong> Before you bet, get a pre-game risk read and weakest-leg advisory. This mode is advisory only.';
+      }
+    }
+
+    function initSlipMode(){
+      const stored=localStorage.getItem(slipModeStorageKey);
+      applySlipMode(stored===modeAnalyze?modeAnalyze:modeSettle);
+      modeSettleBtn.addEventListener('click',()=>applySlipMode(modeSettle));
+      modeAnalyzeBtn.addEventListener('click',()=>applySlipMode(modeAnalyze));
+    }
 
     function applyTheme(mode){
       const root=document.documentElement;
@@ -1937,6 +1984,16 @@ Murray over 2.5 threes'></textarea>
       const file=slipImage.files&&slipImage.files[0];
       const screenshotSignature=getScreenshotSignature(file);
       const shouldParseScreenshot=Boolean(file)&&screenshotNeedsParse;
+      if(activeSlipMode===modeAnalyze){
+        resetRenderedSlipResult();
+        wrap.hidden=true;
+        if(!text){
+          msg.textContent=emptyTextMessage;
+          return;
+        }
+        msg.textContent='Analyze Slip mode is set for pre-game advisory insights. Risk scoring and weakest-leg analysis will appear here soon.';
+        return;
+      }
       if(!text&&!file){
         resetRenderedSlipResult();
         msg.textContent='Paste at least one leg first, or upload a screenshot.';
@@ -2040,7 +2097,7 @@ Murray over 2.5 threes'></textarea>
       }finally{
         setScreenshotUploadBusy(false);
         btn.disabled=false;
-        btn.textContent='Check Slip';
+        btn.textContent=activeSlipMode===modeAnalyze?'Analyze Slip':'Check Slip';
       }
     }
 
@@ -2098,6 +2155,7 @@ Murray over 2.5 threes'></textarea>
 
     refreshRecentBtn.addEventListener('click',()=>{loadRecentSlips();});
     initTheme();
+    initSlipMode();
     loadRecentSlips();
 
     copyLinkBtn.addEventListener('click',async()=>{
