@@ -1002,8 +1002,25 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .result-chip.win,.leg-progress-chip.win{border-color:#22c55e;color:#15803d;}
     .result-chip.loss,.leg-progress-chip.loss{border-color:#ef4444;color:#b91c1c;}
     .result-chip.review,.leg-progress-chip.review{border-color:#f59e0b;color:#b45309;}
-    .autopsy-card{border:1px solid #7f1d1d33;background:#fecdd322;color:#991b1b;border-radius:12px;padding:12px;}
-    .autopsy-card.soft{border-color:#854d0e33;background:#fed7aa33;color:#92400e;}
+    .sold-hero{position:relative;overflow:hidden;border:1px solid #7f1d1d55;background:linear-gradient(140deg,#450a0a 0%,#7f1d1d 48%,#991b1b 100%);color:#fff1f2;border-radius:16px;padding:14px;box-shadow:0 12px 24px rgba(127,29,29,.3);}
+    .sold-hero::after{content:'';position:absolute;right:-70px;top:-65px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,#fca5a566 0%,transparent 70%);pointer-events:none;}
+    .sold-hero-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;position:relative;z-index:1;}
+    .sold-kicker{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.86;font-weight:800;}
+    .sold-title{font-size:22px;font-weight:900;line-height:1.1;margin-top:2px;}
+    .sold-hero-leg{margin-top:8px;font-size:14px;font-weight:700;position:relative;z-index:1;}
+    .sold-summary{margin-top:8px;font-size:13px;color:#ffe4e6;position:relative;z-index:1;}
+    .sold-meta-grid{margin-top:10px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;position:relative;z-index:1;}
+    .sold-meta-item{border:1px solid #fecdd533;background:#fff1f51a;border-radius:10px;padding:8px;}
+    .sold-meta-label{font-size:11px;opacity:.85;text-transform:uppercase;letter-spacing:.04em;}
+    .sold-meta-value{margin-top:3px;font-size:15px;font-weight:800;color:#fff;}
+    .sold-context{margin-top:10px;padding:9px;border-radius:10px;background:#fff1f51f;border:1px solid #fecdd544;color:#ffe4e6;font-size:13px;position:relative;z-index:1;}
+    .sold-other-legs{margin-top:10px;border-radius:12px;border:1px solid #fecdd544;background:#fff1f517;position:relative;z-index:1;}
+    .sold-other-legs summary{cursor:pointer;list-style:none;padding:10px 12px;font-size:12px;font-weight:800;color:#ffe4e6;}
+    .sold-other-legs summary::-webkit-details-marker{display:none;}
+    .sold-other-list{padding:0 12px 10px;display:flex;flex-direction:column;gap:8px;}
+    .sold-other-item{border-top:1px solid #fecdd533;padding-top:8px;font-size:12px;color:#ffe4e6;}
+    .sold-other-item:first-child{border-top:none;padding-top:0;}
+    .autopsy-card.soft{border:1px solid #854d0e33;background:#fed7aa33;color:#92400e;border-radius:12px;padding:12px;}
     .recent-slip-card{display:flex;justify-content:space-between;align-items:stretch;gap:14px;padding:12px;border:1px solid var(--border);border-radius:14px;background:var(--surface-elev);}
     .recent-slip-main{min-width:0;display:flex;flex-direction:column;gap:6px;}.recent-slip-summary{font-weight:800;font-size:15px;line-height:1.2;}
     .recent-slip-meta,.recent-slip-preview{font-size:12px;color:var(--muted);} .recent-slip-preview{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -1015,7 +1032,7 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .loading-skeleton.show{display:grid;} .loading-skeleton div{height:14px;border-radius:8px;background:linear-gradient(90deg,var(--bg-soft),var(--surface),var(--bg-soft));background-size:200% 100%;animation:pulse 1.2s infinite;}
     @keyframes pulse{0%{background-position:200% 0;}100%{background-position:-200% 0;}}
     @media (min-width:860px){.shell{padding:30px 20px 60px;}.grid{grid-template-columns:1.05fr .95fr;}.field-row{grid-template-columns:1fr 1fr;}.hero-actions{display:flex;gap:10px;align-items:center;}}
-    @media (max-width:640px){h1{font-size:31px;} .recent-slip-card{flex-direction:column;}.recent-slip-side{align-items:flex-start;} table,thead,tbody{display:block;} thead{display:none;} tr{display:block;margin-bottom:10px;border:1px solid var(--border);border-radius:14px;background:var(--bg-soft);padding:12px;} td{text-align:left;padding:4px 0;display:block;border:none;} td.leg-result-cell{display:none;}}
+    @media (max-width:640px){h1{font-size:31px;} .recent-slip-card{flex-direction:column;}.recent-slip-side{align-items:flex-start;} .sold-meta-grid{grid-template-columns:1fr;} .sold-title{font-size:19px;} table,thead,tbody{display:block;} thead{display:none;} tr{display:block;margin-bottom:10px;border:1px solid var(--border);border-radius:14px;background:var(--bg-soft);padding:12px;} td{text-align:left;padding:4px 0;display:block;border:none;} td.leg-result-cell{display:none;}}
   </style>
 </head>
 <body>
@@ -1547,6 +1564,68 @@ Murray over 2.5 threes'></textarea>
       return Number.isFinite(n)?n:null;
     }
 
+    function formatSoldValue(value){
+      const number=asNumber(value);
+      return number===null?'—':String(Number(number.toFixed(2)));
+    }
+
+    function buildSoldLegHero(payload){
+      const soldExplanations=Array.isArray(payload.sold_leg_explanations)?payload.sold_leg_explanations.filter(Boolean):[];
+      const fallbackLosses=(payload.legs||[]).filter((item)=>item.result==='loss').map((item)=>({
+        leg_label:item.leg||'—',
+        target_line:item.line,
+        final_value:item.actual_value,
+        miss_by:(asNumber(item.line)!==null&&asNumber(item.actual_value)!==null)?Math.abs(asNumber(item.line)-asNumber(item.actual_value)):null,
+        short_reason:null,
+        last_relevant_context:null,
+      }));
+      const losses=soldExplanations.length?soldExplanations:fallbackLosses;
+      if(!losses.length||payload.parlay_result!=='lost'){
+        return '';
+      }
+      const primary=losses[0]||{};
+      const label=primary.player_or_team||primary.leg_label||primary.short_reason||'Losing leg';
+      const target=formatSoldValue(primary.target_line);
+      const finalValue=formatSoldValue(primary.final_value);
+      const missBy=formatSoldValue(Math.abs(asNumber(primary.miss_by)||0));
+      const context=primary.last_relevant_context?`<div class='sold-context'><strong>Last relevant context:</strong> ${escapeHtml(primary.last_relevant_context)}</div>`:'';
+      const summary=(target!=='—'&&finalValue!=='—')
+        ?`Finished with <strong>${finalValue}</strong>, missed by <strong>${missBy}</strong>`
+        :(primary.short_reason?escapeHtml(primary.short_reason):'This leg sold the slip.');
+      const hasMeta=target!=='—'||finalValue!=='—'||missBy!=='—';
+      const primaryMeta=hasMeta?`<div class='sold-meta-grid'>
+        <div class='sold-meta-item'><div class='sold-meta-label'>Final value</div><div class='sold-meta-value'>${finalValue}</div></div>
+        <div class='sold-meta-item'><div class='sold-meta-label'>Target line</div><div class='sold-meta-value'>${target}</div></div>
+        <div class='sold-meta-item'><div class='sold-meta-label'>Missed by</div><div class='sold-meta-value'>${missBy}</div></div>
+      </div>`:'';
+
+      let others='';
+      if(losses.length>1){
+        const otherRows=losses.slice(1).map((item)=>{
+          const otherLabel=escapeHtml(item.player_or_team||item.leg_label||item.short_reason||'Losing leg');
+          const otherFinal=formatSoldValue(item.final_value);
+          const otherMiss=formatSoldValue(Math.abs(asNumber(item.miss_by)||0));
+          const otherContext=item.last_relevant_context?`<div style='margin-top:4px;opacity:.9;'>Last relevant context: ${escapeHtml(item.last_relevant_context)}</div>`:'';
+          return `<div class='sold-other-item'><strong>${otherLabel}</strong><div style='margin-top:3px;'>Finished with ${otherFinal}, missed by ${otherMiss}</div>${otherContext}</div>`;
+        }).join('');
+        others=`<details class='sold-other-legs'><summary>View ${losses.length-1} other losing leg${losses.length-1===1?'':'s'}</summary><div class='sold-other-list'>${otherRows}</div></details>`;
+      }
+
+      return `<div class='sold-hero'>
+        <div class='sold-hero-head'>
+          <div>
+            <div class='sold-kicker'>Loss breakdown</div>
+            <div class='sold-title'>Sold this slip</div>
+          </div>
+        </div>
+        <div class='sold-hero-leg'>${escapeHtml(label)}</div>
+        <div class='sold-summary'>${summary}</div>
+        ${primaryMeta}
+        ${context}
+        ${others}
+      </div>`;
+    }
+
     function renderResultSummary(payload){
       const counts=countLegResults(payload.legs||[]);
       const firstLoss=(payload.legs||[]).find((item)=>item.result==='loss');
@@ -1570,18 +1649,18 @@ Murray over 2.5 threes'></textarea>
       if(hasStake&&payload.payout_message){chips.push(`<span class='meta-chip'>${payload.payout_message}</span>`);}
       let secondary=`${counts.won} of ${counts.total} legs hit`;
       if(counts.review>0){secondary+=` · ${counts.review} legs need manual review`;}
-      if(firstLoss&&payload.parlay_result==='lost'){secondary+=` · Parlay died on ${firstLoss.leg||'a leg'}`;}
+      if(firstLoss&&payload.parlay_result==='lost'){secondary+=` · Sold on ${firstLoss.leg||'a leg'}`;}
       metaSummary.innerHTML=`<span class='meta-chip'>${secondary}</span>${chips.join('')}`;
       metaSummary.hidden=false;
       renderProgressStrip(payload.legs||[]);
-      const reviewMode=payload.parlay_result!=='lost';
-      if(firstLoss&&payload.parlay_result==='lost'){
-        const needed=asNumber(firstLoss.line);
-        const actual=asNumber(firstLoss.actual_value);
-        const missedBy=(needed!==null&&actual!==null)?(needed-actual):null;
-        diedHere.innerHTML=`<div class='autopsy-card'><strong>Parlay died here</strong><div style='margin-top:6px;'>${escapeHtml(firstLoss.leg||'—')}</div><div style='margin-top:4px;font-size:12px;'>Needed: ${needed!==null?needed:'—'}</div><div style='margin-top:2px;font-size:12px;'>Actual: ${actual!==null?actual:'—'}</div>${missedBy!==null?`<div style='margin-top:2px;font-size:12px;'>Missed by: ${Math.abs(missedBy)}</div>`:''}</div>`;
+      const soldHero=buildSoldLegHero(payload);
+      if(soldHero){
+        diedHere.innerHTML=soldHero;
         diedHere.hidden=false;
-      }else if(counts.review>0||reviewMode){
+        return;
+      }
+      const reviewMode=payload.parlay_result!=='lost';
+      if(counts.review>0||reviewMode){
         const firstReview=(payload.legs||[]).find((item)=>item.result==='review'||item.result==='unmatched');
         if(firstReview){
           diedHere.innerHTML=`<div class='autopsy-card soft'><strong>Parlay autopsy</strong><div style='margin-top:6px;'>Still in review: ${escapeHtml(firstReview.leg||'A leg needs manual review.')}</div><div style='margin-top:2px;font-size:12px;'>Final miss point will appear once unresolved legs are matched.</div></div>`;
@@ -1660,6 +1739,7 @@ Murray over 2.5 threes'></textarea>
         parse_warning:parseWarning,
         parse_confidence:parseConfidence,
         grading_warning:allReview?'Parsed legs were detected, but ESPN matching could not settle any leg.':null,
+        sold_leg_explanations:(body.result?.sold_leg_explanations||[]),
         legs:(body.result?.legs||[]).map((item)=>({
           leg:item.leg?.raw_text||'—',
           result:(item.settlement==='unmatched'?'review':item.settlement),
@@ -2471,6 +2551,7 @@ def _process_public_check_text(
         'checked_at': datetime.utcnow().isoformat(),
         'bet_date': bet_date.isoformat() if bet_date is not None else None,
         'selected_player_by_leg_id': selected_player_by_leg_id or {},
+        'sold_leg_explanations': [item.model_dump() for item in (graded.sold_leg_explanations or [])],
     }
     if unmatched_count == len(legs):
         out['message'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
