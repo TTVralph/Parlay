@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.models import GradeResponse, GradedLeg, Leg, SoldLegExplanation
 from app.services.event_snapshot import EventSnapshot
+from app.services.kill_moment_explainer import explain_kill_moment
 from app.services.play_by_play_provider import PlayByPlayEvent
 
 _SUPPORTED_MARKETS = {
@@ -117,7 +118,10 @@ def explain_leg_result(leg: GradedLeg, snapshot: EventSnapshot | None, settlemen
     miss_by: float | None = None
     target_line = leg.line if leg.line is not None else leg.leg.line
     play_context = get_last_relevant_play_context(leg.leg, snapshot)
+    kill_moment = explain_kill_moment(leg, snapshot, settlement_result)
     source = 'snapshot_plus_pbp' if play_context else 'snapshot_only'
+    if kill_moment is not None:
+        source = kill_moment.explanation_source  # type: ignore[assignment]
 
     if target_line is not None and final_value is not None:
         if leg.leg.direction == 'over':
@@ -171,7 +175,9 @@ def explain_leg_result(leg: GradedLeg, snapshot: EventSnapshot | None, settlemen
             f"missing by {_fmt_num(miss_by)}."
         )
 
-    if play_context:
+    if kill_moment is not None and kill_moment.kill_moment_summary:
+        detailed = f"{detailed} {kill_moment.kill_moment_summary}"
+    elif play_context:
         detailed = f"{detailed} {play_context}"
 
     return SoldLegExplanation(
@@ -186,7 +192,12 @@ def explain_leg_result(leg: GradedLeg, snapshot: EventSnapshot | None, settlemen
         detailed_reason=detailed,
         event_id=leg.leg.event_id,
         play_by_play_supported=bool(snapshot and snapshot.normalized_play_by_play),
-        last_relevant_context=play_context,
+        last_relevant_context=kill_moment.last_relevant_play_text if kill_moment is not None else play_context,
+        kill_moment_supported=kill_moment.kill_moment_supported if kill_moment is not None else False,
+        kill_moment_summary=kill_moment.kill_moment_summary if kill_moment is not None else None,
+        last_relevant_play_text=kill_moment.last_relevant_play_text if kill_moment is not None else None,
+        last_relevant_period=kill_moment.last_relevant_period if kill_moment is not None else None,
+        last_relevant_clock=kill_moment.last_relevant_clock if kill_moment is not None else None,
         explanation_source=source,  # type: ignore[arg-type]
     )
 
