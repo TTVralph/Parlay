@@ -231,6 +231,7 @@ from .services.serializers import (
     watched_account_to_response,
 )
 from .services.debug_observability import debug_observability_enabled, get_debug_observability_service
+from .services.snapshot_hydrator import SnapshotHydrator
 from .x_client import get_x_client
 from .services.vision_parser import OpenAIVisionSlipParser
 
@@ -3517,6 +3518,39 @@ def admin_debug_snapshots_endpoint(_: str = Depends(require_admin)) -> dict[str,
         raise HTTPException(status_code=404, detail='Debug observability endpoint disabled')
     return get_debug_observability_service().get_observability_snapshot()
 
+
+
+
+@app.get('/admin/debug/hydration-candidates')
+def admin_debug_hydration_candidates_endpoint(
+    _: str = Depends(require_admin),
+    max_event_ids: int = 20,
+    max_dates: int = 10,
+) -> dict[str, object]:
+    if not debug_observability_enabled():
+        raise HTTPException(status_code=404, detail='Debug observability endpoint disabled')
+    return get_debug_observability_service().get_hydration_candidates_from_observability(
+        max_event_ids=max_event_ids,
+        max_dates=max_dates,
+    )
+
+
+@app.post('/admin/debug/hydrate-hotspots')
+def admin_debug_hydrate_hotspots_endpoint(
+    _: str = Depends(require_admin),
+    max_event_ids: int = 20,
+    max_dates: int = 10,
+    default_sport: str = 'NBA',
+) -> dict[str, object]:
+    if not debug_observability_enabled():
+        raise HTTPException(status_code=404, detail='Debug observability endpoint disabled')
+
+    hydrator = SnapshotHydrator(observability_service=get_debug_observability_service())
+    return hydrator.hydrate_observed_hotspots(
+        default_sport=default_sport,
+        max_event_ids=max_event_ids,
+        max_dates=max_dates,
+    )
 
 @app.post('/ingest/screenshot/grade', response_model=IngestGradeResponse)
 async def ingest_screenshot_grade(

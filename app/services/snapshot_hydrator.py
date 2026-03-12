@@ -51,6 +51,18 @@ class SnapshotHydrator:
             return 'scheduled'
         return 'unknown'
 
+    @staticmethod
+    def _dedupe(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        output: list[str] = []
+        for value in values:
+            normalized = str(value).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            output.append(normalized)
+        return output
+
     def should_hydrate_event(self, event_manifest_entry: dict[str, Any]) -> bool:
         status = self._status_bucket(str(event_manifest_entry.get('game_status') or ''))
         if status == 'final':
@@ -61,7 +73,7 @@ class SnapshotHydrator:
             return False
         return status in {'scheduled', 'unknown'}
 
-    def hydrate_date(self, sport: str, date_value: str | date | datetime) -> dict[str, int]:
+    def hydrate_date(self, sport: str, date_value: str | date | datetime, *, record_observability: bool = True) -> dict[str, Any]:
         summary = HydrationSummary()
         manifest = self._daily_manifest_service.get_daily_manifest(sport, date_value)
         if not manifest:
@@ -82,10 +94,11 @@ class SnapshotHydrator:
             self._hydrate_one(event_id=event_id, event_date=event_date, summary=summary)
 
         payload = summary.to_dict()
-        self._observability_service.record_hydration_summary(payload)
+        if record_observability:
+            self._observability_service.record_hydration_summary(payload)
         return payload
 
-    def hydrate_events(self, event_ids: list[str]) -> dict[str, int]:
+    def hydrate_events(self, event_ids: list[str], *, record_observability: bool = True) -> dict[str, Any]:
         summary = HydrationSummary()
         for raw_event_id in event_ids:
             summary.events_seen += 1
@@ -95,6 +108,87 @@ class SnapshotHydrator:
                 continue
             self._hydrate_one(event_id=event_id, event_date=None, summary=summary)
         payload = summary.to_dict()
+        if record_observability:
+            self._observability_service.record_hydration_summary(payload)
+        return payload
+
+    def hydrate_hotspot_events(self, *, max_event_ids: int = 20) -> dict[str, Any]:
+        candidates = self._observability_service.get_hydration_candidates_from_observability(max_event_ids=max_event_ids, max_dates=1)
+        event_ids = self._dedupe([str(event_id) for event_id in (candidates.get('event_ids') or [])])
+        summary = self.hydrate_events(event_ids, record_observability=False)
+        summary['trigger'] = 'observability_hotspots'
+        summary['target'] = 'events'
+        summary['candidates_used'] = {'event_ids': event_ids, 'dates': []}
+        self._observability_service.record_hydration_summary(summary)
+        return summary
+
+    def hydrate_hotspot_dates(self, *, default_sport: str = 'NBA', max_dates: int = 10) -> dict[str, Any]:
+        candidates = self._observability_service.get_hydration_candidates_from_observability(max_event_ids=1, max_dates=max_dates)
+        dates = self._dedupe([str(value) for value in (candidates.get('dates') or [])])
+
+        summary = HydrationSummary()
+        for date_value in dates:
+            sport = default_sport
+            reason = (candidates.get('reasons') or {}).get(f'date_{date_value}') or {}
+            sports = reason.get('sports') or []
+            if sports:
+                sport = str(sports[0])
+            date_summary = self.hydrate_date(sport, date_value, record_observability=False)
+            summary.events_seen += int(date_summary.get('events_seen') or 0)
+            summary.snapshots_built += int(date_summary.get('snapshots_built') or 0)
+            summary.snapshots_reused += int(date_summary.get('snapshots_reused') or 0)
+            summary.snapshots_persisted += int(date_summary.get('snapshots_persisted') or 0)
+            summary.skipped_stale_or_unneeded += int(date_summary.get('skipped_stale_or_unneeded') or 0)
+            summary.errors += int(date_summary.get('errors') or 0)
+
+        payload: dict[str, Any] = summary.to_dict()
+        payload['trigger'] = 'observability_hotspots'
+        payload['target'] = 'dates'
+        payload['candidates_used'] = {'event_ids': [], 'dates': dates}
+        self._observability_service.record_hydration_summary(payload)
+        return payload
+
+    def hydrate_observed_hotspots(
+        self,
+        *,
+        default_sport: str = 'NBA',
+        max_event_ids: int = 20,
+        max_dates: int = 10,
+    ) -> dict[str, Any]:
+        candidates = self._observability_service.get_hydration_candidates_from_observability(
+            max_event_ids=max_event_ids,
+            max_dates=max_dates,
+        )
+
+        event_ids = self._dedupe([str(value) for value in (candidates.get('event_ids') or [])])
+        dates = self._dedupe([str(value) for value in (candidates.get('dates') or [])])
+
+        summary = HydrationSummary()
+        event_summary = self.hydrate_events(event_ids, record_observability=False) if event_ids else summary.to_dict()
+        summary.events_seen += int(event_summary.get('events_seen') or 0)
+        summary.snapshots_built += int(event_summary.get('snapshots_built') or 0)
+        summary.snapshots_reused += int(event_summary.get('snapshots_reused') or 0)
+        summary.snapshots_persisted += int(event_summary.get('snapshots_persisted') or 0)
+        summary.skipped_stale_or_unneeded += int(event_summary.get('skipped_stale_or_unneeded') or 0)
+        summary.errors += int(event_summary.get('errors') or 0)
+
+        for date_value in dates:
+            reason = (candidates.get('reasons') or {}).get(f'date_{date_value}') or {}
+            sports = reason.get('sports') or []
+            sport = str(sports[0]) if sports else default_sport
+            date_summary = self.hydrate_date(sport, date_value, record_observability=False)
+            summary.events_seen += int(date_summary.get('events_seen') or 0)
+            summary.snapshots_built += int(date_summary.get('snapshots_built') or 0)
+            summary.snapshots_reused += int(date_summary.get('snapshots_reused') or 0)
+            summary.snapshots_persisted += int(date_summary.get('snapshots_persisted') or 0)
+            summary.skipped_stale_or_unneeded += int(date_summary.get('skipped_stale_or_unneeded') or 0)
+            summary.errors += int(date_summary.get('errors') or 0)
+
+        payload: dict[str, Any] = summary.to_dict()
+        payload['trigger'] = 'observability_hotspots'
+        payload['target'] = 'events_then_dates'
+        payload['candidates_used'] = {'event_ids': event_ids, 'dates': dates}
+        payload['candidates'] = candidates
         self._observability_service.record_hydration_summary(payload)
         return payload
 
