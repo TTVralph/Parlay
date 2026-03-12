@@ -371,6 +371,7 @@ class AnalyzeLegRisk(BaseModel):
     line_value_score: Optional[float] = None
     line_value_label: Literal['good', 'neutral', 'bad', 'unknown'] = 'unknown'
     line_value_text: str = 'Line value unknown'
+    line_value_source: Optional[str] = None
 
 
 class AnalyzeSlipResponse(BaseModel):
