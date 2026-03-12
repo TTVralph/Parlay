@@ -157,6 +157,7 @@ class GradedLeg(BaseModel):
     resolved_team_hint: Optional[str] = None
     validation_warnings: list[str] = Field(default_factory=list)
     settlement_explanation: Optional['SettlementExplanation'] = None
+    sold_leg_explanation: Optional['SoldLegExplanation'] = None
     settlement_diagnostics: dict[str, Any] = Field(default_factory=dict)
     matched_event_date: Optional[str] = None
     matched_team: Optional[str] = None
@@ -215,10 +216,27 @@ class SettlementExplanation(BaseModel):
     settlement_reason_text: Optional[str] = None
 
 
+class SoldLegExplanation(BaseModel):
+    is_sold_leg: bool = False
+    market_type: str
+    player_or_team: Optional[str] = None
+    target_line: Optional[float] = None
+    final_value: Optional[float] = None
+    miss_by: Optional[float] = None
+    outcome: Optional[str] = None
+    short_reason: str
+    detailed_reason: str
+    event_id: Optional[str] = None
+    play_by_play_supported: bool = False
+    last_relevant_context: Optional[str] = None
+    explanation_source: Literal['snapshot_only', 'snapshot_plus_pbp'] = 'snapshot_only'
+
+
 class GradeResponse(BaseModel):
     overall: Literal["cashed", "lost", "pending", "needs_review"]
     legs: list[GradedLeg]
     grading_diagnostics: dict[str, Any] = Field(default_factory=dict)
+    sold_leg_explanations: list[SoldLegExplanation] = Field(default_factory=list)
 
 
 class AllSportsGame(BaseModel):
