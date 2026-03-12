@@ -41,6 +41,10 @@ EVENT_SEQUENCE_PATTERN = re.compile(
     r"^(?P<name>[\w .\-'’]+?)\s+(?P<market>first basket|first bucket|first scorer|to score first|first rebound|to get first rebound|first assist|to record first assist|first three|first 3 pointer|first 3pt made|first three-pointer made|last basket|last bucket|to score last|first steal|first block)$",
     re.I,
 )
+MILESTONE_PROP_PATTERN = re.compile(
+    r"^(?P<name>[\w .\-'’]+?)\s+to\s+(?P<action>record|score)\s+(?P<line>\d+(?:\.\d+)?)\+\s*(?P<market>points|rebounds|assists)$",
+    re.I,
+)
 
 TIME_WINDOW_MARKET_PATTERN = re.compile(
     r"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>points|rebounds|assists|threes|three pointers made|3pm).*(?P<window>first\s+\d+\s+minutes|first\s+quarter|first\s+half|first\s+basket|race\s+to|first\s+to)",
@@ -340,6 +344,26 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             parse_confidence = (1.0 + (1.0 if market_type else 0.0) + (1.0 if resolved_player else 0.7)) / 3.0
             confidence = max(parse_confidence, resolution_conf if resolved_player else parse_confidence)
             legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='yes', line=1.0, display_line='Yes', confidence=confidence, notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
+            continue
+
+        milestone_match = MILESTONE_PROP_PATTERN.match(normalized_line)
+        if milestone_match:
+            parsed_name = _normalize_whitespace(milestone_match.group('name'))
+            resolved_player, resolution_conf = _player_lookup(parsed_name)
+            player = resolved_player or parsed_name
+            market_type = _market_lookup(milestone_match.group('market').lower())
+            line_value = float(milestone_match.group('line')) - 0.5
+            sport = _infer_sport(player=player, sport_hint=line_sport_hint)
+            alias_hit = resolved_player is not None
+            notes = ['Mapped milestone prop to equivalent over line for odds matching', *opponent_note]
+            if not alias_hit:
+                notes.append('Parsed player name from raw text; alias not found')
+            parse_confidence = (1.0 + 1.0 + (1.0 if market_type else 0.0) + (1.0 if alias_hit else 0.7)) / 4.0
+            if not market_type:
+                notes.append('Could not parse stat type')
+                market_type = 'player_points'
+            milestone_display_line = milestone_match.group('line')
+            legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='over', line=line_value, display_line=f'{milestone_display_line}+', confidence=max(parse_confidence, resolution_conf if alias_hit else parse_confidence), notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if alias_hit else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
         named_market_match = NAMED_MARKET_PATTERN.match(normalized_line)

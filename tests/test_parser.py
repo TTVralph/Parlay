@@ -156,6 +156,29 @@ def test_parse_number_first_notation() -> None:
     assert legs[0].line == 24.0
 
 
+
+
+def test_parse_to_score_milestone_points_normalizes_line() -> None:
+    legs = parse_text('Dyson Daniels TO SCORE 10+ POINTS')
+    assert len(legs) == 1
+    leg = legs[0]
+    assert leg.player == 'Dyson Daniels'
+    assert leg.market_type == 'player_points'
+    assert leg.direction == 'over'
+    assert leg.line == 9.5
+    assert leg.display_line == '10+'
+
+
+def test_parse_to_record_milestone_rebounds_and_assists_normalizes_line() -> None:
+    legs = parse_text('Dyson Daniels TO RECORD 8+ REBOUNDS\nDyson Daniels TO RECORD 8+ ASSISTS')
+    assert len(legs) == 2
+    assert legs[0].market_type == 'player_rebounds'
+    assert legs[0].line == 7.5
+    assert legs[0].display_line == '8+'
+    assert legs[1].market_type == 'player_assists'
+    assert legs[1].line == 7.5
+    assert legs[1].display_line == '8+'
+
 def test_parse_first_half_team_markets_remain_unmatched_until_registry_support() -> None:
     legs = parse_text('First Half Over 110.5\nLakers 1H -3.5')
     assert len(legs) == 2
