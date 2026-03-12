@@ -372,8 +372,28 @@ def _aggregate_snapshot_run_diagnostics(graded: list[GradedLeg]) -> dict[str, ob
     provider_fallbacks = 0
     missing_snapshot_keys: set[str] = set()
     players_missing_stats: set[str] = set()
+    event_ids: set[str] = set()
+    bet_dates: set[str] = set()
+    sports: set[str] = set()
+    leagues: set[str] = set()
 
     for item in graded:
+        leg = item.leg
+        if leg:
+            if leg.event_id:
+                event_ids.add(str(leg.event_id))
+            elif leg.matched_event_id:
+                event_ids.add(str(leg.matched_event_id))
+
+            selected_date = leg.selected_bet_date or leg.matched_event_date
+            if selected_date:
+                bet_dates.add(str(selected_date))
+
+            if leg.sport:
+                sport = str(leg.sport)
+                sports.add(sport)
+                leagues.add(sport)
+
         settlement_diag = item.settlement_diagnostics or {}
         snapshot_diag = settlement_diag.get('snapshot_stat_diagnostics') or {}
         if snapshot_diag.get('used_snapshot'):
@@ -393,6 +413,10 @@ def _aggregate_snapshot_run_diagnostics(graded: list[GradedLeg]) -> dict[str, ob
         'provider_fallbacks': provider_fallbacks,
         'missing_snapshot_keys': sorted(missing_snapshot_keys),
         'players_missing_stats': sorted(players_missing_stats),
+        'event_ids': sorted(event_ids),
+        'bet_dates': sorted(bet_dates),
+        'sports': sorted(sports),
+        'leagues': sorted(leagues),
     }
 
 def _review_reason_from_notes(leg: Leg) -> str:

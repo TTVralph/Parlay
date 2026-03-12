@@ -11,6 +11,7 @@ from typing import Any
 from app.services.snapshot_store import SnapshotStore
 
 
+
 class DebugObservabilityService:
     """In-memory aggregation for grading/snapshot/hydration diagnostics."""
 
@@ -34,6 +35,10 @@ class DebugObservabilityService:
         if not snapshot_diag:
             return
         snapshot_diag['recorded_at'] = datetime.now(timezone.utc).isoformat()
+        snapshot_diag['event_ids'] = sorted({str(v).strip() for v in snapshot_diag.get('event_ids') or [] if str(v).strip()})
+        snapshot_diag['bet_dates'] = sorted({str(v).strip() for v in snapshot_diag.get('bet_dates') or [] if str(v).strip()})
+        snapshot_diag['sports'] = sorted({str(v).strip() for v in snapshot_diag.get('sports') or [] if str(v).strip()})
+        snapshot_diag['leagues'] = sorted({str(v).strip() for v in snapshot_diag.get('leagues') or [] if str(v).strip()})
         with self._lock:
             self._grading_history.append(snapshot_diag)
 
@@ -82,6 +87,123 @@ class DebugObservabilityService:
             'recent_grading_runs': recent,
             'recent_grading_runs_count': len(recent),
             'max_grading_history': self._max_grading_history,
+        }
+
+    def get_hydration_candidates_from_observability(
+        self,
+        *,
+        max_event_ids: int = 20,
+        max_dates: int = 10,
+    ) -> dict[str, Any]:
+        with self._lock:
+            recent = [deepcopy(item) for item in self._grading_history]
+
+        event_scores: dict[str, dict[str, Any]] = {}
+        date_scores: dict[str, dict[str, Any]] = {}
+
+        for entry in recent:
+            fallbacks = int(entry.get('provider_fallbacks') or 0)
+            missing_keys = sorted({str(v) for v in (entry.get('missing_snapshot_keys') or []) if str(v).strip()})
+            players_missing = sorted({str(v) for v in (entry.get('players_missing_stats') or []) if str(v).strip()})
+            score = fallbacks + len(missing_keys) + len(players_missing)
+            if score <= 0:
+                continue
+
+            context = {
+                'provider_fallbacks': fallbacks,
+                'missing_snapshot_keys': missing_keys,
+                'players_missing_stats': players_missing,
+                'sports': sorted({str(v) for v in (entry.get('sports') or []) if str(v).strip()}),
+                'leagues': sorted({str(v) for v in (entry.get('leagues') or []) if str(v).strip()}),
+            }
+
+            for event_id in entry.get('event_ids') or []:
+                normalized = str(event_id).strip()
+                if not normalized:
+                    continue
+                bucket = event_scores.setdefault(normalized, {
+                    'event_id': normalized,
+                    'score': 0,
+                    'provider_fallbacks': 0,
+                    'missing_snapshot_keys': Counter(),
+                    'players_missing_stats': Counter(),
+                    'sports': set(),
+                    'leagues': set(),
+                })
+                bucket['score'] += score
+                bucket['provider_fallbacks'] += fallbacks
+                for key in missing_keys:
+                    bucket['missing_snapshot_keys'][key] += 1
+                for player in players_missing:
+                    bucket['players_missing_stats'][player] += 1
+                bucket['sports'].update(context['sports'])
+                bucket['leagues'].update(context['leagues'])
+
+            run_has_event = bool(entry.get('event_ids'))
+            for date_value in entry.get('bet_dates') or []:
+                normalized_date = str(date_value).strip()
+                if not normalized_date:
+                    continue
+                bucket = date_scores.setdefault(normalized_date, {
+                    'date': normalized_date,
+                    'score': 0,
+                    'provider_fallbacks': 0,
+                    'missing_snapshot_keys': Counter(),
+                    'players_missing_stats': Counter(),
+                    'sports': set(),
+                    'leagues': set(),
+                    'event_backed_score': 0,
+                })
+                bucket['score'] += score
+                bucket['provider_fallbacks'] += fallbacks
+                for key in missing_keys:
+                    bucket['missing_snapshot_keys'][key] += 1
+                for player in players_missing:
+                    bucket['players_missing_stats'][player] += 1
+                bucket['sports'].update(context['sports'])
+                bucket['leagues'].update(context['leagues'])
+                if run_has_event:
+                    bucket['event_backed_score'] += score
+
+        sorted_events = sorted(event_scores.values(), key=lambda row: (-row['score'], -row['provider_fallbacks'], row['event_id']))
+        selected_events = [row['event_id'] for row in sorted_events[: max(1, int(max_event_ids))]]
+
+        sorted_dates = sorted(
+            date_scores.values(),
+            key=lambda row: (-(row['score'] - row['event_backed_score']), -row['provider_fallbacks'], row['date']),
+        )
+        selected_dates = [row['date'] for row in sorted_dates if (row['score'] - row['event_backed_score']) > 0][: max(1, int(max_dates))]
+
+        reasons: dict[str, Any] = {}
+        for row in sorted_events[: max(1, int(max_event_ids))]:
+            reasons[f"event_{row['event_id']}"] = {
+                'provider_fallbacks': row['provider_fallbacks'],
+                'missing_snapshot_keys': sorted(row['missing_snapshot_keys']),
+                'players_missing_stats': sorted(row['players_missing_stats']),
+                'sports': sorted(row['sports']),
+                'leagues': sorted(row['leagues']),
+                'score': row['score'],
+            }
+        for row in sorted_dates:
+            if row['date'] not in selected_dates:
+                continue
+            reasons[f"date_{row['date']}"] = {
+                'provider_fallbacks': row['provider_fallbacks'],
+                'missing_snapshot_keys': sorted(row['missing_snapshot_keys']),
+                'players_missing_stats': sorted(row['players_missing_stats']),
+                'sports': sorted(row['sports']),
+                'leagues': sorted(row['leagues']),
+                'score': row['score'],
+            }
+
+        return {
+            'event_ids': selected_events,
+            'dates': selected_dates,
+            'reasons': reasons,
+            'limits': {
+                'max_event_ids': max(1, int(max_event_ids)),
+                'max_dates': max(1, int(max_dates)),
+            },
         }
 
     def get_observability_snapshot(self) -> dict[str, Any]:

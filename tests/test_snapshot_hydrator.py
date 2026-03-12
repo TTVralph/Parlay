@@ -205,3 +205,34 @@ def test_hydration_summary_counts_are_reported(tmp_path: Path) -> None:
         'skipped_stale_or_unneeded': 1,
         'errors': 0,
     }
+
+
+class _FakeObservabilityForHotspots:
+    def __init__(self) -> None:
+        self.recorded: list[dict[str, Any]] = []
+
+    def get_hydration_candidates_from_observability(self, *, max_event_ids: int = 20, max_dates: int = 10) -> dict[str, Any]:
+        return {
+            'event_ids': ['evt-final', 'evt-final'],
+            'dates': ['2026-03-08'],
+            'reasons': {'date_2026-03-08': {'sports': ['NBA']}},
+            'limits': {'max_event_ids': max_event_ids, 'max_dates': max_dates},
+        }
+
+    def record_hydration_summary(self, hydration_summary: dict[str, Any] | None) -> None:
+        if hydration_summary:
+            self.recorded.append(dict(hydration_summary))
+
+
+def test_hydrate_observed_hotspots_prioritizes_events_and_records_summary(tmp_path: Path) -> None:
+    hydrator, _, gamecast, _ = _build_hydrator(tmp_path)
+    observability = _FakeObservabilityForHotspots()
+    hydrator._observability_service = observability  # noqa: SLF001
+
+    result = hydrator.hydrate_observed_hotspots(max_event_ids=3, max_dates=2)
+
+    assert result['candidates_used']['event_ids'] == ['evt-final']
+    assert result['target'] == 'events_then_dates'
+    assert len(observability.recorded) == 1
+    assert gamecast.calls[0] == 'evt-final'
+

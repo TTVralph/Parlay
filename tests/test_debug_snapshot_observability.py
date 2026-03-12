@@ -119,3 +119,52 @@ def test_observability_history_is_bounded(tmp_path: Path) -> None:
     payload = service.get_observability_snapshot()
     assert payload['recent_grading_runs_count'] == 3
     assert payload['recent_hydration_runs_count'] == 2
+
+
+def test_hydration_candidates_prioritize_event_ids_and_dedupe() -> None:
+    service = get_debug_observability_service().__class__(max_grading_history=10, max_hydration_history=5, snapshot_store=SnapshotStore(base_dir=Path('tmp-snapshot-test')))
+    service.record_grading_diagnostics({'snapshot': {'snapshot_stats_used': 1, 'provider_fallbacks': 3, 'missing_snapshot_keys': ['STL', 'BLK'], 'players_missing_stats': ['A'], 'event_ids': ['401', '401'], 'bet_dates': ['2026-03-06'], 'sports': ['NBA'], 'leagues': ['NBA']}})
+    service.record_grading_diagnostics({'snapshot': {'snapshot_stats_used': 0, 'provider_fallbacks': 2, 'missing_snapshot_keys': ['STL'], 'players_missing_stats': ['B'], 'event_ids': ['402'], 'bet_dates': ['2026-03-06'], 'sports': ['NBA'], 'leagues': ['NBA']}})
+    service.record_grading_diagnostics({'snapshot': {'snapshot_stats_used': 0, 'provider_fallbacks': 1, 'missing_snapshot_keys': ['AST'], 'players_missing_stats': ['C'], 'event_ids': [], 'bet_dates': ['2026-03-07'], 'sports': ['NBA'], 'leagues': ['NBA']}})
+
+    candidates = service.get_hydration_candidates_from_observability(max_event_ids=5, max_dates=5)
+
+    assert candidates['event_ids'][:2] == ['401', '402']
+    assert candidates['dates'] == ['2026-03-07']
+    assert candidates['reasons']['event_401']['provider_fallbacks'] == 3
+    assert sorted(candidates['reasons']['event_401']['missing_snapshot_keys']) == ['BLK', 'STL']
+
+
+def test_hydration_candidates_endpoint_shape(monkeypatch) -> None:
+    _reset_observability()
+    monkeypatch.setenv('PARLAY_ENABLE_DEBUG_OBSERVABILITY', '1')
+    service = get_debug_observability_service()
+    service.record_grading_diagnostics({'snapshot': {'snapshot_stats_used': 0, 'provider_fallbacks': 2, 'missing_snapshot_keys': ['STL'], 'players_missing_stats': [], 'event_ids': ['401'], 'bet_dates': ['2026-03-06'], 'sports': ['NBA'], 'leagues': ['NBA']}})
+
+    response = client.get('/admin/debug/hydration-candidates', headers=_admin_headers())
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) >= {'event_ids', 'dates', 'reasons', 'limits'}
+    assert 'event_401' in body['reasons']
+
+
+def test_hydrate_hotspots_endpoint_records_summary(monkeypatch) -> None:
+    _reset_observability()
+    monkeypatch.setenv('PARLAY_ENABLE_DEBUG_OBSERVABILITY', '1')
+    service = get_debug_observability_service()
+    service.record_grading_diagnostics({'snapshot': {'snapshot_stats_used': 0, 'provider_fallbacks': 2, 'missing_snapshot_keys': ['STL'], 'players_missing_stats': [], 'event_ids': ['evt-1'], 'bet_dates': ['2026-03-06'], 'sports': ['NBA'], 'leagues': ['NBA']}})
+
+    class _EndpointHydrator:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def hydrate_observed_hotspots(self, **kwargs):
+            return {'events_seen': 1, 'snapshots_built': 1, 'snapshots_reused': 0, 'snapshots_persisted': 1, 'skipped_stale_or_unneeded': 0, 'errors': 0, 'trigger': 'observability_hotspots', 'candidates_used': {'event_ids': ['evt-1'], 'dates': []}}
+
+    monkeypatch.setattr('app.main.SnapshotHydrator', _EndpointHydrator)
+
+    response = client.post('/admin/debug/hydrate-hotspots', headers=_admin_headers())
+    assert response.status_code == 200
+    body = response.json()
+    assert body['trigger'] == 'observability_hotspots'
+
