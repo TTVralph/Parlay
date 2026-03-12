@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.grader import grade_text
@@ -114,9 +114,14 @@ def test_event_snapshot_is_built_once_and_reused_for_same_event() -> None:
     assert coverage['snapshot_source'] == 'summary+boxscore'
 
 
-def test_event_snapshot_play_by_play_enrichment_is_lazy_and_cached() -> None:
+def test_event_snapshot_play_by_play_enrichment_is_lazy_and_cached(tmp_path) -> None:
     pbp = _FakePlayByPlayProvider()
-    service = EventSnapshotService(scoreboard_provider=_FakeScoreboardProvider(), gamecast_provider=_FakeGamecastProvider(), play_by_play_provider=pbp)
+    service = EventSnapshotService(
+        scoreboard_provider=_FakeScoreboardProvider(),
+        gamecast_provider=_FakeGamecastProvider(),
+        play_by_play_provider=pbp,
+        snapshot_store=SnapshotStore(base_dir=tmp_path / 'snapshots'),
+    )
 
     first = service.get_event_snapshot('evt-1')
     assert first is not None
@@ -128,7 +133,7 @@ def test_event_snapshot_play_by_play_enrichment_is_lazy_and_cached() -> None:
     assert pbp.calls == ['evt-1']
 
 
-def test_request_cache_hit_miss_behavior_still_works_with_snapshot_service(monkeypatch) -> None:
+def test_request_cache_hit_miss_behavior_still_works_with_snapshot_service(monkeypatch, tmp_path) -> None:
     from app.services.gamecast_provider import ESPNGamecastProvider
 
     calls: list[str] = []
@@ -141,7 +146,7 @@ def test_request_cache_hit_miss_behavior_still_works_with_snapshot_service(monke
 
     monkeypatch.setattr(gamecast, '_fetch_json', _mock_fetch)
 
-    service = EventSnapshotService(gamecast_provider=gamecast)
+    service = EventSnapshotService(gamecast_provider=gamecast, snapshot_store=SnapshotStore(base_dir=tmp_path / "snapshots"))
     service.get_event_snapshot('evt-1')
     service.get_event_snapshot('evt-1')
     service.get_event_snapshot('evt-2')
@@ -357,6 +362,31 @@ class _FakeFinalGamecastProvider(_FakeGamecastProvider):
         return payload
 
 
+class _FakeLiveGamecastProvider(_FakeGamecastProvider):
+    def fetch_normalized(self, event_id: str) -> dict[str, Any] | None:
+        payload = super().fetch_normalized(event_id)
+        if payload is None:
+            return None
+        payload['status'] = {'state': 'in_progress'}
+        return payload
+
+
+class _FakeScheduledGamecastProvider(_FakeGamecastProvider):
+    def fetch_normalized(self, event_id: str) -> dict[str, Any] | None:
+        payload = super().fetch_normalized(event_id)
+        if payload is None:
+            return None
+        payload['status'] = {'state': 'scheduled'}
+        return payload
+
+
+class _FakeNonFinalScoreboardProvider(_FakeScoreboardProvider):
+    def fetch_events_for_date(self, date_str: str) -> list[dict[str, Any]]:
+        rows = super().fetch_events_for_date(date_str)
+        rows[0]['status'] = 'in_progress'
+        return rows
+
+
 def test_snapshot_saved_after_build_for_final_game(tmp_path) -> None:
     store = SnapshotStore(base_dir=tmp_path / 'snapshots')
     service = EventSnapshotService(
@@ -401,7 +431,8 @@ def test_snapshot_reused_from_store_without_provider_calls(tmp_path) -> None:
     assert snapshot is not None
     assert snapshot.event_id == 'evt-1'
     assert gamecast.calls == []
-    assert scoreboard.calls == []
+    assert scoreboard.calls == ['2026-03-06']
+    assert snapshot.snapshot_origin == 'persisted'
 
 
 def test_snapshot_store_corruption_falls_back_to_provider(tmp_path) -> None:
@@ -441,3 +472,83 @@ def test_snapshot_store_missing_file_falls_back_to_provider(tmp_path) -> None:
     assert snapshot is not None
     assert gamecast.calls == ['evt-1']
     assert scoreboard.calls == ['2026-03-06']
+
+
+def test_live_snapshot_is_not_persisted(tmp_path) -> None:
+    store = SnapshotStore(base_dir=tmp_path / 'snapshots')
+    service = EventSnapshotService(
+        scoreboard_provider=_FakeScoreboardProvider(),
+        gamecast_provider=_FakeLiveGamecastProvider(),
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=store,
+    )
+
+    snapshot = service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    assert snapshot is not None
+    assert snapshot.snapshot_origin == 'rebuilt'
+    assert store.snapshot_exists('evt-1') is False
+
+
+def test_scheduled_snapshot_is_not_persisted(tmp_path) -> None:
+    store = SnapshotStore(base_dir=tmp_path / 'snapshots')
+    service = EventSnapshotService(
+        scoreboard_provider=_FakeScoreboardProvider(),
+        gamecast_provider=_FakeScheduledGamecastProvider(),
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=store,
+    )
+
+    snapshot = service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    assert snapshot is not None
+    assert store.snapshot_exists('evt-1') is False
+
+
+def test_stale_in_memory_live_snapshot_rebuilds(tmp_path) -> None:
+    store = SnapshotStore(base_dir=tmp_path / 'snapshots')
+    gamecast = _FakeLiveGamecastProvider()
+    service = EventSnapshotService(
+        scoreboard_provider=_FakeScoreboardProvider(),
+        gamecast_provider=gamecast,
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=store,
+        live_freshness_seconds=15,
+    )
+
+    first = service.get_event_snapshot('evt-1', event_date='2026-03-06')
+    assert first is not None
+    first.built_at = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat()
+    first.diagnostics.built_at = first.built_at
+
+    second = service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    assert second is not None
+    assert second is not first
+    assert len(gamecast.calls) == 2
+
+
+def test_persisted_final_snapshot_with_non_final_scoreboard_status_rebuilds(tmp_path) -> None:
+    store = SnapshotStore(base_dir=tmp_path / 'snapshots')
+    first_service = EventSnapshotService(
+        scoreboard_provider=_FakeScoreboardProvider(),
+        gamecast_provider=_FakeFinalGamecastProvider(),
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=store,
+    )
+    first_service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    scoreboard = _FakeNonFinalScoreboardProvider()
+    gamecast = _FakeLiveGamecastProvider()
+    second_service = EventSnapshotService(
+        scoreboard_provider=scoreboard,
+        gamecast_provider=gamecast,
+        play_by_play_provider=_FakePlayByPlayProvider(),
+        snapshot_store=store,
+    )
+
+    snapshot = second_service.get_event_snapshot('evt-1', event_date='2026-03-06')
+
+    assert snapshot is not None
+    assert snapshot.snapshot_origin == 'rebuilt'
+    assert gamecast.calls == ['evt-1']
