@@ -1054,7 +1054,7 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     :root[data-theme='light']{--bg:#edf3ff;--bg-soft:#e2ebfb;--surface:#ffffff;--surface-elev:#f8fbff;--surface-glass:rgba(255,255,255,.88);--border:#cfddf1;--text:#0f172a;--muted:#475569;--primary:#2563eb;--primary-2:#1d4ed8;--success:#15803d;--danger:#b91c1c;--warning:#b45309;color-scheme:light;}
     body{font-family:Inter,system-ui,Arial,Helvetica,sans-serif;margin:0;background:radial-gradient(1200px 600px at 5% -10%,#1d4ed833,transparent 65%),radial-gradient(1000px 600px at 95% -20%,#9333ea2e,transparent 62%),var(--bg);color:var(--text);}
     .shell{max-width:1080px;margin:0 auto;padding:22px 14px 56px;}
-    .hero-card,.card{background:var(--surface-glass);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:20px;padding:18px;box-shadow:0 18px 35px rgba(2,6,23,.28);}
+    .hero-card,.card{background:var(--surface-glass);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:20px;padding:18px;box-shadow:0 18px 35px rgba(2,6,23,.28);transition:border-color .22s ease,box-shadow .24s ease,transform .24s ease;}
     .hero-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;}
     .hero-card{position:relative;overflow:hidden;}
     .hero-card::after{content:'';position:absolute;inset:auto -120px -120px auto;width:280px;height:280px;background:radial-gradient(circle,var(--primary) 0%,transparent 70%);opacity:.2;pointer-events:none;}
@@ -1069,8 +1069,8 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     textarea,input,button,select{font:inherit;border-radius:12px;box-sizing:border-box;}
     textarea,input,select{width:100%;padding:11px 12px;border:1px solid var(--border);background:var(--bg-soft);color:var(--text);}
     textarea{min-height:190px;}
-    button{margin-top:12px;padding:11px 16px;border:1px solid var(--primary-2);background:linear-gradient(180deg,var(--primary),var(--primary-2));color:#fff;cursor:pointer;font-weight:700;transition:.15s ease;}
-    button:hover{filter:brightness(1.05);} button:active{transform:translateY(1px);} button[disabled]{opacity:.6;cursor:not-allowed;}
+    button{margin-top:12px;padding:11px 16px;border:1px solid var(--primary-2);background:linear-gradient(180deg,var(--primary),var(--primary-2));color:#fff;cursor:pointer;font-weight:700;transition:transform .17s ease,filter .17s ease,box-shadow .2s ease,border-color .2s ease;}
+    button:hover{filter:brightness(1.07);transform:translateY(-1px);box-shadow:0 8px 18px rgba(37,99,235,.3);} button:active{transform:translateY(1px) scale(.99);} button:focus-visible{outline:2px solid color-mix(in srgb,var(--primary) 65%,white);outline-offset:2px;} button[disabled]{opacity:.6;cursor:not-allowed;box-shadow:none;transform:none;}
     button.sample{margin-top:0;background:transparent;color:var(--text);border:1px solid var(--border);padding:8px 12px;border-radius:999px;}
     button.secondary{background:var(--bg-soft);color:var(--text);border-color:var(--border);}
     .candidate-btn{display:inline-flex;align-items:center;gap:6px;margin-top:8px;margin-right:8px;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg-soft);color:var(--text);cursor:pointer;pointer-events:auto;font-size:13px;font-weight:700;}
@@ -1094,7 +1094,7 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .result-chip.win,.leg-progress-chip.win{border-color:#22c55e;color:#15803d;}
     .result-chip.loss,.leg-progress-chip.loss{border-color:#ef4444;color:#b91c1c;}
     .result-chip.review,.leg-progress-chip.review{border-color:#f59e0b;color:#b45309;}
-    .sold-hero{position:relative;overflow:hidden;border:1px solid #7f1d1d55;background:linear-gradient(140deg,#450a0a 0%,#7f1d1d 48%,#991b1b 100%);color:#fff1f2;border-radius:16px;padding:14px;box-shadow:0 12px 24px rgba(127,29,29,.3);}
+    .sold-hero{position:relative;overflow:hidden;border:1px solid #7f1d1d55;background:linear-gradient(140deg,#3f0606 0%,#7f1d1d 46%,#b91c1c 100%);color:#fff1f2;border-radius:18px;padding:16px;box-shadow:0 16px 36px rgba(127,29,29,.38);}
     .sold-hero::after{content:'';position:absolute;right:-70px;top:-65px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,#fca5a566 0%,transparent 70%);pointer-events:none;}
     .sold-hero-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;position:relative;z-index:1;}
     .sold-kicker{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.86;font-weight:800;}
@@ -1106,7 +1106,7 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .sold-meta-label{font-size:11px;opacity:.85;text-transform:uppercase;letter-spacing:.04em;}
     .sold-meta-value{margin-top:3px;font-size:15px;font-weight:800;color:#fff;}
     .sold-context{margin-top:10px;padding:9px;border-radius:10px;background:#fff1f51f;border:1px solid #fecdd544;color:#ffe4e6;font-size:13px;position:relative;z-index:1;}
-    .sold-kill-moment{margin-top:10px;padding:10px;border-radius:10px;background:#fff1f520;border:1px solid #fecdd544;color:#ffe4e6;position:relative;z-index:1;}
+    .sold-kill-moment{margin-top:12px;padding:12px;border-radius:12px;background:linear-gradient(180deg,#fff1f530,#fff1f516);border:1px solid #fecdd56a;color:#ffe4e6;position:relative;z-index:1;}
     .sold-kill-title{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;opacity:.9;}
     .sold-kill-body{margin-top:6px;font-size:13px;line-height:1.4;color:#fff1f2;}
     .sold-kill-meta{margin-top:6px;font-size:11px;opacity:.85;color:#fecdd5;}
@@ -1121,27 +1121,41 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .closeness-copy{margin-top:6px;font-size:14px;color:var(--muted);}
     .closeness-meta{margin-top:10px;display:grid;grid-template-columns:1fr;gap:6px;font-size:13px;}
     .autopsy-card.soft{border:1px solid #854d0e33;background:#fed7aa33;color:#92400e;border-radius:12px;padding:12px;}
-    .recent-slip-card{display:flex;justify-content:space-between;align-items:stretch;gap:14px;padding:12px;border:1px solid var(--border);border-radius:14px;background:var(--surface-elev);}
+    .recent-slip-card{display:flex;justify-content:space-between;align-items:stretch;gap:14px;padding:12px;border:1px solid var(--border);border-radius:14px;background:var(--surface-elev);transition:border-color .2s ease,transform .2s ease,box-shadow .2s ease;}
+    .recent-slip-card:hover{border-color:color-mix(in srgb,var(--primary) 38%,var(--border));transform:translateY(-2px);box-shadow:0 12px 24px rgba(2,6,23,.18);}
     .recent-slip-main{min-width:0;display:flex;flex-direction:column;gap:6px;}.recent-slip-summary{font-weight:800;font-size:15px;line-height:1.2;}
     .recent-slip-meta,.recent-slip-preview{font-size:12px;color:var(--muted);} .recent-slip-preview{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .recent-slip-side{display:flex;flex-direction:column;gap:8px;align-items:flex-end;}.recent-slip-progress{width:100%;height:6px;border-radius:999px;background:var(--bg-soft);overflow:hidden;}
     .recent-slip-progress-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#22c55e,#16a34a);} .recent-slip-progress-fill.review{background:linear-gradient(90deg,#f59e0b,#d97706);} .recent-slip-progress-fill.loss{background:linear-gradient(90deg,#f43f5e,#dc2626);}
     .empty-polish{border:1px dashed var(--border);border-radius:12px;padding:12px;background:var(--bg-soft);color:var(--muted);}
-    .mode-toggle{display:inline-flex;gap:6px;padding:6px;border-radius:999px;border:1px solid var(--border);background:var(--bg-soft);margin-top:10px;}
-    .mode-option{margin-top:0;padding:9px 14px;border-radius:999px;border:1px solid transparent;background:transparent;color:var(--muted);font-size:13px;font-weight:800;}
+    .mode-toggle{display:inline-flex;gap:6px;padding:6px;border-radius:999px;border:1px solid var(--border);background:var(--bg-soft);margin-top:10px;position:relative;isolation:isolate;}
+    .mode-option{margin-top:0;padding:9px 14px;border-radius:999px;border:1px solid transparent;background:transparent;color:var(--muted);font-size:13px;font-weight:800;position:relative;z-index:1;}
     .mode-option.active{background:linear-gradient(180deg,var(--primary),var(--primary-2));color:#fff;box-shadow:0 8px 20px #1d4ed844;}
+    .mode-option:not(.active):hover{color:var(--text);border-color:var(--border);}
     .mode-description{margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);font-size:13px;color:var(--muted);}
     .mode-description strong{color:var(--text);}
     .mode-hidden{display:none !important;}
     .mode-muted{opacity:.5;}
     .advisory-banner{margin-top:10px;padding:12px;border-radius:12px;border:1px solid #facc15;background:linear-gradient(180deg,#fef9c3,#fef3c7);color:#92400e;font-size:13px;font-weight:700;}
+    .advisory-banner .mini{display:block;margin-top:4px;font-size:12px;font-weight:600;opacity:.86;}
+    .analyzer-hero{border:1px solid #f59e0b66;background:linear-gradient(160deg,#78350f 0%,#92400e 46%,#b45309 100%);color:#fffbeb;border-radius:14px;padding:12px;box-shadow:0 12px 24px rgba(120,53,15,.24);}
+    .analyzer-hero .title{font-size:17px;font-weight:900;line-height:1.2;}
+    .analyzer-hero .copy{margin-top:6px;color:#fef3c7;font-size:13px;}
+    .result-chip.priority{border-color:#f59e0b88;color:#78350f;background:#fef3c7;}
+    .result-chip.priority-strong{border-color:#dc262688;color:#7f1d1d;background:#fee2e2;}
     .risk-card{padding:10px;border:1px solid var(--border);border-radius:12px;background:var(--surface-elev);}
     .risk-chip{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;}
     .risk-chip.low{background:#dcfce7;color:#166534;}
     .risk-chip.medium{background:#fef3c7;color:#92400e;}
     .risk-chip.high{background:#fee2e2;color:#b91c1c;}
-    table{width:100%;border-collapse:collapse;} th,td{padding:8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;}
+    table{width:100%;border-collapse:separate;border-spacing:0;} th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;} thead th{font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);} tbody tr{transition:background .18s ease;} tbody tr:hover{background:color-mix(in srgb,var(--surface-elev) 80%,var(--primary) 8%);}
     a{color:var(--primary);} code{background:var(--bg-soft);padding:2px 6px;border-radius:6px;color:var(--primary-2);} .loading-skeleton{display:none;grid-template-columns:1fr;gap:8px;}
+    .result-flow [data-reveal]{opacity:0;transform:translateY(8px);transition:opacity .22s ease,transform .22s ease;}
+    .result-flow [data-reveal].is-visible{opacity:1;transform:translateY(0);}
+    .section-technical{margin-top:6px;padding:10px;border-radius:12px;border:1px solid var(--border);background:var(--surface-elev);}
+    .section-technical summary{cursor:pointer;font-weight:700;color:var(--muted);}
+    .status.success{box-shadow:0 10px 24px rgba(22,101,52,.16);} .status.error{box-shadow:0 10px 24px rgba(153,27,27,.16);}
+    @media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important;} .result-flow [data-reveal]{opacity:1;transform:none;}}
     .loading-skeleton.show{display:grid;} .loading-skeleton div{height:14px;border-radius:8px;background:linear-gradient(90deg,var(--bg-soft),var(--surface),var(--bg-soft));background-size:200% 100%;animation:pulse 1.2s infinite;}
     @keyframes pulse{0%{background-position:200% 0;}100%{background-position:-200% 0;}}
     @media (min-width:860px){.shell{padding:30px 20px 60px;}.grid{grid-template-columns:1.05fr .95fr;}.field-row{grid-template-columns:1fr 1fr;}.hero-actions{display:flex;gap:10px;align-items:center;}}
@@ -1213,16 +1227,16 @@ Murray over 2.5 threes'></textarea>
         <div id='recentSlipsList' style='display:flex;flex-direction:column;gap:8px;margin-top:10px;'></div>
       </div>
     </div>
-    <div id='resultWrap' hidden class='card'>
-      <div id='overall'></div>
-      <div id='resultSummary' class='result-summary' hidden></div>
-      <div id='legProgressStrip' class='leg-progress' hidden></div>
-      <div id='metaSummary' class='result-meta' hidden></div>
-      <div id='diedHere' hidden></div>
+    <div id='resultWrap' hidden class='card result-flow'>
+      <div id='overall' data-reveal='1'></div>
+      <div id='resultSummary' class='result-summary' data-reveal='2' hidden></div>
+      <div id='legProgressStrip' class='leg-progress' data-reveal='3' hidden></div>
+      <div id='metaSummary' class='result-meta' data-reveal='4' hidden></div>
+      <div id='diedHere' data-reveal='5' hidden></div>
       <div id='payoutOut' style='margin:8px 0;color:var(--muted);'></div>
       <div id='gradingSkeleton' class='loading-skeleton'><div></div><div></div><div></div></div>
-      <details><summary>Show technical details</summary><div id='debugOut' style='margin:8px 0 12px;color:var(--muted);'></div></details>
-      <table>
+      <details class='section-technical' data-reveal='7'><summary>Show technical details</summary><div id='debugOut' style='margin:8px 0 12px;color:var(--muted);'></div></details>
+      <table data-reveal='6'>
         <thead><tr><th id='colLegHeader'>Leg</th><th id='colResultHeader'>Result</th><th id='colThirdHeader'>Matched event</th></tr></thead>
         <tbody id='legsBody'></tbody>
       </table>
@@ -1387,6 +1401,10 @@ Murray over 2.5 threes'></textarea>
     // <span class='result-chip'>${counts.won} Won</span>
     // <span class='result-chip'>${counts.lost} Lost</span>
     // <span class='result-chip'>${counts.review} Review</span>
+    // showActionStatus('Summary copied.','success');
+    // showActionStatus('Public link copied.','success');
+    // showActionStatus('Share card downloaded.','success');
+    // showActionStatus(`Unable to copy automatically. Public URL: ${full}`,'error');
     // suggestion.textContent=didYouMeanText;
     // Possible games
     // if(parsedLegs.length){slip.value=parsedLegs.join('\\n');}
@@ -1498,6 +1516,15 @@ Murray over 2.5 threes'></textarea>
     function clearActionStatus(){
       actionStatus.textContent='';
       actionStatus.className='status';
+    }
+
+    function revealResultFlow(){
+      const blocks=Array.from(wrap.querySelectorAll('[data-reveal]'));
+      blocks.forEach((node)=>node.classList.remove('is-visible'));
+      blocks.sort((a,b)=>Number(a.dataset.reveal||0)-Number(b.dataset.reveal||0));
+      blocks.forEach((node,index)=>{
+        window.setTimeout(()=>node.classList.add('is-visible'),30+(index*55));
+      });
     }
 
     function setScreenshotUploadBusy(isBusy){
@@ -1820,7 +1847,7 @@ Murray over 2.5 threes'></textarea>
         ?`<div class='sold-kill-meta'>${escapeHtml(String(primary.last_relevant_clock))} left in ${escapeHtml(String(primary.last_relevant_period))}</div>`
         :'';
       const killMoment=(primary.kill_moment_supported===true&&primary.kill_moment_summary)
-        ?`<div class='sold-kill-moment'><div class='sold-kill-title'>Kill moment</div><div class='sold-kill-body'>${escapeHtml(String(primary.kill_moment_summary))}</div>${killMomentMeta}</div>`
+        ?`<div class='sold-kill-moment'><div class='sold-kill-title'>How it unraveled</div><div class='sold-kill-body'>${escapeHtml(String(primary.kill_moment_summary))}</div>${killMomentMeta}</div>`
         :'';
       const market=primary.market_type||primary.market||'';
       const game=primary.event_name||primary.matched_event||'';
@@ -1850,7 +1877,7 @@ Murray over 2.5 threes'></textarea>
         <div class='sold-hero-head'>
           <div>
             <div class='sold-kicker'>❌ SOLD THIS SLIP</div>
-            <div class='sold-title'>Sold this slip</div>
+            <div class='sold-title'>This leg sold the ticket</div>
           </div>
         </div>
         <div class='sold-hero-leg'>${escapeHtml(label)}</div>
@@ -2073,10 +2100,10 @@ Murray over 2.5 threes'></textarea>
         ?`<span class='result-chip'>Trap reasons: ${payload.trap_reason_codes.map((code)=>escapeHtml(code)).join(' · ')}</span>`
         :'';
       resultSummary.innerHTML=`
-        <span class='result-chip'>Weakest leg: ${escapeHtml(weakest?.subject_name||weakest?.raw_leg_text||'—')}</span>
+        <span class='result-chip priority'>Weakest leg: ${escapeHtml(weakest?.subject_name||weakest?.raw_leg_text||'—')}</span>
         <span class='result-chip'>Safest leg: ${escapeHtml(safest?.subject_name||safest?.raw_leg_text||'—')}</span>
         <span class='result-chip'>Most likely seller: ${escapeHtml(seller?.subject_name||seller?.raw_leg_text||'—')}</span>
-        <span class='result-chip'>🚨 Trap leg: ${escapeHtml(trap?.subject_name||trap?.raw_leg_text||'—')} (${trapScore}/10)</span>
+        <span class='result-chip priority-strong'>🚨 Trap leg: ${escapeHtml(trap?.subject_name||trap?.raw_leg_text||'—')} (${trapScore}/10)</span>
         ${trapReasons}
       `;
       resultSummary.hidden=false;
@@ -2093,7 +2120,14 @@ Murray over 2.5 threes'></textarea>
       const correlationNote=payload.same_game_group_count>0
         ?`<div class='advisory-banner' style='margin-top:8px;'>🔗 Correlation note: ${escapeHtml(payload.correlation_note||'Same-game legs may move together.')}</div>`
         :'';
-      diedHere.innerHTML=`<div class='advisory-banner'>Advisory only — not a guarantee. Use this pre-game read as guidance, not settlement.</div>${correlationNote}`;
+      diedHere.innerHTML=`
+        <div class='analyzer-hero'>
+          <div class='title'>Pre-game advisory: highest-risk point detected</div>
+          <div class='copy'>This read helps prioritize where your slip is most fragile before placing it.</div>
+        </div>
+        <div class='advisory-banner'>Advisory only — not a guarantee.<span class='mini'>Use this pre-game read as guidance, not settlement.</span></div>
+        ${correlationNote}
+      `;
       diedHere.hidden=false;
       payoutOut.textContent='';
       debugOut.innerHTML='';
@@ -2127,6 +2161,7 @@ Murray over 2.5 threes'></textarea>
       }
       wrap.hidden=false;
       msg.textContent='Analyze Slip complete. Advisory only — not a guarantee.';
+      revealResultFlow();
     }
 
 
@@ -2153,6 +2188,7 @@ Murray over 2.5 threes'></textarea>
       overall.textContent='⚠️ NEEDS REVIEW';
       payoutOut.textContent='';
       gradingSkeleton.classList.remove('show');
+      wrap.querySelectorAll('[data-reveal]').forEach((node)=>node.classList.remove('is-visible'));
     }
 
     async function submitCheck(){
@@ -2267,6 +2303,7 @@ Murray over 2.5 threes'></textarea>
         openLinkBtn.disabled=!latestPublicUrl;
         downloadCardBtn.disabled=false;
         wrap.hidden=false;
+        revealResultFlow();
         gradingSkeleton.classList.remove('show');
       }catch(err){
         console.error('Check Slip request failed:', err);
@@ -2342,11 +2379,15 @@ Murray over 2.5 threes'></textarea>
         return;
       }
       const full=window.location.origin+latestPublicUrl;
+      const originalLabel=copyLinkBtn.textContent;
       try{
+        copyLinkBtn.textContent='Copying...';
         await navigator.clipboard.writeText(full);
-        showActionStatus('Public link copied.','success');
+        showActionStatus('Public result link copied — ready to paste anywhere.','success');
       }catch(err){
-        showActionStatus(`Unable to copy automatically. Public URL: ${full}`,'error');
+        showActionStatus(`Auto-copy was blocked. Use this URL manually: ${full}`,'error');
+      }finally{
+        copyLinkBtn.textContent=originalLabel;
       }
     });
     openLinkBtn.addEventListener('click',()=>{
@@ -2358,16 +2399,20 @@ Murray over 2.5 threes'></textarea>
         showActionStatus('Run a slip check before exporting a share card.','error');
         return;
       }
+      const originalLabel=downloadCardBtn.textContent;
       try{
+        downloadCardBtn.textContent='Preparing card...';
         drawShareCard(latestResultPayload);
         const a=document.createElement('a');
         a.href=shareCardCanvas.toDataURL('image/png');
         a.download='parlaybot-share-card.png';
         a.click();
-        showActionStatus('Share card downloaded.','success');
+        showActionStatus('Share card downloaded — built for social posting.','success');
       }catch(err){
         console.error('Share card export failed:',err);
         showActionStatus('Could not generate share card image. Please try again.','error');
+      }finally{
+        downloadCardBtn.textContent=originalLabel;
       }
     });
 
@@ -2377,13 +2422,17 @@ Murray over 2.5 threes'></textarea>
         showActionStatus('No summary available yet.','error');
         return;
       }
+      const originalLabel=copyBtn.textContent;
       try{
+        copyBtn.textContent='Copying...';
         await navigator.clipboard.writeText(text);
-        showActionStatus('Summary copied.','success');
+        showActionStatus('Summary copied — paste it into your group chat or notes.','success');
       }catch(err){
         summaryOut.focus();
         summaryOut.select();
         showActionStatus('Copy blocked. Summary selected for manual copy.','error');
+      }finally{
+        copyBtn.textContent=originalLabel;
       }
     });
   </script>
