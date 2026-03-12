@@ -56,6 +56,7 @@ class SnapshotStore:
             'normalized_player_stats': snapshot.normalized_player_stats,
             'normalized_team_stats': snapshot.normalized_team_map,
             'normalized_event_result': snapshot.normalized_event_result,
+            'normalized_period_results': snapshot.normalized_period_results,
             'metadata': {
                 'raw_scoreboard_event': snapshot.raw_scoreboard_event,
                 'raw_summary': snapshot.raw_summary,
@@ -91,6 +92,14 @@ class SnapshotStore:
             missing_player_stats=list(diagnostics_payload.get('missing_player_stats') or []),
             missing_stat_keys=list(diagnostics_payload.get('missing_stat_keys') or []),
             snapshot_build_sources=dict(diagnostics_payload.get('snapshot_build_sources') or {}),
+            event_status=diagnostics_payload.get('event_status'),
+            built_at=diagnostics_payload.get('built_at'),
+            persisted_at=diagnostics_payload.get('persisted_at'),
+            snapshot_origin=diagnostics_payload.get('snapshot_origin'),
+            period_data_present=bool(diagnostics_payload.get('period_data_present')),
+            available_period_labels=list(diagnostics_payload.get('available_period_labels') or []),
+            period_scores_complete_by_label=dict(diagnostics_payload.get('period_scores_complete_by_label') or {}),
+            period_extraction_source=(str(diagnostics_payload.get('period_extraction_source')).strip() or None) if diagnostics_payload.get('period_extraction_source') is not None else None,
         )
         return EventSnapshot(
             event_id=event_id,
@@ -109,6 +118,7 @@ class SnapshotStore:
             normalized_player_stats=payload.get('normalized_player_stats') or {},
             normalized_team_map=payload.get('normalized_team_stats') or {},
             normalized_event_result=payload.get('normalized_event_result') or {},
+            normalized_period_results=payload.get('normalized_period_results') or [],
             normalized_play_by_play=normalized_play_by_play,
             diagnostics=diagnostics,
         )

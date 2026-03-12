@@ -22,6 +22,10 @@ class SnapshotDiagnostics:
     built_at: str | None = None
     persisted_at: str | None = None
     snapshot_origin: str | None = None
+    period_data_present: bool = False
+    available_period_labels: list[str] = field(default_factory=list)
+    period_scores_complete_by_label: dict[str, bool] = field(default_factory=dict)
+    period_extraction_source: str | None = None
 
 
 @dataclass
@@ -39,6 +43,7 @@ class EventSnapshot:
     normalized_player_stats: dict[str, dict[str, Any]] = field(default_factory=dict)
     normalized_team_map: dict[str, dict[str, Any]] = field(default_factory=dict)
     normalized_event_result: dict[str, Any] = field(default_factory=dict)
+    normalized_period_results: list[dict[str, Any]] = field(default_factory=list)
     normalized_play_by_play: list[PlayByPlayEvent] | None = None
     built_at: str | None = None
     persisted_at: str | None = None
@@ -266,6 +271,77 @@ class EventSnapshotService:
             'combined_total': combined_total,
         }
 
+    def _normalized_period_results(
+        self,
+        *,
+        summary: dict[str, Any] | None,
+        scoreboard_event: dict[str, Any] | None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        competitions = ((summary or {}).get('header') or {}).get('competitions') or []
+        competition = competitions[0] if competitions else {}
+        competitors = competition.get('competitors') or []
+        home = next((entry for entry in competitors if entry.get('homeAway') == 'home'), {})
+        away = next((entry for entry in competitors if entry.get('homeAway') == 'away'), {})
+
+        home_linescores = home.get('linescores') or []
+        away_linescores = away.get('linescores') or []
+
+        source = None
+        if home_linescores or away_linescores:
+            source = 'summary_competitor_linescores'
+        else:
+            home_linescores = (scoreboard_event or {}).get('home_linescores') or []
+            away_linescores = (scoreboard_event or {}).get('away_linescores') or []
+            if home_linescores or away_linescores:
+                source = 'scoreboard_event_linescores'
+
+        period_count = max(len(home_linescores), len(away_linescores))
+        if period_count <= 0:
+            return [], None
+
+        normalized: list[dict[str, Any]] = []
+        running_home = 0
+        running_away = 0
+        cumulative_available = True
+        for index in range(period_count):
+            home_raw = home_linescores[index] if index < len(home_linescores) else None
+            away_raw = away_linescores[index] if index < len(away_linescores) else None
+            home_value = self._coerce_score((home_raw or {}).get('value')) if isinstance(home_raw, dict) else self._coerce_score(home_raw)
+            away_value = self._coerce_score((away_raw or {}).get('value')) if isinstance(away_raw, dict) else self._coerce_score(away_raw)
+            if home_value is None or away_value is None:
+                cumulative_available = False
+            else:
+                running_home += home_value
+                running_away += away_value
+
+            period_number = index + 1
+            label_candidates = []
+            if isinstance(home_raw, dict):
+                label_candidates.extend([home_raw.get('displayValue'), home_raw.get('period')])
+            if isinstance(away_raw, dict):
+                label_candidates.extend([away_raw.get('displayValue'), away_raw.get('period')])
+            label = next((str(value).strip() for value in label_candidates if str(value or '').strip()), str(period_number))
+
+            period_total = (home_value + away_value) if home_value is not None and away_value is not None else None
+            normalized.append(
+                {
+                    'period_number': period_number,
+                    'period_label': label,
+                    'home_score': home_value,
+                    'away_score': away_value,
+                    'combined_total': period_total,
+                    'cumulative_home_score': running_home if cumulative_available else None,
+                    'cumulative_away_score': running_away if cumulative_available else None,
+                    'is_score_complete': home_value is not None and away_value is not None,
+                    'source': source,
+                    'source_metadata': {
+                        'home_linescore_raw': home_raw,
+                        'away_linescore_raw': away_raw,
+                    },
+                }
+            )
+        return normalized, source
+
     def _player_stats_from_summary(self, summary: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
         if not summary:
             return {}
@@ -395,6 +471,7 @@ class EventSnapshotService:
                 home_team=home_team,
                 away_team=away_team,
             ),
+            normalized_period_results=[],
             normalized_play_by_play=None,
             built_at=self._now_iso(),
             persisted_at=None,
@@ -433,6 +510,24 @@ class EventSnapshotService:
                 snapshot_origin='rebuilt',
             ),
         )
+        normalized_period_results, period_source = self._normalized_period_results(
+            summary=summary_raw,
+            scoreboard_event=scoreboard_event,
+        )
+        snapshot.normalized_period_results = normalized_period_results
+        snapshot.diagnostics.period_data_present = bool(normalized_period_results)
+        snapshot.diagnostics.available_period_labels = [
+            str(item.get('period_label'))
+            for item in normalized_period_results
+            if str(item.get('period_label') or '').strip()
+        ]
+        snapshot.diagnostics.period_scores_complete_by_label = {
+            str(item.get('period_label')): bool(item.get('is_score_complete'))
+            for item in normalized_period_results
+            if str(item.get('period_label') or '').strip()
+        }
+        snapshot.diagnostics.period_extraction_source = period_source
+
         if include_play_by_play:
             snapshot.normalized_play_by_play = self._play_by_play_provider.get_normalized_events(normalized_event_id)
             snapshot.diagnostics.snapshot_build_sources['pbp'] = bool(snapshot.normalized_play_by_play)

@@ -3542,6 +3542,16 @@ def admin_debug_market_readiness_endpoint(_: str = Depends(require_admin)) -> di
     return get_debug_observability_service().get_snapshot_market_coverage_report()
 
 
+@app.get('/admin/debug/period-readiness')
+def admin_debug_period_readiness_endpoint(
+    _: str = Depends(require_admin),
+    max_snapshots: int = 250,
+) -> dict[str, object]:
+    if not debug_observability_enabled():
+        raise HTTPException(status_code=404, detail='Debug observability endpoint disabled')
+    return get_debug_observability_service().get_period_snapshot_availability_report(max_snapshots=max_snapshots)
+
+
 @app.post('/admin/debug/hydrate-hotspots')
 def admin_debug_hydrate_hotspots_endpoint(
     _: str = Depends(require_admin),
