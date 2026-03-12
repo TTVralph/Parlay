@@ -8,6 +8,7 @@ from typing import Any
 from app.services.gamecast_provider import ESPNGamecastProvider
 from app.services.play_by_play_provider import ESPNPlayByPlayProvider, PlayByPlayEvent
 from app.services.scoreboard_provider import ESPNScoreboardProvider
+from app.services.snapshot_store import SnapshotStore
 
 
 @dataclass
@@ -72,11 +73,17 @@ class EventSnapshotService:
         scoreboard_provider: ESPNScoreboardProvider | None = None,
         gamecast_provider: ESPNGamecastProvider | None = None,
         play_by_play_provider: ESPNPlayByPlayProvider | None = None,
+        snapshot_store: SnapshotStore | None = None,
     ) -> None:
         self._scoreboard_provider = scoreboard_provider or ESPNScoreboardProvider()
         self._gamecast_provider = gamecast_provider or ESPNGamecastProvider()
         self._play_by_play_provider = play_by_play_provider or ESPNPlayByPlayProvider()
+        self._snapshot_store = snapshot_store or SnapshotStore()
         self._snapshots: dict[str, EventSnapshot] = {}
+
+    @staticmethod
+    def _is_final_status(status: str | None) -> bool:
+        return str(status or '').strip().lower() == 'final'
 
     @staticmethod
     def _norm_name(value: str) -> str:
@@ -198,6 +205,16 @@ class EventSnapshotService:
                 existing.diagnostics.snapshot_build_sources['pbp'] = bool(existing.normalized_play_by_play)
             return existing
 
+        persisted = self._snapshot_store.load_snapshot(normalized_event_id)
+        if persisted is not None:
+            if include_play_by_play and persisted.normalized_play_by_play is None:
+                persisted.normalized_play_by_play = self._play_by_play_provider.get_normalized_events(normalized_event_id)
+                persisted.diagnostics.snapshot_build_sources['pbp'] = bool(persisted.normalized_play_by_play)
+                if self._is_final_status(persisted.event_status):
+                    self._snapshot_store.save_snapshot(normalized_event_id, persisted)
+            self._snapshots[normalized_event_id] = persisted
+            return persisted
+
         summary_normalized = self._gamecast_provider.fetch_normalized(normalized_event_id)
         summary_raw = summary_normalized.get('raw') if summary_normalized else None
         scoreboard_event = self._scoreboard_event_for(normalized_event_id, event_date=event_date)
@@ -257,6 +274,8 @@ class EventSnapshotService:
             snapshot.diagnostics.snapshot_build_sources['pbp'] = bool(snapshot.normalized_play_by_play)
 
         self._snapshots[normalized_event_id] = snapshot
+        if self._is_final_status(snapshot.event_status):
+            self._snapshot_store.save_snapshot(normalized_event_id, snapshot)
         return snapshot
 
     def get_event_snapshot(
