@@ -41,9 +41,35 @@ def test_analyze_leg_shape_contains_required_fields() -> None:
     assert analyzed.subject_name
     assert isinstance(analyzed.risk_score, float)
     assert analyzed.risk_label in {'low', 'medium', 'high'}
-    assert analyzed.explanation
+    assert analyzed.short_advisory_text
+    assert analyzed.line_value_text
     assert isinstance(analyzed.advisory_reason_codes, list)
 
+
+def test_missing_market_data_uses_friendly_messages_and_internal_codes() -> None:
+    leg = Leg(raw_text='Shai over 5.5 assists -105', sport='NBA', market_type='player_assists', player='Shai Gilgeous-Alexander', direction='over', line=5.5, confidence=0.91, american_odds=-105)
+    analyzed = analyze_leg_risk(leg)
+
+    assert analyzed.line_value_label == 'unknown'
+    assert analyzed.line_value_text == 'Line value unknown'
+    assert 'Market comparison unavailable' in analyzed.explanation
+    assert 'line_value_missing_market_data' in analyzed.advisory_reason_codes
+    assert 'market_comparison_unavailable' in analyzed.advisory_reason_codes
+
+
+def test_same_game_grouping_and_correlation_response_shape() -> None:
+    legs = [
+        Leg(raw_text='Jokic over 26.5 points', sport='NBA', market_type='player_points', player='Nikola Jokic', direction='over', line=26.5, confidence=0.9, event_id='game-1', event_label='DEN vs LAL'),
+        Leg(raw_text='Murray over 2.5 threes', sport='NBA', market_type='player_threes', player='Jamal Murray', direction='over', line=2.5, confidence=0.9, event_id='game-1', event_label='DEN vs LAL'),
+        Leg(raw_text='Denver ML -120', sport='NBA', market_type='moneyline', team='Denver Nuggets', confidence=0.95, american_odds=-120, event_id='game-1', event_label='DEN vs LAL'),
+    ]
+
+    result = analyze_slip_risk(legs)
+
+    assert result.same_game_group_count == 1
+    assert result.same_game_leg_count == 3
+    assert result.correlation_risk_label in {'low', 'medium', 'high'}
+    assert 'same-game' in result.correlation_note.lower()
 
 
 def test_trap_leg_selection_prefers_inflated_combo_longshot() -> None:

@@ -2084,11 +2084,16 @@ Murray over 2.5 threes'></textarea>
       metaSummary.innerHTML=`
         <span class='meta-chip'>Supported legs: ${Number(payload.supported_leg_count||0)}</span>
         <span class='meta-chip'>Unsupported legs: ${Number(payload.unsupported_leg_count||0)}</span>
+        <span class='meta-chip'>Same-game groups: ${Number(payload.same_game_group_count||0)} (${Number(payload.same_game_leg_count||0)} legs)</span>
+        <span class='meta-chip'>Correlation: ${escapeHtml(String(payload.correlation_risk_label||'low').toUpperCase())}</span>
         <span class='meta-chip'>Advisory only — not a guarantee</span>
       `;
       metaSummary.hidden=false;
       legProgressStrip.hidden=true;
-      diedHere.innerHTML="<div class='advisory-banner'>Advisory only — not a guarantee. Use this pre-game read as guidance, not settlement.</div>";
+      const correlationNote=payload.same_game_group_count>0
+        ?`<div class='advisory-banner' style='margin-top:8px;'>🔗 Correlation note: ${escapeHtml(payload.correlation_note||'Same-game legs may move together.')}</div>`
+        :'';
+      diedHere.innerHTML=`<div class='advisory-banner'>Advisory only — not a guarantee. Use this pre-game read as guidance, not settlement.</div>${correlationNote}`;
       diedHere.hidden=false;
       payoutOut.textContent='';
       debugOut.innerHTML='';
@@ -2106,11 +2111,16 @@ Murray over 2.5 threes'></textarea>
           ?"<div style='margin-top:6px;font-size:12px;font-weight:700;color:#0f8a3e;'>Good Line ✅</div>"
           :(lineLabel==='bad'
             ?"<div style='margin-top:6px;font-size:12px;font-weight:700;color:#b3261e;'>Bad Line ❌</div>"
-            :"<div style='margin-top:6px;font-size:12px;color:var(--muted);'>Line Value: Neutral</div>");
-        const marketLineText=typeof item.market_line==='number' ? ` · Market: ${Number(item.market_line).toFixed(1)}` : '';
+            :(lineLabel==='unknown'
+              ?"<div style='margin-top:6px;font-size:12px;color:var(--muted);'>Unknown Line Value</div>"
+              :"<div style='margin-top:6px;font-size:12px;color:var(--muted);'>Neutral Line</div>"));
+        const marketLineValue=(typeof item.market_average_line==='number'?item.market_average_line:item.market_line);
+        const marketLineText=typeof marketLineValue==='number' ? ` · Market: ${Number(marketLineValue).toFixed(1)}` : '';
         riskCell.innerHTML=`<span class='risk-chip ${escapeHtml((item.risk_label||'medium').toLowerCase())}'>${escapeHtml(item.risk_label||'medium')}</span><div style='margin-top:6px;font-size:12px;color:var(--muted);'>Score: ${Number(item.risk_score||0).toFixed(1)}/10 · Confidence: ${Number(item.confidence||0).toFixed(2)}${marketLineText}</div>${lineBadge}`;
-        const reasons=Array.isArray(item.advisory_reason_codes)&&item.advisory_reason_codes.length?`<div style='margin-top:6px;font-size:11px;color:var(--muted);'>${item.advisory_reason_codes.map((code)=>escapeHtml(code)).join(' · ')}</div>`:'';
-        advisoryCell.innerHTML=`<div class='risk-card'>${escapeHtml(item.explanation||'')}</div>${reasons}`;
+        const reasons=Array.isArray(item.advisory_reason_codes)&&item.advisory_reason_codes.length
+          ?`<details style='margin-top:6px;'><summary style='font-size:11px;color:var(--muted);cursor:pointer;'>Technical details</summary><div style='margin-top:4px;font-size:11px;color:var(--muted);'>${item.advisory_reason_codes.map((code)=>escapeHtml(code)).join(' · ')}</div></details>`
+          :'';
+        advisoryCell.innerHTML=`<div class='risk-card'>${escapeHtml(item.short_advisory_text||item.explanation||'')}</div><div style='margin-top:4px;font-size:12px;color:var(--muted);'>${escapeHtml(item.line_value_text||'Line value unknown')}</div>${reasons}`;
 
         tr.append(legCell,riskCell,advisoryCell);
         legsBody.appendChild(tr);

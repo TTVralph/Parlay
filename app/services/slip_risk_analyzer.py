@@ -22,6 +22,7 @@ SUPPORTED_MARKETS = {
 }
 
 COMBO_MARKETS = {'player_pr', 'player_pa', 'player_ra', 'player_pra'}
+OUTCOME_DEPENDENT_MARKETS = {'moneyline', 'spread'}
 
 PLAYER_BASELINES: dict[str, float] = {
     'player_points': 22.0,
@@ -76,7 +77,6 @@ def _baseline_for_leg(leg: Leg) -> float | None:
     return TEAM_BASELINES.get(leg.market_type)
 
 
-
 def _has_alt_line_marker(leg: Leg) -> bool:
     raw = leg.raw_text.strip().lower()
     if raw.endswith('+'):
@@ -120,6 +120,87 @@ def _odds_adjustment(odds_ctx: _OddsContext) -> tuple[float, list[str]]:
         codes.append('favored_price_discount')
         return -0.6, codes
     return 0.2, codes
+
+
+def _line_value_text(line_label: str, has_market_data: bool) -> str:
+    if not has_market_data:
+        return 'Line value unknown'
+    if line_label == 'good':
+        return 'Good line versus market consensus'
+    if line_label == 'bad':
+        return 'Less favorable line versus market consensus'
+    return 'Neutral line versus market consensus'
+
+
+def _friendly_explanation(subject: str, market_type: str, risk_label: str, line_value_label: str, has_market_data: bool) -> str:
+    market_name = market_type.replace('_', ' ')
+    market_part = f'{subject}: {market_name} leg graded as {risk_label} risk.'
+    if has_market_data:
+        line_part = {
+            'good': 'Market check says you are getting a better-than-average number.',
+            'bad': 'Market check says your number is worse than the average book line.',
+        }.get(line_value_label, 'Market check says this line is close to average.')
+    else:
+        line_part = 'Market comparison unavailable, so line value is unknown.'
+    return f'{market_part} {line_part}'
+
+
+def _short_advisory_text(risk_label: str, confidence: float, has_market_data: bool) -> str:
+    confidence_label = 'high' if confidence >= 0.8 else ('medium' if confidence >= 0.55 else 'low')
+    if not has_market_data:
+        return f'{risk_label.title()} risk read with {confidence_label} confidence. Limited confidence due to missing market data.'
+    return f'{risk_label.title()} risk read with {confidence_label} confidence.'
+
+
+def _correlation_group_key(leg: Leg) -> str | None:
+    return leg.event_id or leg.matched_event_id or leg.selected_event_id or leg.event_label or leg.matched_event_label or leg.selected_event_label
+
+
+def _analyze_same_game_correlation(parsed_legs: list[Leg]) -> tuple[int, int, str, str]:
+    groups: dict[str, list[Leg]] = {}
+    for leg in parsed_legs:
+        key = _correlation_group_key(leg)
+        if key:
+            groups.setdefault(key, []).append(leg)
+
+    same_game_groups = [legs for legs in groups.values() if len(legs) > 1]
+    same_game_group_count = len(same_game_groups)
+    same_game_leg_count = sum(len(group) for group in same_game_groups)
+    if same_game_group_count == 0:
+        return 0, 0, 'low', 'No same-game grouping detected.'
+
+    over_count = 0
+    outcome_count = 0
+    for group in same_game_groups:
+        for leg in group:
+            if leg.direction == 'over':
+                over_count += 1
+            if leg.market_type in OUTCOME_DEPENDENT_MARKETS:
+                outcome_count += 1
+
+    heuristic_points = 0
+    notes: list[str] = []
+    if over_count >= 2:
+        heuristic_points += 1
+        notes.append('multiple overs in the same game can increase volatility')
+    if outcome_count >= 2:
+        heuristic_points += 1
+        notes.append('multiple outcome-dependent legs in one game can be tightly coupled')
+
+    if heuristic_points >= 2:
+        label = 'high'
+    elif heuristic_points == 1:
+        label = 'medium'
+    else:
+        label = 'medium'
+        notes.append('same-game legs may move together')
+
+    return (
+        same_game_group_count,
+        same_game_leg_count,
+        label,
+        f"Detected {same_game_leg_count} legs across {same_game_group_count} same-game group(s); " + '; '.join(notes) + '.',
+    )
 
 
 def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> AnalyzeLegRisk:
@@ -178,28 +259,19 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
     confidence = _clamp(parse_conf, 0.2, 0.98)
     confidence = round(confidence if supported else confidence * 0.65, 2)
 
-    baseline_text = f'{baseline:.1f}' if baseline is not None else 'n/a'
-    line_text = f'{leg.line:.1f}' if leg.line is not None else 'n/a'
     line_value = analyze_line_value(leg)
-    if leg.market_type in SUPPORTED_PROP_MARKETS and line_value.market_average_line is None:
+    has_market_data = line_value.market_average_line is not None
+    if leg.market_type in SUPPORTED_PROP_MARKETS and not has_market_data:
         reason_codes.append('line_value_missing_market_data')
 
-    line_value_summary = ''
-    if line_value.market_average_line is not None:
-        diff_text = f'{line_value.line_difference:+.1f}' if line_value.line_difference is not None else 'n/a'
-        line_value_summary = (
-            f' Market avg {line_value.market_average_line:.1f}; '
-            f'line edge {line_value.line_value_label} '
-            f'({diff_text} vs market).'
-        )
-    elif leg.market_type in SUPPORTED_PROP_MARKETS:
-        line_value_summary = ' Market comparison unavailable; line value marked neutral.'
+    if not has_market_data:
+        if line_value.line_value_label == 'unknown':
+            reason_codes.append('line_value_unknown')
+        reason_codes.append('market_comparison_unavailable')
 
-    explanation = (
-        f"{subject}: {market_type.replace('_', ' ')} line {line_text} vs baseline {baseline_text}; "
-        f"risk is {risk_label} from line pressure, price context, and market volatility."
-        f"{line_value_summary}"
-    )
+    explanation = _friendly_explanation(subject, market_type, risk_label, line_value.line_value_label, has_market_data)
+    short_advisory_text = _short_advisory_text(risk_label, confidence, has_market_data)
+    line_value_text = _line_value_text(line_value.line_value_label, has_market_data)
 
     return AnalyzeLegRisk(
         leg_id=leg.leg_id,
@@ -210,15 +282,19 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
         estimated_baseline=baseline,
         risk_score=risk_score,
         risk_label=risk_label,
+        short_advisory_text=short_advisory_text,
         explanation=explanation,
         confidence=confidence,
         advisory_reason_codes=sorted(set(reason_codes)),
         supported_market=supported,
         offered_american_odds=leg.american_odds,
+        market_average_line=line_value.market_average_line,
+        user_line=line_value.user_line,
         market_line=line_value.market_average_line,
         line_difference=line_value.line_difference,
         line_value_score=line_value.line_value_score,
         line_value_label=line_value.line_value_label,
+        line_value_text=line_value_text,
     )
 
 
@@ -290,6 +366,10 @@ def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
             leg_risk_scores=[],
             supported_leg_count=0,
             unsupported_leg_count=0,
+            same_game_group_count=0,
+            same_game_leg_count=0,
+            correlation_risk_label='low',
+            correlation_note='No same-game grouping detected.',
             advisory_only=True,
         )
 
@@ -309,6 +389,7 @@ def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
 
     supported_count = sum(1 for leg in analyzed if leg.supported_market)
     unsupported_count = len(analyzed) - supported_count
+    group_count, leg_count, correlation_label, correlation_note = _analyze_same_game_correlation(parsed_legs)
 
     return AnalyzeSlipResponse(
         ok=True,
@@ -324,5 +405,9 @@ def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
         leg_risk_scores=analyzed,
         supported_leg_count=supported_count,
         unsupported_leg_count=unsupported_count,
+        same_game_group_count=group_count,
+        same_game_leg_count=leg_count,
+        correlation_risk_label=correlation_label,
+        correlation_note=correlation_note,
         advisory_only=True,
     )

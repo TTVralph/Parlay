@@ -16,15 +16,19 @@ SUPPORTED_PROP_MARKETS = {
     'player_pr',
     'player_pa',
     'player_ra',
+    'moneyline',
+    'spread',
+    'game_total',
 }
 
-_LINE_KEYS = ('market_line', 'line', 'value', 'points', 'number')
+_LINE_KEYS = ('market_line', 'line', 'value', 'points', 'number', 'odds', 'american_odds')
 _PROVIDER_KEYS = ('provider', 'bookmaker', 'book', 'source', 'sportsbook')
 
 
 @dataclass(frozen=True)
 class LineValueAnalysis:
     market_average_line: float | None
+    user_line: float | None
     line_difference: float | None
     line_value_score: float | None
     line_value_label: str
@@ -84,7 +88,7 @@ def _extract_from_notes(notes: list[str]) -> list[tuple[str, float]]:
     for note in notes:
         if not isinstance(note, str):
             continue
-        match = re.search(r'(?P<provider>[A-Za-z0-9 ._-]{2,32})\s*[:=-]?\s*(?P<line>\d+(?:\.\d+)?)', note)
+        match = re.search(r'(?P<provider>[A-Za-z0-9 ._-]{2,32})\s*[:=-]?\s*(?P<line>-?\d+(?:\.\d+)?)', note)
         if not match:
             continue
         provider = match.group('provider').strip()
@@ -96,7 +100,7 @@ def _extract_from_notes(notes: list[str]) -> list[tuple[str, float]]:
 
 def _label_from_score(score: float | None) -> str:
     if score is None:
-        return 'neutral'
+        return 'unknown'
     if score >= 0.15:
         return 'good'
     if score <= -0.15:
@@ -104,25 +108,52 @@ def _label_from_score(score: float | None) -> str:
     return 'neutral'
 
 
-def _score_line_value(leg: Leg, market_avg: float | None) -> tuple[float | None, float | None]:
-    if leg.line is None or market_avg is None:
-        return None, None
+def _american_to_implied_probability(american_odds: float) -> float:
+    if american_odds > 0:
+        return 100.0 / (american_odds + 100.0)
+    return abs(american_odds) / (abs(american_odds) + 100.0)
 
-    difference = round(leg.line - market_avg, 2)
-    if leg.direction == 'over':
-        edge = market_avg - leg.line
+
+def _moneyline_score_line_value(leg: Leg, market_avg: float) -> tuple[float | None, float | None, float | None]:
+    user_line = float(leg.american_odds) if leg.american_odds is not None else None
+    if user_line is None:
+        return None, None, None
+
+    market_prob = _american_to_implied_probability(market_avg)
+    user_prob = _american_to_implied_probability(user_line)
+    edge = market_prob - user_prob
+    score = max(-1.0, min(1.0, edge / 0.08))
+    return user_line, round(user_line - market_avg, 2), round(score, 2)
+
+
+def _score_line_value(leg: Leg, market_avg: float | None) -> tuple[float | None, float | None, float | None]:
+    if market_avg is None:
+        return None, None, None
+
+    if leg.market_type == 'moneyline':
+        return _moneyline_score_line_value(leg, market_avg)
+
+    if leg.line is None:
+        return None, None, None
+
+    user_line = float(leg.line)
+    difference = round(user_line - market_avg, 2)
+    if leg.market_type in {'spread', 'game_total'}:
+        edge = abs(market_avg) - abs(user_line)
+    elif leg.direction == 'over':
+        edge = market_avg - user_line
     elif leg.direction == 'under':
-        edge = leg.line - market_avg
+        edge = user_line - market_avg
     else:
         edge = 0.0
 
     score = max(-1.0, min(1.0, edge / 2.0))
-    return difference, round(score, 2)
+    return user_line, difference, round(score, 2)
 
 
 def analyze_line_value(leg: Leg) -> LineValueAnalysis:
     if leg.market_type not in SUPPORTED_PROP_MARKETS:
-        return LineValueAnalysis(None, None, None, 'neutral')
+        return LineValueAnalysis(None, None, None, None, 'unknown')
 
     collected: list[tuple[str, float]] = []
     for candidate in leg.event_candidates:
@@ -135,13 +166,14 @@ def analyze_line_value(leg: Leg) -> LineValueAnalysis:
         deduped[key] = line
 
     if not deduped:
-        return LineValueAnalysis(None, None, None, 'neutral')
+        return LineValueAnalysis(None, None, None, None, 'unknown')
 
     avg_line = round(mean(deduped.values()), 2)
-    line_diff, score = _score_line_value(leg, avg_line)
+    user_line, line_diff, score = _score_line_value(leg, avg_line)
     label = _label_from_score(score)
     return LineValueAnalysis(
         market_average_line=avg_line,
+        user_line=user_line,
         line_difference=line_diff,
         line_value_score=score,
         line_value_label=label,
