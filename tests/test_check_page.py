@@ -372,3 +372,40 @@ def test_check_page_renders_clickable_candidate_buttons_for_player_and_event_pic
     assert "pickBtn.className='secondary candidate-btn';" in html
     assert "payload.selected_player_by_leg_id=selectedPlayerByLegId" in html
     assert "payload.selected_event_by_leg_id=selectedGameByLegId" in html
+
+
+def test_analyze_mode_dashboard_hierarchy_and_correlation_sections_present() -> None:
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "id='analyzeSummaryHero'" in html
+    assert "id='keyTakeaways'" in html
+    assert "id='correlationSummary'" in html
+    assert 'Same-Game Risk' in html
+    assert 'Slip intelligence summary' in html
+
+
+def test_analyze_mode_takeaway_deduping_priority_and_friendly_advisory_helpers_present() -> None:
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "const rankedTakeaways=[" in html
+    assert "{key:'trap',title:'Trap Leg',leg:trap,priority:0" in html
+    assert "{key:'weakest',title:'Weakest Leg',leg:weakest,priority:1" in html
+    assert "const seenLegIds=new Set();" in html
+    assert "if(seenLegIds.has(identityKey)){continue;}" in html
+    assert "function friendlyReasonCode(code){" in html
+    assert "missing_data_confidence_penalty:'Limited confidence due to missing market data'" in html
+    assert "line_value_missing_market_data:'Market comparison unavailable'" in html
+
+
+def test_analyze_mode_keeps_raw_reason_codes_in_technical_details_only() -> None:
+    client = TestClient(app)
+    page = client.get('/check')
+    assert page.status_code == 200
+    html = page.text
+    assert "<summary>Show technical details</summary>" in html
+    assert "payload.trap_reason_codes.map((code)=>escapeHtml(code)).join(' · ')" in html
+    assert "advisoryCell.innerHTML=`<div class='risk-card'>${escapeHtml(humanizeAdvisory(item))}</div>" in html
