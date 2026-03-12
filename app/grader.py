@@ -1288,7 +1288,7 @@ def grade_text(
     provider = provider or get_results_provider()
     play_by_play_provider = play_by_play_provider or ESPNPlayByPlayProvider()
     parsed_legs = parse_text(text)
-    legs = filter_valid_legs(parsed_legs)
+    legs = parsed_legs
     resolved_legs = resolve_leg_events(
         legs,
         provider,

@@ -941,16 +941,20 @@ def _ensure_tracker_key(existing: str | None) -> str:
 
 
 def _slip_status_summary(legs: list[dict]) -> str:
-    total = len(legs)
-    wins = sum(1 for leg in legs if str(leg.get('result', '')).lower() in {'win', 'push', 'void'})
+    wins = sum(1 for leg in legs if str(leg.get('result', '')).lower() in {'win', 'push'})
     losses = sum(1 for leg in legs if str(leg.get('result', '')).lower() == 'loss')
+    voids = sum(1 for leg in legs if str(leg.get('result', '')).lower() == 'void')
     unresolved = sum(1 for leg in legs if str(leg.get('result', '')).lower() in {'review', 'pending', 'unmatched'})
-    if losses:
-        return f'Lost · {wins}/{total} hit'
-    if unresolved:
+    graded = wins + losses
+    if losses and unresolved:
         noun = 'leg' if unresolved == 1 else 'legs'
-        return f'Needs review · {unresolved} {noun} unresolved'
-    return f'Won · {wins}/{total} hit'
+        plural = '' if losses == 1 else 'es'
+        return f'Already lost · {losses} loss{plural} · {unresolved} {noun} still need review'
+    if unresolved:
+        return f'{wins} wins · {losses} losses · {voids} void · {unresolved} review'
+    if voids:
+        return f'{wins} of {graded} graded legs hit · {voids} void'
+    return f'{wins} of {graded} graded legs hit'
 
 
 @app.get('/check', response_class=HTMLResponse)
@@ -1090,7 +1094,7 @@ Murray over 2.5 threes'></textarea>
           <strong>My Slips</strong>
           <button id='refreshRecentBtn' class='secondary' type='button' style='margin-top:0;'>Refresh</button>
         </div>
-        <div id='recentSlipsEmpty' class='empty-polish' style='margin-top:10px;'>No saved checks yet.</div>
+        <div id='recentSlipsEmpty' class='empty-polish' style='margin-top:10px;'>No saved slips yet — run a check and it’ll show up here.</div>
         <div id='recentSlipsList' style='display:flex;flex-direction:column;gap:8px;margin-top:10px;'></div>
       </div>
     </div>
@@ -1547,23 +1551,33 @@ Murray over 2.5 threes'></textarea>
 
 
     function countLegResults(legs){
-      const counts={total:0,won:0,lost:0,review:0};
+      const counts={total:0,won:0,lost:0,review:0,void:0,pending:0};
       for(const item of (legs||[])){
         counts.total+=1;
         const normalized=item.result==='unmatched'?'review':item.result;
         if(normalized==='win'){counts.won+=1;}
         else if(normalized==='loss'){counts.lost+=1;}
         else if(normalized==='review'){counts.review+=1;}
+        else if(normalized==='void'){counts.void+=1;}
+        else if(normalized==='pending'){counts.pending+=1; counts.review+=1;}
       }
       return counts;
     }
 
     function shortLegLabel(item){
       const text=String(item.parsed_player_name||item.player_name||item.leg||'Leg').trim();
-      if(!text){return 'Leg';}
+      const market=String(item.normalized_market||item.market_type||'').toLowerCase();
+      const statMap={
+        player_points:'PTS',player_rebounds:'REB',player_assists:'AST',player_threes:'3PM',
+        player_pa:'PA',player_pr:'PR',player_ra:'RA',player_pra:'PRA'
+      };
+      const stat=statMap[market]||(
+        market.includes('assists')?'AST':market.includes('rebounds')?'REB':market.includes('threes')?'3PM':market.includes('points')?'PTS':'LEG'
+      );
+      if(!text){return stat;}
       const parts=text.split(/\s+/);
-      if(parts.length===1){return parts[0].slice(0,10);}
-      return `${parts[0]} ${parts[parts.length-1].replace(/[^A-Za-z]/g,'').slice(0,1)}`.trim();
+      const base=parts.length===1?parts[0].slice(0,10):`${parts[0]} ${parts[parts.length-1].replace(/[^A-Za-z]/g,'').slice(0,1)}`.trim();
+      return `${base} ${stat}`.trim();
     }
 
     function renderProgressStrip(legs){
@@ -1650,6 +1664,7 @@ Murray over 2.5 threes'></textarea>
         <span class='result-chip'>${counts.won} ✅ Win</span>
         <span class='result-chip'>${counts.lost} ❌ Loss</span>
         <span class='result-chip'>${counts.review} ⚠️ Review</span>
+        <span class='result-chip'>${counts.void} ⭕ Void</span>
       `;
       resultSummary.hidden=false;
 
@@ -1664,8 +1679,17 @@ Murray over 2.5 threes'></textarea>
       if(hasStake){chips.push(`<span class='meta-chip'>Stake: $${Number(payload.stake_amount).toFixed(2)}</span>`);}
       if(payload.estimated_payout!==undefined&&payload.estimated_payout!==null){chips.push(`<span class='meta-chip'>Est. payout: $${Number(payload.estimated_payout).toFixed(2)}</span>`);}
       if(hasStake&&payload.payout_message){chips.push(`<span class='meta-chip'>${payload.payout_message}</span>`);}
-      let secondary=`${counts.won} of ${counts.total} legs hit`;
-      if(counts.review>0){secondary+=` · ${counts.review} legs need manual review`;}
+      const graded=counts.won+counts.lost;
+      let secondary='';
+      if(counts.lost>0&&counts.review>0){
+        secondary=`This slip is already lost. ${counts.review} other leg${counts.review===1?'':'s'} still need review.`;
+      }else if(counts.review>0){
+        secondary=`${graded} legs resolved · ${counts.review} need review`;
+      }else if(counts.void>0){
+        secondary=`${counts.won} of ${graded} graded legs hit · ${counts.void} void`;
+      }else{
+        secondary=`${counts.won} of ${graded} graded legs hit`;
+      }
       if(firstLoss&&payload.parlay_result==='lost'){secondary+=` · Sold on ${firstLoss.leg||'a leg'}`;}
       metaSummary.innerHTML=`<span class='meta-chip'>${secondary}</span>${chips.join('')}`;
       metaSummary.hidden=false;
@@ -2183,12 +2207,12 @@ def _build_player_resolution_details(item: GradedLeg, *, result: str, did_you_me
 
 _REVIEW_REASON_TEXT_BY_CODE: dict[str, str] = {
     'PLAYER_AMBIGUOUS': 'Multiple plausible player matches found; select the correct player.',
-    'PLAYER_UNRESOLVED': 'Player name could not be resolved confidently.',
+    'PLAYER_UNRESOLVED': "We couldn't confidently confirm this player from the slip text.",
     'INVALID_SELECTED_PLAYER_ID': 'Selected player could not be applied; please choose again.',
     'INVALID_SELECTED_EVENT_ID': 'Selected game could not be applied; choose a listed game for this leg.',
-    'PLAYER_NOT_ON_EVENT_ROSTER': 'Matched game does not contain the resolved player on the roster.',
+    'PLAYER_NOT_ON_EVENT_ROSTER': "We matched the game, but couldn't fully confirm the player for this leg.",
     'EVENT_NOT_FOUND': 'No matching game was found for the resolved team/date.',
-    'MULTIPLE_GAMES_MATCHED': 'Multiple plausible games were found for this player/date.',
+    'MULTIPLE_GAMES_MATCHED': 'Multiple possible games were found for this player. Select the correct one.',
     'NEARBY_DATE_CANDIDATES_ONLY': 'Only nearby-date games were found; confirm the correct date.',
 }
 

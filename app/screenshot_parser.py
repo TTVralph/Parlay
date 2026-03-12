@@ -30,6 +30,8 @@ _STAT_LABELS = {
 }
 
 _NOISE_KEYWORDS = (
+    'fanatics sportsbook',
+    'bet placed',
     'cash out',
     'share',
     'track',
@@ -40,7 +42,12 @@ _NOISE_KEYWORDS = (
     'open',
     'hide legs',
     'same game parlay',
+    'sgp stack',
     'edit bet',
+    'bet id',
+    'total wager',
+    'total payout',
+    'responsible gaming',
 )
 _MARKET_ALIASES = {
     'pts': 'points',
@@ -96,13 +103,17 @@ _LEG_WITH_DIRECTION = re.compile(
 _MARKET_FOLLOWUP_LINE = re.compile(r'^(?P<market>Triple\s*-?\s*Double|Double\s*-?\s*Double)$', re.I)
 _YES_NO_ONLY = re.compile(r'^(Yes|No)$', re.I)
 _DIRECTION_LINE_ONLY = re.compile(r'^(?P<dir>O|U|Over|Under)\s*(?P<line>\d+(?:\.\d+)?)$', re.I)
-_MARKET_ONLY_LINE = re.compile(r'^(?P<market>Pts|Points|Reb|Rebs|Rebounds|Ast|Asts|Assists|PRA|Pts\s*\+\s*Ast|Pts\s*\+\s*Reb|Reb\s*\+\s*Ast|Rebounds\s*\+\s*Assists|Points\s*\+\s*Assists|Points\s*\+\s*Rebounds|3PM|3PT|Threes|Three\s+Pointers)$', re.I)
+_MARKET_ONLY_LINE = re.compile(r'^(?P<market>Pts|Points|Reb|Rebs|Rebounds|Ast|Asts|Assists|PRA|Pts\s*\+\s*Ast|Pts\s*\+\s*Reb|Reb\s*\+\s*Ast|Rebounds\s*\+\s*Assists|Points\s*\+\s*Assists|Points\s*\+\s*Rebounds|Points\s*\+\s*Rebounds\s*\+\s*Assists|3PM|3PT|Threes|Three\s+Pointers(?:\s+Made)?|Three\s*[- ]\s*Point\s+Field\s+Goals\s+Made)$', re.I)
 _ALT_MARKET_PHRASE = re.compile(
     r'^(?:TO\s+(?:SCORE|RECORD)\s+)?(?P<line>\d+(?:\.\d+)?)\s*\+\s*(?P<market>POINTS|REBOUNDS|ASSISTS|PRA)\b',
     re.I,
 )
 _INLINE_ALT_MARKET = re.compile(
     r"^(?!TO\b)(?P<name>[A-Za-z\-'’\. ]+?)\s+(?:TO\s+(?:SCORE|RECORD)\s+)?(?P<line>\d+(?:\.\d+)?)\s*\+\s*(?P<market>POINTS|REBOUNDS|ASSISTS|PRA)\b",
+    re.I,
+)
+_THRESHOLD_FIRST_SLASH = re.compile(
+    r'^(?P<line>\d+(?:\.\d+)?)\s*\+\s*/\s*(?P<name>[A-Za-z\-\'’\. ]+?)\s+(?P<market>[A-Za-z0-9+\- ]+)$',
     re.I,
 )
 _PLAYER_NAME_LINE = re.compile(r"^[A-Za-z][A-Za-z\-'’\.]+(?:\s+[A-Za-z][A-Za-z\-'’\.]+){1,3}$")
@@ -112,7 +123,7 @@ def _looks_like_player_name_line(line: str) -> bool:
     if not _PLAYER_NAME_LINE.match(line):
         return False
     lowered = line.lower()
-    blocked = {'over', 'under', 'yes', 'no', 'points', 'assists', 'rebounds', 'threes', 'parlay'}
+    blocked = {'over', 'under', 'yes', 'no', 'points', 'assists', 'rebounds', 'threes', 'parlay', 'to', 'record', 'score'}
     return not any(token in lowered.split() for token in blocked)
 
 
@@ -185,6 +196,19 @@ def _normalize_line_text(line: str) -> str:
     normalized = re.sub(r'(?i)\bmore\b', 'Over', normalized)
     normalized = re.sub(r'(?i)\bless\b', 'Under', normalized)
     normalized = re.sub(r'\s*\+\s*', ' + ', normalized)
+    if '/' in normalized:
+        left, right = [part.strip() for part in normalized.split('/', 1)]
+        m = re.match(r'^(?P<line>\d+(?:\.\d+)?)\s*\+$', left)
+        if m:
+            market_options = ['Points + Rebounds + Assists', 'Points + Assists', 'Points + Rebounds', 'Rebounds + Assists', 'Three Pointers Made', 'Rebounds', 'Assists', 'Points', '3PM', 'Threes']
+            for market in market_options:
+                if right.lower().endswith(market.lower()):
+                    name = right[: -len(market)].strip()
+                    if name:
+                        return _format_plus_leg(name, m.group('line'), market)
+    slash_threshold = _THRESHOLD_FIRST_SLASH.match(normalized)
+    if slash_threshold:
+        return _format_plus_leg(slash_threshold.group('name'), slash_threshold.group('line'), slash_threshold.group('market'))
     return re.sub(r'\s+', ' ', normalized).strip()
 
 
@@ -233,7 +257,7 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
             continue
 
         inline_alt = _INLINE_ALT_MARKET.match(line)
-        if inline_alt:
+        if inline_alt and not re.match(r'^TO\s+(?:SCORE|RECORD)\b', line, re.I):
             normalized.append(_format_plus_leg(
                 inline_alt.group('name'),
                 f"{float(inline_alt.group('line')):g}",
@@ -299,6 +323,12 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
             normalized.append(f'{current_player} {market} {selection}')
             continue
 
+        plus_only = re.match(r'^(?P<line>\d+(?:\.\d+)?)\s*\+$', line)
+        if plus_only and current_player and pending_market_only:
+            normalized.append(_format_plus_leg(current_player, plus_only.group('line'), pending_market_only))
+            pending_market_only = None
+            continue
+
         if _looks_like_player_name_line(line) and not _MARKET_FOLLOWUP_LINE.match(line):
             current_player = _title_name(line)
             pending_yes_no_name = current_player
@@ -316,6 +346,9 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
                 f"{float(alt_market.group('line')):g}",
                 alt_market.group('market'),
             ))
+            continue
+
+        if current_player and re.match(r'^TO\s+(?:SCORE|RECORD)\b$', line, re.I):
             continue
 
         if current_player and re.match(r'^TO\s+(?:SCORE|RECORD)\b', line, re.I):
@@ -365,8 +398,22 @@ def _normalize_market_label(raw_market: str) -> str:
     lowered = re.sub(r'\s+', ' ', raw_market.lower()).strip()
     lowered = lowered.replace('pts+ast', 'pts + ast').replace('pts+reb', 'pts + reb')
     lowered = lowered.replace('p+r+a', 'pra').replace('p+r', 'pts + reb').replace('p+a', 'pts + ast')
-    lowered = lowered.replace('three pointers made', 'threes').replace('3 ptm', '3pm')
+    lowered = lowered.replace('three pointers made', 'threes').replace('three-pointers made', 'threes').replace('3 ptm', '3pm')
+    lowered = lowered.replace('three point field goals made', 'threes')
+    lowered = lowered.replace('three-point field goals made', 'threes')
     return _MARKET_ALIASES.get(lowered, lowered)
+
+
+def _humanize_public_label(label: str) -> str:
+    clean = re.sub(r'[_]+', ' ', str(label or '').strip())
+    clean = re.sub(r'\bpts\b', 'Points', clean, flags=re.I)
+    clean = re.sub(r'\breb\b', 'Rebounds', clean, flags=re.I)
+    clean = re.sub(r'\bast\b', 'Assists', clean, flags=re.I)
+    clean = re.sub(r'\bpra\b', 'Points + Rebounds + Assists', clean, flags=re.I)
+    clean = re.sub(r'\bpa\b', 'Points + Assists', clean, flags=re.I)
+    clean = re.sub(r'\bpr\b', 'Points + Rebounds', clean, flags=re.I)
+    clean = re.sub(r'\bra\b', 'Rebounds + Assists', clean, flags=re.I)
+    return re.sub(r'\s+', ' ', clean).strip()
 
 
 def _title_name(raw_name: str) -> str:
@@ -455,7 +502,7 @@ def _leg_to_parsed(leg: Leg) -> ParsedScreenshotLeg:
     stat_type = _STAT_LABELS.get(leg.market_type)
     direction = leg.direction
     line = leg.line
-    normalized_label = leg.raw_text
+    normalized_label = _humanize_public_label(leg.raw_text)
     if player_name and stat_type and direction in {'yes', 'no'}:
         normalized_label = f"{player_name} {stat_type.title()} {direction.title()}"
     elif player_name and stat_type and direction and line is not None:
@@ -500,14 +547,18 @@ def parse_screenshot_text(raw_text: str, cleaned_text: str, *, include_debug: bo
         )
         likely_fragment_total = leg.market_type == 'game_total' and len(leg.raw_text.split()) <= 3
         if missing_core or likely_fragment_total or leg.confidence <= 0.0:
-            parse_warnings.append(f"Low-confidence leg skipped: {leg.raw_text}")
-            continue
+            parse_warnings.append(f"Low-confidence leg kept for review: {leg.raw_text}")
+            raw_lower = (leg.raw_text or '').lower()
+            looks_like_prop = bool(leg.player) or any(token in raw_lower for token in ('over', 'under', '+', 'yes', 'no', 'points', 'rebounds', 'assists', 'threes'))
+            if not looks_like_prop:
+                continue
         if leg.confidence < 0.75:
             parse_warnings.append(f"Review suggested for leg: {leg.raw_text}")
         if parsed.suggested_player_name and parsed.suggestion_auto_applied:
             parse_warnings.append(
                 f"Auto-corrected player name: {parsed.raw_player_text} → {parsed.suggested_player_name}"
             )
+        parsed.normalized_label = _humanize_public_label(parsed.normalized_label)
         parsed_legs.append(parsed)
 
     if not parsed_legs:
