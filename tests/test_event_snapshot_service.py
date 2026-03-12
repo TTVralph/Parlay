@@ -107,6 +107,10 @@ def test_event_snapshot_is_built_once_and_reused_for_same_event() -> None:
     assert player['stats']['PRA'] == 52.0
     assert player['stats']['PR'] == 42.0
     assert player['stats']['RA'] == 22.0
+    coverage = first.get_stat_coverage()
+    assert coverage['players'] == 1
+    assert 'PTS' in coverage['stat_keys']
+    assert coverage['snapshot_source'] == 'summary+boxscore'
 
 
 def test_event_snapshot_play_by_play_enrichment_is_lazy_and_cached() -> None:
@@ -255,6 +259,9 @@ def test_snapshot_native_grading_uses_snapshot_before_provider(monkeypatch) -> N
     assert [leg.settlement for leg in result.legs] == ['win', 'win', 'win']
     assert provider.player_result_calls == 0
     assert provider.player_result_detail_calls == 0
+    snapshot_run_diag = result.grading_diagnostics.get('snapshot') or {}
+    assert snapshot_run_diag.get('snapshot_stats_used') == 3
+    assert snapshot_run_diag.get('provider_fallbacks') == 0
 
 
 def test_snapshot_fallback_keeps_provider_behavior_when_stat_missing(monkeypatch) -> None:
@@ -287,6 +294,13 @@ def test_snapshot_fallback_keeps_provider_behavior_when_stat_missing(monkeypatch
     assert result.legs[0].settlement == 'win'
     assert result.legs[1].settlement in {'unmatched', 'pending'}
     assert provider.player_result_calls > 0
+    first_leg_diag = result.legs[0].settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
+    second_leg_diag = result.legs[1].settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
+    assert first_leg_diag.get('provider_fallback_used') is True
+    assert second_leg_diag.get('provider_fallback_used') is True
+    snapshot_run_diag = result.grading_diagnostics.get('snapshot') or {}
+    assert snapshot_run_diag.get('provider_fallbacks') == 2
+    assert snapshot_run_diag.get('missing_snapshot_keys')
 
 def test_non_espn_provider_path_is_unchanged_without_snapshot() -> None:
     class _NonEspnProvider:
