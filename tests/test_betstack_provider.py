@@ -37,7 +37,7 @@ def test_analyze_leg_uses_betstack_consensus_when_found(monkeypatch) -> None:
     class FakeProvider:
         enabled = True
 
-        def fetch_all_odds(self, *, sport: str = 'basketball'):
+        def fetch_nba_odds(self):
             return [{'market_type': 'player_points', 'line': 25.5, 'normalized_player': 'jokic nikola'}]
 
         def lookup_leg_line_from_odds(self, _: Leg, odds_rows):
@@ -65,7 +65,7 @@ def test_analyze_leg_falls_back_to_statistical_baseline_when_no_betstack_match(m
     class FakeProvider:
         enabled = True
 
-        def fetch_all_odds(self, *, sport: str = 'basketball'):
+        def fetch_nba_odds(self):
             return []
 
         def lookup_leg_line_from_odds(self, _: Leg, odds_rows):
@@ -94,7 +94,7 @@ def test_analyze_slip_fetches_betstack_once_for_all_legs(monkeypatch) -> None:
     class FakeProvider:
         enabled = True
 
-        def fetch_all_odds(self, *, sport: str = 'basketball'):
+        def fetch_nba_odds(self):
             calls['fetch'] += 1
             return [{'market_type': 'player_points', 'line': 25.5, 'normalized_player': 'jokic nikola'}]
 
@@ -112,3 +112,45 @@ def test_analyze_slip_fetches_betstack_once_for_all_legs(monkeypatch) -> None:
 
     assert response.ok is True
     assert calls['fetch'] == 1
+
+
+def test_betstack_provider_caches_for_sixty_seconds(monkeypatch) -> None:
+    BetStackProvider._all_odds_cache.clear()
+    calls = {'count': 0}
+
+    provider = BetStackProvider(api_key='abc')
+
+    def fake_request_json(path, params):
+        calls['count'] += 1
+        return {'data': [{'market': 'points', 'player_name': 'Nikola Jokic', 'line': '24.5', 'direction': 'over'}]}
+
+    monkeypatch.setattr(provider, '_request_json', fake_request_json)
+
+    first = provider.fetch_nba_odds()
+    second = provider.fetch_nba_odds()
+
+    assert len(first) == 1
+    assert first == second
+    assert calls['count'] == 1
+
+
+def test_lookup_prefers_closest_normalized_line() -> None:
+    provider = BetStackProvider(api_key='abc')
+    leg = Leg(
+        raw_text='Jokic to score 10+ points',
+        market_type='player_points',
+        player='Nikola Jokic',
+        direction='over',
+        line=9.5,
+        normalized_line_value=9.5,
+        confidence=0.9,
+    )
+    odds_rows = [
+        {'market_type': 'player_points', 'line': 8.5, 'direction': 'over', 'normalized_player': 'jokic nikola'},
+        {'market_type': 'player_points', 'line': 9.5, 'direction': 'over', 'normalized_player': 'jokic nikola'},
+    ]
+
+    found = provider.lookup_leg_line_from_odds(leg, odds_rows)
+
+    assert found is not None
+    assert found['line'] == 9.5

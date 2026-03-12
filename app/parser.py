@@ -424,6 +424,13 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
 
         legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='player_points', confidence=0.0, notes=['Unmatched leg'], american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
 
+    for idx, leg in enumerate(legs):
+        if leg.original_leg_text is None:
+            legs[idx] = leg.model_copy(update={
+                'original_leg_text': leg.raw_text,
+                'normalized_line_value': leg.line,
+            })
+
     return legs
 
 

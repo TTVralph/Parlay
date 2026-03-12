@@ -36,6 +36,9 @@ def test_analyze_slip_response_shape() -> None:
     assert 'changed_legs_count' in body
     assert isinstance(body['rewrite_notes'], list)
     assert 'original_vs_rewritten_summary' in body
+    assert 'original_estimated_odds' in body
+    assert 'rewritten_estimated_odds' in body
+    assert 'risk_reduction_percent' in body
 
 
 def test_analyze_mode_does_not_change_check_slip_shape() -> None:
@@ -84,3 +87,13 @@ def test_endpoint_correlation_note_for_same_game_legs() -> None:
     body = res.json()
     assert 'correlation_note' in body
     assert isinstance(body['correlation_note'], str)
+
+
+def test_milestone_props_expose_normalized_line() -> None:
+    client = TestClient(app)
+    res = client.post('/analyze-slip', json={'text': 'Jokic to score 10+ points'})
+    assert res.status_code == 200
+    body = res.json()
+    leg = body['leg_risk_scores'][0]
+    assert leg['original_leg_text'] == 'Jokic to score 10+ points'
+    assert leg['normalized_line_value'] == 9.5
