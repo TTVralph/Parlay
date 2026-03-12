@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 from typing import Any
 
@@ -18,6 +18,10 @@ class SnapshotDiagnostics:
     missing_player_stats: list[str] = field(default_factory=list)
     missing_stat_keys: list[str] = field(default_factory=list)
     snapshot_build_sources: dict[str, bool] = field(default_factory=dict)
+    event_status: str | None = None
+    built_at: str | None = None
+    persisted_at: str | None = None
+    snapshot_origin: str | None = None
 
 
 @dataclass
@@ -35,6 +39,9 @@ class EventSnapshot:
     normalized_player_stats: dict[str, dict[str, Any]] = field(default_factory=dict)
     normalized_team_map: dict[str, dict[str, Any]] = field(default_factory=dict)
     normalized_play_by_play: list[PlayByPlayEvent] | None = None
+    built_at: str | None = None
+    persisted_at: str | None = None
+    snapshot_origin: str | None = None
     diagnostics: SnapshotDiagnostics = field(default_factory=SnapshotDiagnostics)
 
     def get_stat_coverage(self) -> dict[str, Any]:
@@ -74,16 +81,46 @@ class EventSnapshotService:
         gamecast_provider: ESPNGamecastProvider | None = None,
         play_by_play_provider: ESPNPlayByPlayProvider | None = None,
         snapshot_store: SnapshotStore | None = None,
+        scheduled_freshness_seconds: int = 60,
+        live_freshness_seconds: int = 20,
     ) -> None:
         self._scoreboard_provider = scoreboard_provider or ESPNScoreboardProvider()
         self._gamecast_provider = gamecast_provider or ESPNGamecastProvider()
         self._play_by_play_provider = play_by_play_provider or ESPNPlayByPlayProvider()
         self._snapshot_store = snapshot_store or SnapshotStore()
         self._snapshots: dict[str, EventSnapshot] = {}
+        self._scheduled_freshness_seconds = scheduled_freshness_seconds
+        self._live_freshness_seconds = live_freshness_seconds
 
     @staticmethod
     def _is_final_status(status: str | None) -> bool:
-        return str(status or '').strip().lower() == 'final'
+        return str(status or '').strip().lower() in {'final', 'complete', 'completed', 'closed', 'settled'}
+
+    @staticmethod
+    def _status_bucket(status: str | None) -> str:
+        normalized = str(status or '').strip().lower()
+        if normalized in {'live', 'in', 'in_progress', 'inprogress', 'halftime'}:
+            return 'live'
+        if normalized in {'pre', 'scheduled', 'pregame'}:
+            return 'scheduled'
+        if normalized in {'postponed', 'cancelled', 'canceled'}:
+            return 'postponed_or_cancelled'
+        if EventSnapshotService._is_final_status(normalized):
+            return 'final'
+        return 'unknown'
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _parse_iso(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
 
     @staticmethod
     def _norm_name(value: str) -> str:
@@ -103,6 +140,61 @@ class EventSnapshotService:
             return None
         events = self._scoreboard_provider.fetch_events_for_date(event_date)
         return next((event for event in events if str(event.get('event_id')) == event_id), None)
+
+    @staticmethod
+    def _extract_status_from_scoreboard_event(scoreboard_event: dict[str, Any] | None) -> str | None:
+        if not scoreboard_event:
+            return None
+        for key in ('event_status', 'status', 'state'):
+            value = scoreboard_event.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+            if isinstance(value, dict):
+                for nested_key in ('state', 'type', 'name'):
+                    nested = value.get(nested_key)
+                    if isinstance(nested, str) and nested.strip():
+                        return nested
+        return None
+
+    def is_snapshot_fresh(self, snapshot: EventSnapshot, event_status: str | None) -> bool:
+        status_bucket = self._status_bucket(event_status)
+        if status_bucket == 'final':
+            return True
+        if status_bucket == 'postponed_or_cancelled':
+            return False
+        built_at = self._parse_iso(snapshot.built_at)
+        if built_at is None:
+            return False
+        age_seconds = (datetime.now(timezone.utc) - built_at).total_seconds()
+        if status_bucket == 'live':
+            return age_seconds <= self._live_freshness_seconds
+        if status_bucket == 'scheduled':
+            return age_seconds <= self._scheduled_freshness_seconds
+        return age_seconds <= self._scheduled_freshness_seconds
+
+    def should_persist_snapshot(self, snapshot: EventSnapshot) -> bool:
+        return self._status_bucket(snapshot.event_status) == 'final'
+
+    def _hydrate_snapshot_metadata(self, snapshot: EventSnapshot, *, origin: str, persisted_at: str | None = None) -> EventSnapshot:
+        snapshot.snapshot_origin = origin
+        snapshot.persisted_at = persisted_at
+        snapshot.diagnostics.event_status = snapshot.event_status
+        snapshot.diagnostics.built_at = snapshot.built_at
+        snapshot.diagnostics.persisted_at = persisted_at
+        snapshot.diagnostics.snapshot_origin = origin
+        return snapshot
+
+    def _persisted_snapshot_has_status_mismatch(
+        self,
+        *,
+        persisted_snapshot: EventSnapshot,
+        event_date: str | None,
+    ) -> bool:
+        if not self._is_final_status(persisted_snapshot.event_status):
+            return True
+        scoreboard_event = self._scoreboard_event_for(persisted_snapshot.event_id, event_date=event_date)
+        live_status = self._extract_status_from_scoreboard_event(scoreboard_event)
+        return bool(live_status and self._status_bucket(live_status) != 'final')
 
     def _team_maps_from_summary(self, summary: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any], dict[str, dict[str, Any]]]:
         if not summary:
@@ -200,20 +292,36 @@ class EventSnapshotService:
             return None
         existing = self._snapshots.get(normalized_event_id)
         if existing is not None:
-            if include_play_by_play and existing.normalized_play_by_play is None:
-                existing.normalized_play_by_play = self._play_by_play_provider.get_normalized_events(normalized_event_id)
-                existing.diagnostics.snapshot_build_sources['pbp'] = bool(existing.normalized_play_by_play)
-            return existing
+            if not self.is_snapshot_fresh(existing, existing.event_status):
+                self._snapshots.pop(normalized_event_id, None)
+            else:
+                self._hydrate_snapshot_metadata(existing, origin=existing.snapshot_origin or 'rebuilt', persisted_at=existing.persisted_at)
+                if include_play_by_play and existing.normalized_play_by_play is None:
+                    existing.normalized_play_by_play = self._play_by_play_provider.get_normalized_events(normalized_event_id)
+                    existing.diagnostics.snapshot_build_sources['pbp'] = bool(existing.normalized_play_by_play)
+                    if self.should_persist_snapshot(existing):
+                        existing.persisted_at = self._now_iso()
+                        self._snapshot_store.save_snapshot(normalized_event_id, existing)
+                        self._hydrate_snapshot_metadata(existing, origin=existing.snapshot_origin or 'rebuilt', persisted_at=existing.persisted_at)
+                return existing
 
         persisted = self._snapshot_store.load_snapshot(normalized_event_id)
         if persisted is not None:
-            if include_play_by_play and persisted.normalized_play_by_play is None:
-                persisted.normalized_play_by_play = self._play_by_play_provider.get_normalized_events(normalized_event_id)
-                persisted.diagnostics.snapshot_build_sources['pbp'] = bool(persisted.normalized_play_by_play)
-                if self._is_final_status(persisted.event_status):
-                    self._snapshot_store.save_snapshot(normalized_event_id, persisted)
-            self._snapshots[normalized_event_id] = persisted
-            return persisted
+            if not self._persisted_snapshot_has_status_mismatch(persisted_snapshot=persisted, event_date=event_date):
+                self._hydrate_snapshot_metadata(
+                    persisted,
+                    origin='persisted',
+                    persisted_at=persisted.persisted_at or self._now_iso(),
+                )
+                if include_play_by_play and persisted.normalized_play_by_play is None:
+                    persisted.normalized_play_by_play = self._play_by_play_provider.get_normalized_events(normalized_event_id)
+                    persisted.diagnostics.snapshot_build_sources['pbp'] = bool(persisted.normalized_play_by_play)
+                    if self.should_persist_snapshot(persisted):
+                        persisted.persisted_at = self._now_iso()
+                        self._snapshot_store.save_snapshot(normalized_event_id, persisted)
+                        self._hydrate_snapshot_metadata(persisted, origin='persisted', persisted_at=persisted.persisted_at)
+                self._snapshots[normalized_event_id] = persisted
+                return persisted
 
         summary_normalized = self._gamecast_provider.fetch_normalized(normalized_event_id)
         summary_raw = summary_normalized.get('raw') if summary_normalized else None
@@ -239,6 +347,9 @@ class EventSnapshotService:
             normalized_player_stats=player_stats,
             normalized_team_map=team_map,
             normalized_play_by_play=None,
+            built_at=self._now_iso(),
+            persisted_at=None,
+            snapshot_origin='rebuilt',
             diagnostics=SnapshotDiagnostics(
                 available_player_ids=sorted(
                     {
@@ -267,6 +378,10 @@ class EventSnapshotService:
                     'boxscore': bool(((summary_raw or {}).get('boxscore') or {}).get('players')),
                     'pbp': False,
                 },
+                event_status=((summary_normalized or {}).get('status') or {}).get('state') if summary_normalized else None,
+                built_at=self._now_iso(),
+                persisted_at=None,
+                snapshot_origin='rebuilt',
             ),
         )
         if include_play_by_play:
@@ -274,8 +389,12 @@ class EventSnapshotService:
             snapshot.diagnostics.snapshot_build_sources['pbp'] = bool(snapshot.normalized_play_by_play)
 
         self._snapshots[normalized_event_id] = snapshot
-        if self._is_final_status(snapshot.event_status):
+        if self.should_persist_snapshot(snapshot):
+            snapshot.persisted_at = self._now_iso()
             self._snapshot_store.save_snapshot(normalized_event_id, snapshot)
+            self._hydrate_snapshot_metadata(snapshot, origin='rebuilt', persisted_at=snapshot.persisted_at)
+        else:
+            self._hydrate_snapshot_metadata(snapshot, origin='rebuilt', persisted_at=None)
         return snapshot
 
     def get_event_snapshot(
