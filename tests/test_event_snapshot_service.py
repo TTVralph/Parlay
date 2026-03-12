@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.grader import grade_text
-from app.providers.base import EventInfo
+from app.providers.base import EventInfo, TeamResult
 from app.providers.espn_provider import ESPNNBAResultsProvider
 from app.services.event_snapshot import EventSnapshot, EventSnapshotService
 from app.services.play_by_play_provider import PlayByPlayEvent
@@ -592,3 +592,124 @@ def test_snapshot_readiness_details_include_derived_market_metadata(monkeypatch)
     assert first.get('provider_fallback') is False
     assert first.get('required_component_stat_keys') == ['PTS', 'REB', 'AST', 'STL', 'BLK']
     assert first.get('player_match_result') == 'normalized_match'
+
+
+class _FakeESPNTeamProvider(_FakeESPNProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.team_result_calls = 0
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        self.team_result_calls += 1
+        return TeamResult(
+            event=self._event,
+            moneyline_win=(team == self._event.home_team),
+            home_score=110,
+            away_score=101,
+        )
+
+
+def test_snapshot_native_team_moneyline_uses_snapshot_before_provider(monkeypatch) -> None:
+    class _SnapshotService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def get_many_event_snapshots(self, event_ids, *, event_dates=None, include_play_by_play_event_ids=None):
+            return {
+                event_id: EventSnapshot(
+                    event_id=event_id,
+                    event_status='final',
+                    home_team={'id': '7', 'name': 'Denver Nuggets', 'abbr': 'DEN', 'score': '110'},
+                    away_team={'id': '2', 'name': 'Boston Celtics', 'abbr': 'BOS', 'score': '101'},
+                    normalized_event_result={'event_status': 'final', 'is_final': True, 'home_score': 110, 'away_score': 101, 'margin': 9, 'combined_total': 211, 'winner': 'home'},
+                )
+                for event_id in event_ids
+            }
+
+    monkeypatch.setattr('app.grader.EventSnapshotService', _SnapshotService)
+    provider = _FakeESPNTeamProvider()
+    result = grade_text('Denver Nuggets moneyline', provider=provider)
+
+    assert result.legs[0].settlement == 'win'
+    assert provider.team_result_calls == 0
+    detail = (result.grading_diagnostics.get('snapshot') or {}).get('market_snapshot_details')[0]
+    assert detail.get('snapshot_used') is True
+    assert detail.get('provider_fallback') is False
+
+
+def test_snapshot_native_team_spread_and_total_uses_snapshot_before_provider(monkeypatch) -> None:
+    class _SnapshotService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def get_many_event_snapshots(self, event_ids, *, event_dates=None, include_play_by_play_event_ids=None):
+            return {
+                event_id: EventSnapshot(
+                    event_id=event_id,
+                    event_status='final',
+                    home_team={'id': '7', 'name': 'Denver Nuggets', 'abbr': 'DEN', 'score': '110'},
+                    away_team={'id': '2', 'name': 'Boston Celtics', 'abbr': 'BOS', 'score': '101'},
+                    normalized_event_result={'event_status': 'final', 'is_final': True, 'home_score': 110, 'away_score': 101, 'margin': 9, 'combined_total': 211, 'winner': 'home'},
+                )
+                for event_id in event_ids
+            }
+
+    monkeypatch.setattr('app.grader.EventSnapshotService', _SnapshotService)
+    provider = _FakeESPNTeamProvider()
+    result = grade_text('Denver Nuggets -5.5\nOver 208.5', provider=provider)
+
+    assert [leg.settlement for leg in result.legs] == ['win', 'win']
+    assert provider.team_result_calls == 0
+
+
+def test_snapshot_team_market_fallback_keeps_provider_behavior_when_snapshot_incomplete(monkeypatch) -> None:
+    class _SnapshotService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def get_many_event_snapshots(self, event_ids, *, event_dates=None, include_play_by_play_event_ids=None):
+            return {
+                event_id: EventSnapshot(
+                    event_id=event_id,
+                    event_status='final',
+                    home_team={'id': '7', 'name': 'Denver Nuggets', 'abbr': 'DEN', 'score': '110'},
+                    away_team={'id': '2', 'name': 'Boston Celtics', 'abbr': 'BOS', 'score': None},
+                )
+                for event_id in event_ids
+            }
+
+    monkeypatch.setattr('app.grader.EventSnapshotService', _SnapshotService)
+    provider = _FakeESPNTeamProvider()
+    result = grade_text('Denver Nuggets moneyline', provider=provider)
+
+    assert result.legs[0].settlement == 'win'
+    assert provider.team_result_calls > 0
+    diag = result.legs[0].settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
+    assert diag.get('provider_fallback_used') is True
+    assert 'away_score' in (diag.get('missing_snapshot_event_fields') or [])
+
+
+def test_snapshot_team_market_readiness_details_include_event_fields(monkeypatch) -> None:
+    class _SnapshotService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def get_many_event_snapshots(self, event_ids, *, event_dates=None, include_play_by_play_event_ids=None):
+            return {
+                event_id: EventSnapshot(
+                    event_id=event_id,
+                    event_status='in_progress',
+                    home_team={'id': '7', 'name': 'Denver Nuggets', 'abbr': 'DEN', 'score': '90'},
+                    away_team={'id': '2', 'name': 'Boston Celtics', 'abbr': 'BOS', 'score': '88'},
+                )
+                for event_id in event_ids
+            }
+
+    monkeypatch.setattr('app.grader.EventSnapshotService', _SnapshotService)
+    provider = _FakeESPNTeamProvider()
+    result = grade_text('Denver Nuggets moneyline', provider=provider)
+
+    diag = result.legs[0].settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
+    assert diag.get('event_status_used') == 'in_progress'
+    assert 'event_not_final' in (diag.get('missing_snapshot_event_fields') or [])
+    assert diag.get('settlement_path') == 'provider_fallback'
