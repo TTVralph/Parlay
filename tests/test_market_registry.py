@@ -48,3 +48,9 @@ def test_normalize_market_play_by_play_aliases() -> None:
     assert normalize_market('first assist') == 'first_assist'
     assert normalize_market('first 3 pointer') == 'first_three'
     assert normalize_market('last bucket') == 'last_basket'
+
+
+def test_split_team_first_half_markets_not_yet_registry_mapped() -> None:
+    assert normalize_market('first half total') is None
+    assert normalize_market('1h total') is None
+    assert normalize_market('first half spread') is None

@@ -154,3 +154,9 @@ def test_parse_number_first_notation() -> None:
     assert legs[0].player == 'Nikola Jokic'
     assert legs[0].direction == 'over'
     assert legs[0].line == 24.0
+
+
+def test_parse_first_half_team_markets_remain_unmatched_until_registry_support() -> None:
+    legs = parse_text('First Half Over 110.5\nLakers 1H -3.5')
+    assert len(legs) == 2
+    assert all(leg.market_type not in {'first_half_total', 'first_half_spread'} for leg in legs)
