@@ -14,9 +14,9 @@ def test_check_page_has_loading_state_and_friendly_layout():
     assert 'btn.disabled=true' in html
     assert 'Paste at least one leg first, or upload a screenshot.' in html
     assert 'Paste at least one leg first.' in html
-    assert '<th>Leg</th>' in html
-    assert '<th>Result</th>' in html
-    assert '<th>Matched event</th>' in html
+    assert "id='colLegHeader'" in html
+    assert "id='colResultHeader'" in html
+    assert "id='colThirdHeader'" in html
     assert "id='debugOut'" in html
     assert 'OCR extracted text:' in html
     assert 'Parsed legs before grading:' in html
@@ -54,7 +54,9 @@ def test_analyze_mode_submit_path_does_not_call_grading_logic() -> None:
     assert page.status_code == 200
     html = page.text
     assert 'if(activeSlipMode===modeAnalyze){' in html
-    assert 'Analyze Slip mode is set for pre-game advisory insights.' in html
+    assert 'Weakest leg:' in html
+    assert 'Most likely seller:' in html
+    assert "fetch('/analyze-slip'" in html
     assert "btn.textContent=activeSlipMode===modeAnalyze?'Analyze Slip':'Check Slip';" in html
 
 
