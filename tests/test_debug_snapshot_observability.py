@@ -168,3 +168,60 @@ def test_hydrate_hotspots_endpoint_records_summary(monkeypatch) -> None:
     body = response.json()
     assert body['trigger'] == 'observability_hotspots'
 
+
+
+def test_market_readiness_report_classifies_markets() -> None:
+    service = get_debug_observability_service().__class__(
+        max_grading_history=50,
+        max_hydration_history=5,
+        snapshot_store=SnapshotStore(base_dir=Path('tmp-snapshot-test')),
+        readiness_min_samples=4,
+        readiness_ready_fallback_rate=0.15,
+        readiness_not_ready_fallback_rate=0.5,
+    )
+
+    for idx in range(5):
+        service.record_grading_diagnostics({'snapshot': {'snapshot_stats_used': 1, 'provider_fallbacks': 0, 'missing_snapshot_keys': [], 'players_missing_stats': [], 'market_snapshot_details': [{'market_type': 'player_points', 'stat_family': 'PTS', 'used_snapshot': True, 'provider_fallback_used': False, 'requested_stat_key': 'PTS', 'player_id_resolved': True, 'player_snapshot_found': True, 'missing_snapshot_stat_key': None, 'event_id': f'e-{idx}', 'sport': 'NBA', 'league': 'NBA'}]}})
+
+    for idx in range(4):
+        service.record_grading_diagnostics({'snapshot': {'snapshot_stats_used': 0, 'provider_fallbacks': 1, 'missing_snapshot_keys': ['STL'], 'players_missing_stats': [], 'market_snapshot_details': [{'market_type': 'player_steals', 'stat_family': 'STL', 'used_snapshot': False, 'provider_fallback_used': True, 'requested_stat_key': 'STL', 'player_id_resolved': True, 'player_snapshot_found': idx % 2 == 0, 'missing_snapshot_stat_key': 'STL', 'event_id': f's-{idx}', 'sport': 'NBA', 'league': 'NBA'}]}})
+
+    report = service.get_snapshot_market_coverage_report()
+
+    points = report['markets']['player_points']
+    steals = report['markets']['player_steals']
+    assert points['status'] == 'ready'
+    assert points['runs'] == 5
+    assert points['fallback_rate'] == 0.0
+    assert steals['status'] == 'not_ready'
+    assert steals['provider_fallbacks'] == 4
+    assert steals['missing_snapshot_keys']['STL'] == 4
+
+
+def test_market_readiness_report_handles_low_sample_market() -> None:
+    service = get_debug_observability_service().__class__(
+        max_grading_history=10,
+        max_hydration_history=5,
+        snapshot_store=SnapshotStore(base_dir=Path('tmp-snapshot-test')),
+        readiness_min_samples=5,
+    )
+    service.record_grading_diagnostics({'snapshot': {'snapshot_stats_used': 1, 'provider_fallbacks': 0, 'missing_snapshot_keys': [], 'players_missing_stats': [], 'market_snapshot_details': [{'market_type': 'player_blocks', 'stat_family': 'BLK', 'used_snapshot': True, 'provider_fallback_used': False, 'requested_stat_key': 'BLK', 'player_id_resolved': True, 'player_snapshot_found': True, 'missing_snapshot_stat_key': None, 'event_id': 'blk-1', 'sport': 'NBA', 'league': 'NBA'}]}})
+
+    report = service.get_snapshot_market_coverage_report()
+    blocks = report['markets']['player_blocks']
+    assert blocks['status'] == 'partial'
+    assert blocks['runs'] == 1
+
+
+def test_market_readiness_endpoint_shape(monkeypatch) -> None:
+    _reset_observability()
+    monkeypatch.setenv('PARLAY_ENABLE_DEBUG_OBSERVABILITY', '1')
+    service = get_debug_observability_service()
+    service.record_grading_diagnostics({'snapshot': {'snapshot_stats_used': 1, 'provider_fallbacks': 0, 'missing_snapshot_keys': [], 'players_missing_stats': [], 'market_snapshot_details': [{'market_type': 'player_points', 'stat_family': 'PTS', 'used_snapshot': True, 'provider_fallback_used': False, 'requested_stat_key': 'PTS', 'player_id_resolved': True, 'player_snapshot_found': True, 'missing_snapshot_stat_key': None, 'event_id': '401', 'sport': 'NBA', 'league': 'NBA'}]}})
+
+    response = client.get('/admin/debug/market-readiness', headers=_admin_headers())
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body.keys()) >= {'markets', 'thresholds', 'recent_grading_runs_count'}
+    assert 'player_points' in body['markets']
+    assert set(body['markets']['player_points'].keys()) >= {'runs', 'snapshot_successes', 'provider_fallbacks', 'fallback_rate', 'missing_snapshot_keys', 'players_missing_stats', 'status'}

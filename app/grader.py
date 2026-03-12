@@ -376,6 +376,7 @@ def _aggregate_snapshot_run_diagnostics(graded: list[GradedLeg]) -> dict[str, ob
     bet_dates: set[str] = set()
     sports: set[str] = set()
     leagues: set[str] = set()
+    market_snapshot_details: list[dict[str, object]] = []
 
     for item in graded:
         leg = item.leg
@@ -396,6 +397,26 @@ def _aggregate_snapshot_run_diagnostics(graded: list[GradedLeg]) -> dict[str, ob
 
         settlement_diag = item.settlement_diagnostics or {}
         snapshot_diag = settlement_diag.get('snapshot_stat_diagnostics') or {}
+        market_type = str(leg.market_type) if leg and leg.market_type else 'unknown'
+        requested_stat_key = snapshot_diag.get('requested_stat_key')
+        stat_family = 'unknown'
+        if requested_stat_key:
+            stat_family = str(requested_stat_key)
+        elif '_' in market_type:
+            stat_family = market_type.split('_', 1)[1]
+        market_snapshot_details.append({
+            'market_type': market_type,
+            'stat_family': stat_family,
+            'used_snapshot': bool(snapshot_diag.get('used_snapshot')),
+            'provider_fallback_used': bool(snapshot_diag.get('provider_fallback_used')),
+            'requested_stat_key': requested_stat_key,
+            'player_id_resolved': bool(snapshot_diag.get('player_id_resolved')),
+            'player_snapshot_found': bool(snapshot_diag.get('player_snapshot_found')),
+            'missing_snapshot_stat_key': snapshot_diag.get('missing_snapshot_stat_key'),
+            'event_id': str(((leg.event_id or leg.matched_event_id) if leg else '') or ''),
+            'sport': str((leg.sport if leg else '') or ''),
+            'league': str((leg.sport if leg else '') or ''),
+        })
         if snapshot_diag.get('used_snapshot'):
             snapshot_stats_used += 1
         if snapshot_diag.get('provider_fallback_used'):
@@ -417,6 +438,7 @@ def _aggregate_snapshot_run_diagnostics(graded: list[GradedLeg]) -> dict[str, ob
         'bet_dates': sorted(bet_dates),
         'sports': sorted(sports),
         'leagues': sorted(leagues),
+        'market_snapshot_details': market_snapshot_details,
     }
 
 def _review_reason_from_notes(leg: Leg) -> str:

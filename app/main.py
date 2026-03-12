@@ -3535,6 +3535,13 @@ def admin_debug_hydration_candidates_endpoint(
     )
 
 
+@app.get('/admin/debug/market-readiness')
+def admin_debug_market_readiness_endpoint(_: str = Depends(require_admin)) -> dict[str, object]:
+    if not debug_observability_enabled():
+        raise HTTPException(status_code=404, detail='Debug observability endpoint disabled')
+    return get_debug_observability_service().get_snapshot_market_coverage_report()
+
+
 @app.post('/admin/debug/hydrate-hotspots')
 def admin_debug_hydrate_hotspots_endpoint(
     _: str = Depends(require_admin),
