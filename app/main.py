@@ -1148,6 +1148,25 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .risk-chip.low{background:#dcfce7;color:#166534;}
     .risk-chip.medium{background:#fef3c7;color:#92400e;}
     .risk-chip.high{background:#fee2e2;color:#b91c1c;}
+    .analyze-summary-hero{border:1px solid #33415599;border-radius:16px;padding:16px;background:linear-gradient(140deg,#0f172a 0%,#1e293b 48%,#1d4ed8 120%);color:#e2e8f0;box-shadow:0 16px 36px rgba(15,23,42,.34);}
+    .analyze-summary-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;}
+    .analyze-kicker{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#bfdbfe;}
+    .analyze-risk-line{margin-top:6px;font-size:26px;font-weight:900;line-height:1.1;}
+    .analyze-risk-line .risk-value{font-size:16px;font-weight:700;color:#cbd5e1;}
+    .analyze-subline{margin-top:9px;font-size:13px;color:#dbeafe;}
+    .analyze-hero-badges{display:flex;gap:8px;flex-wrap:wrap;}
+    .analyze-hero-chip{display:inline-flex;align-items:center;border:1px solid #93c5fd55;border-radius:999px;padding:6px 11px;background:#0f172a66;font-size:12px;font-weight:700;color:#dbeafe;}
+    .takeaways-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;}
+    .takeaway-card{min-height:118px;border:1px solid var(--border);border-radius:14px;padding:12px;background:var(--surface-elev);display:flex;flex-direction:column;gap:6px;}
+    .takeaway-card .takeaway-role{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);}
+    .takeaway-card .takeaway-name{font-size:15px;font-weight:800;line-height:1.2;}
+    .takeaway-card .takeaway-market{font-size:12px;color:var(--muted);}
+    .takeaway-card .takeaway-advisory{font-size:12px;color:var(--text);}
+    .correlation-panel{border:1px solid #f59e0b77;border-radius:14px;padding:12px;background:linear-gradient(180deg,#fff7ed,#ffedd5);color:#7c2d12;}
+    .correlation-panel .title{font-size:14px;font-weight:900;letter-spacing:.02em;}
+    .leg-breakdown-head{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-top:4px;}
+    .leg-breakdown-title{font-size:16px;font-weight:900;}
+    .leg-breakdown-copy{font-size:12px;color:var(--muted);}
     table{width:100%;border-collapse:separate;border-spacing:0;} th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;} thead th{font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);} tbody tr{transition:background .18s ease;} tbody tr:hover{background:color-mix(in srgb,var(--surface-elev) 80%,var(--primary) 8%);}
     a{color:var(--primary);} code{background:var(--bg-soft);padding:2px 6px;border-radius:6px;color:var(--primary-2);} .loading-skeleton{display:none;grid-template-columns:1fr;gap:8px;}
     .result-flow [data-reveal]{opacity:0;transform:translateY(8px);transition:opacity .22s ease,transform .22s ease;}
@@ -1229,14 +1248,18 @@ Murray over 2.5 threes'></textarea>
     </div>
     <div id='resultWrap' hidden class='card result-flow'>
       <div id='overall' data-reveal='1'></div>
+      <div id='analyzeSummaryHero' data-reveal='2' hidden></div>
+      <div id='keyTakeaways' class='takeaways-grid' data-reveal='3' hidden></div>
+      <div id='correlationSummary' data-reveal='4' hidden></div>
       <div id='resultSummary' class='result-summary' data-reveal='2' hidden></div>
-      <div id='legProgressStrip' class='leg-progress' data-reveal='3' hidden></div>
-      <div id='metaSummary' class='result-meta' data-reveal='4' hidden></div>
+      <div id='legProgressStrip' class='leg-progress' data-reveal='5' hidden></div>
+      <div id='metaSummary' class='result-meta' data-reveal='6' hidden></div>
       <div id='diedHere' data-reveal='5' hidden></div>
+      <div id='legBreakdownHeader' data-reveal='7' hidden></div>
       <div id='payoutOut' style='margin:8px 0;color:var(--muted);'></div>
       <div id='gradingSkeleton' class='loading-skeleton'><div></div><div></div><div></div></div>
-      <details class='section-technical' data-reveal='7'><summary>Show technical details</summary><div id='debugOut' style='margin:8px 0 12px;color:var(--muted);'></div></details>
-      <table data-reveal='6'>
+      <details class='section-technical' data-reveal='9'><summary>Show technical details</summary><div id='debugOut' style='margin:8px 0 12px;color:var(--muted);'></div></details>
+      <table data-reveal='8'>
         <thead><tr><th id='colLegHeader'>Leg</th><th id='colResultHeader'>Result</th><th id='colThirdHeader'>Matched event</th></tr></thead>
         <tbody id='legsBody'></tbody>
       </table>
@@ -1285,11 +1308,15 @@ Murray over 2.5 threes'></textarea>
     const themeMode=document.getElementById('themeMode');
     const wrap=document.getElementById('resultWrap');
     const overall=document.getElementById('overall');
+    const analyzeSummaryHero=document.getElementById('analyzeSummaryHero');
+    const keyTakeaways=document.getElementById('keyTakeaways');
+    const correlationSummary=document.getElementById('correlationSummary');
     const resultSummary=document.getElementById('resultSummary');
     const metaSummary=document.getElementById('metaSummary');
     const legProgressStrip=document.getElementById('legProgressStrip');
     const payoutOut=document.getElementById('payoutOut');
     const diedHere=document.getElementById('diedHere');
+    const legBreakdownHeader=document.getElementById('legBreakdownHeader');
     const debugOut=document.getElementById('debugOut');
     const legsBody=document.getElementById('legsBody');
     const colLegHeader=document.getElementById('colLegHeader');
@@ -1401,6 +1428,8 @@ Murray over 2.5 threes'></textarea>
     // <span class='result-chip'>${counts.won} Won</span>
     // <span class='result-chip'>${counts.lost} Lost</span>
     // <span class='result-chip'>${counts.review} Review</span>
+    // <span class='result-chip priority'>Weakest leg: ${escapeHtml(weakest?.subject_name||weakest?.raw_leg_text||'—')}</span>
+    // <span class='result-chip'>Most likely seller: ${escapeHtml(seller?.subject_name||seller?.raw_leg_text||'—')}</span>
     // showActionStatus('Summary copied.','success');
     // showActionStatus('Public link copied.','success');
     // showActionStatus('Share card downloaded.','success');
@@ -1913,6 +1942,7 @@ Murray over 2.5 threes'></textarea>
     }
 
     function renderResultSummary(payload){
+      clearAnalyzeDashboard();
       const counts=countLegResults(payload.legs||[]);
       const firstLoss=(payload.legs||[]).find((item)=>item.result==='loss');
       resultSummary.innerHTML=`
@@ -1973,6 +2003,43 @@ Murray over 2.5 threes'></textarea>
 
     function escapeHtml(text){
       return String(text||'').replace(/[&<>"]/g,(ch)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]||ch));
+    }
+
+    function friendlyReasonCode(code){
+      const map={
+        missing_data_confidence_penalty:'Limited confidence due to missing market data',
+        line_value_missing_market_data:'Market comparison unavailable',
+        inflated_line_vs_recent_baseline:'Line sits above recent baseline',
+        alt_line_extra_difficulty:'Alt line adds extra difficulty',
+      };
+      return map[code]||String(code||'').replaceAll('_',' ');
+    }
+
+    function humanizeAdvisory(item){
+      const advisory=String(item.short_advisory_text||item.explanation||'').trim();
+      if(advisory&&!/^[a-z0-9_]+$/i.test(advisory)){return advisory;}
+      if(advisory.includes('_')){return friendlyReasonCode(advisory);}
+      const firstCode=Array.isArray(item.advisory_reason_codes)?item.advisory_reason_codes.find(Boolean):null;
+      return firstCode?friendlyReasonCode(firstCode):'Risk profile available for this leg.';
+    }
+
+    function summarizeSlipInsight(payload){
+      if(payload.summary_sentence){return String(payload.summary_sentence);}
+      if((payload.same_game_group_count||0)>0){return 'Mostly safe alt lines, but same-game correlation adds compound risk.';}
+      if(String(payload.slip_risk_label||'').toLowerCase()==='high'){return 'One or more legs are inflated versus market baseline and need caution.';}
+      if(String(payload.slip_risk_label||'').toLowerCase()==='low'){return 'Mostly conservative legs with limited downside signals.';}
+      return 'Mostly safe alt lines, but one inflated prop stands out.';
+    }
+
+    function clearAnalyzeDashboard(){
+      analyzeSummaryHero.hidden=true;
+      analyzeSummaryHero.innerHTML='';
+      keyTakeaways.hidden=true;
+      keyTakeaways.innerHTML='';
+      correlationSummary.hidden=true;
+      correlationSummary.innerHTML='';
+      legBreakdownHeader.hidden=true;
+      legBreakdownHeader.innerHTML='';
     }
 
     function applyNameSuggestion(legIndex){
@@ -2096,15 +2163,48 @@ Murray over 2.5 threes'></textarea>
       const seller=payload.likely_seller;
       const trap=payload.trap_leg;
       const trapScore=Number(payload.trap_score||0).toFixed(1);
-      const trapReasons=Array.isArray(payload.trap_reason_codes)&&payload.trap_reason_codes.length
-        ?`<span class='result-chip'>Trap reasons: ${payload.trap_reason_codes.map((code)=>escapeHtml(code)).join(' · ')}</span>`
-        :'';
+      const rankedTakeaways=[
+        {key:'trap',title:'Trap Leg',leg:trap,priority:0,accent:'priority-strong'},
+        {key:'weakest',title:'Weakest Leg',leg:weakest,priority:1,accent:'priority'},
+        {key:'seller',title:'Likely Seller',leg:seller,priority:2,accent:''},
+        {key:'safest',title:'Safest Leg',leg:safest,priority:3,accent:''},
+      ];
+      const seenLegIds=new Set();
+      const takeawayCards=[];
+      for(const item of rankedTakeaways){
+        const leg=item.leg;
+        if(!leg){continue;}
+        const identityKey=String(leg.raw_leg_text||leg.subject_name||`${item.key}-${item.priority}`).toLowerCase();
+        if(seenLegIds.has(identityKey)){continue;}
+        seenLegIds.add(identityKey);
+        takeawayCards.push(`<div class='takeaway-card'>
+          <div class='takeaway-role'>${item.title}</div>
+          <div class='takeaway-name'>${escapeHtml(leg.subject_name||leg.raw_leg_text||'—')}</div>
+          <div class='takeaway-market'>${escapeHtml(leg.market_type||'Unknown market')} · <span class='risk-chip ${escapeHtml((leg.risk_label||'medium').toLowerCase())}'>${escapeHtml(leg.risk_label||'medium')}</span></div>
+          <div class='takeaway-advisory'>${escapeHtml(humanizeAdvisory(leg))}</div>
+        </div>`);
+      }
+      analyzeSummaryHero.innerHTML=`<div class='analyze-summary-hero'>
+        <div class='analyze-summary-top'>
+          <div>
+            <div class='analyze-kicker'>Slip intelligence summary</div>
+            <div class='analyze-risk-line'>${escapeHtml(slipLabel.toUpperCase())} risk <span class='risk-value'>(${score}/10)</span></div>
+            <div class='analyze-subline'>${escapeHtml(summarizeSlipInsight(payload))}</div>
+          </div>
+          <div class='analyze-hero-badges'>
+            <span class='analyze-hero-chip'>Advisory only</span>
+            <span class='analyze-hero-chip'>Trap score ${trapScore}/10</span>
+          </div>
+        </div>
+      </div>`;
+      analyzeSummaryHero.hidden=false;
+      keyTakeaways.innerHTML=takeawayCards.join('');
+      keyTakeaways.hidden=takeawayCards.length===0;
+
       resultSummary.innerHTML=`
-        <span class='result-chip priority'>Weakest leg: ${escapeHtml(weakest?.subject_name||weakest?.raw_leg_text||'—')}</span>
-        <span class='result-chip'>Safest leg: ${escapeHtml(safest?.subject_name||safest?.raw_leg_text||'—')}</span>
-        <span class='result-chip'>Most likely seller: ${escapeHtml(seller?.subject_name||seller?.raw_leg_text||'—')}</span>
-        <span class='result-chip priority-strong'>🚨 Trap leg: ${escapeHtml(trap?.subject_name||trap?.raw_leg_text||'—')} (${trapScore}/10)</span>
-        ${trapReasons}
+        <span class='result-chip'>Slip risk: ${escapeHtml(slipLabel.toUpperCase())}</span>
+        <span class='result-chip'>Score: ${score}/10</span>
+        <span class='result-chip'>Advisory only — not a guarantee</span>
       `;
       resultSummary.hidden=false;
 
@@ -2117,20 +2217,26 @@ Murray over 2.5 threes'></textarea>
       `;
       metaSummary.hidden=false;
       legProgressStrip.hidden=true;
-      const correlationNote=payload.same_game_group_count>0
-        ?`<div class='advisory-banner' style='margin-top:8px;'>🔗 Correlation note: ${escapeHtml(payload.correlation_note||'Same-game legs may move together.')}</div>`
+      const hasCorrelation=Number(payload.same_game_group_count||0)>0;
+      correlationSummary.innerHTML=hasCorrelation
+        ?`<div class='correlation-panel'><div class='title'>Same-Game Risk</div><div style='margin-top:6px;font-size:13px;'>${escapeHtml(payload.correlation_note||'Same-game legs may move together.')}</div><div style='margin-top:8px;font-size:12px;font-weight:700;'>${Number(payload.same_game_group_count||0)} same-game group(s) · ${Number(payload.same_game_leg_count||0)} leg(s)</div></div>`
         :'';
+      correlationSummary.hidden=!hasCorrelation;
       diedHere.innerHTML=`
         <div class='analyzer-hero'>
           <div class='title'>Pre-game advisory: highest-risk point detected</div>
           <div class='copy'>This read helps prioritize where your slip is most fragile before placing it.</div>
         </div>
         <div class='advisory-banner'>Advisory only — not a guarantee.<span class='mini'>Use this pre-game read as guidance, not settlement.</span></div>
-        ${correlationNote}
       `;
       diedHere.hidden=false;
+      legBreakdownHeader.innerHTML="<div class='leg-breakdown-head'><div><div class='leg-breakdown-title'>Per-leg breakdown</div><div class='leg-breakdown-copy'>Detailed leg diagnostics are listed below. Technical codes stay in the technical details panel.</div></div></div>";
+      legBreakdownHeader.hidden=false;
       payoutOut.textContent='';
-      debugOut.innerHTML='';
+      debugOut.innerHTML=`<div><strong>Analyzer technical snapshot</strong></div>
+        <div style='margin-top:6px;'>Trap reason codes: ${(Array.isArray(payload.trap_reason_codes)&&payload.trap_reason_codes.length)?payload.trap_reason_codes.map((code)=>escapeHtml(code)).join(' · '):'none'}</div>
+        <div style='margin-top:4px;'>Per-leg reason codes:</div>
+        <ul style='margin:6px 0 0 18px;padding:0;'>${(payload.leg_risk_scores||[]).map((leg)=>`<li><strong>${escapeHtml(leg.raw_leg_text||'—')}</strong>: ${(Array.isArray(leg.advisory_reason_codes)&&leg.advisory_reason_codes.length)?leg.advisory_reason_codes.map((code)=>escapeHtml(code)).join(' · '):'none'}</li>`).join('')}</ul>`;
 
       legsBody.innerHTML='';
       for(const item of (payload.leg_risk_scores||[])){
@@ -2151,10 +2257,7 @@ Murray over 2.5 threes'></textarea>
         const marketLineValue=(typeof item.market_average_line==='number'?item.market_average_line:item.market_line);
         const marketLineText=typeof marketLineValue==='number' ? ` · Market: ${Number(marketLineValue).toFixed(1)}` : '';
         riskCell.innerHTML=`<span class='risk-chip ${escapeHtml((item.risk_label||'medium').toLowerCase())}'>${escapeHtml(item.risk_label||'medium')}</span><div style='margin-top:6px;font-size:12px;color:var(--muted);'>Score: ${Number(item.risk_score||0).toFixed(1)}/10 · Confidence: ${Number(item.confidence||0).toFixed(2)}${marketLineText}</div>${lineBadge}`;
-        const reasons=Array.isArray(item.advisory_reason_codes)&&item.advisory_reason_codes.length
-          ?`<details style='margin-top:6px;'><summary style='font-size:11px;color:var(--muted);cursor:pointer;'>Technical details</summary><div style='margin-top:4px;font-size:11px;color:var(--muted);'>${item.advisory_reason_codes.map((code)=>escapeHtml(code)).join(' · ')}</div></details>`
-          :'';
-        advisoryCell.innerHTML=`<div class='risk-card'>${escapeHtml(item.short_advisory_text||item.explanation||'')}</div><div style='margin-top:4px;font-size:12px;color:var(--muted);'>${escapeHtml(item.line_value_text||'Line value unknown')}</div>${reasons}`;
+        advisoryCell.innerHTML=`<div class='risk-card'>${escapeHtml(humanizeAdvisory(item))}</div><div style='margin-top:4px;font-size:12px;color:var(--muted);'>${escapeHtml(item.line_value_text||'Line value unknown')}</div>`;
 
         tr.append(legCell,riskCell,advisoryCell);
         legsBody.appendChild(tr);
@@ -2167,6 +2270,7 @@ Murray over 2.5 threes'></textarea>
 
     function resetRenderedSlipResult(){
       legsBody.innerHTML='';
+      clearAnalyzeDashboard();
       debugOut.innerHTML='';
       resultSummary.innerHTML='';
       resultSummary.hidden=true;
