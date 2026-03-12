@@ -990,7 +990,9 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .review-reason{margin-top:4px;font-size:13px;color:var(--muted);}
     #samples{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 14px;}
     .field-row{display:grid;grid-template-columns:1fr;gap:10px;}
-    #uploadWrap{margin-top:12px;padding:12px;border:1px dashed var(--border);border-radius:12px;background:var(--bg-soft);}
+    #uploadWrap{margin-top:12px;padding:12px;border:1px dashed var(--border);border-radius:12px;background:var(--bg-soft);position:relative;z-index:0;}
+    #uploadWrap.is-busy{opacity:.72;}
+    #uploadWrap.is-busy::after{content:'';position:absolute;inset:0;border-radius:12px;background:transparent;pointer-events:none;}
     #message{margin-top:12px;color:var(--primary-2);font-weight:600;}
     #resultWrap{margin-top:14px;padding:16px;display:flex;flex-direction:column;gap:12px;}
     #overall{font-size:34px;font-weight:900;border-radius:16px;padding:16px 18px;margin:0;}
@@ -1127,6 +1129,7 @@ Murray over 2.5 threes'></textarea>
     const slip=document.getElementById('slip');
     const stakeAmount=document.getElementById('stakeAmount');
     const slipImage=document.getElementById('slipImage');
+    const uploadWrap=document.getElementById('uploadWrap');
     const removeScreenshotBtn=document.getElementById('removeScreenshotBtn');
     const slipDate=document.getElementById('slipDate');
     const searchHistorical=document.getElementById('searchHistorical');
@@ -1166,6 +1169,7 @@ Murray over 2.5 threes'></textarea>
     let latestPublicUrl='';
     let latestResultPayload=null;
     let screenshotNeedsParse=false;
+    let screenshotParseInFlight=false;
     let parsedScreenshotSignature=null;
     let latestPlayerSuggestions=[];
 
@@ -1333,6 +1337,17 @@ Murray over 2.5 threes'></textarea>
       actionStatus.className='status';
     }
 
+    function setScreenshotUploadBusy(isBusy){
+      screenshotParseInFlight=Boolean(isBusy);
+      slipImage.disabled=screenshotParseInFlight;
+      removeScreenshotBtn.disabled=screenshotParseInFlight;
+      uploadWrap.classList.toggle('is-busy',screenshotParseInFlight);
+    }
+
+    function resetScreenshotInputValue(){
+      slipImage.value='';
+    }
+
     function resetManualSelectionState(){
       selectedGameByLegId={};
       selectedPlayerByLegId={};
@@ -1340,10 +1355,11 @@ Murray over 2.5 threes'></textarea>
     }
 
     function clearScreenshotSelection({keepMessage=false}={}){
-      slipImage.value='';
+      resetScreenshotInputValue();
       removeScreenshotBtn.style.display='none';
       screenshotNeedsParse=false;
       parsedScreenshotSignature=null;
+      setScreenshotUploadBusy(false);
       if(!keepMessage){ msg.textContent=''; }
       latestPlayerSuggestions=[];
       renderNameSuggestions();
@@ -1351,6 +1367,7 @@ Murray over 2.5 threes'></textarea>
     }
 
     slipImage.addEventListener('change',()=>{
+      if(screenshotParseInFlight){return;}
       const file=slipImage.files&&slipImage.files[0];
       const nextSignature=getScreenshotSignature(file);
       removeScreenshotBtn.style.display=file?'inline-block':'none';
@@ -1829,6 +1846,7 @@ Murray over 2.5 threes'></textarea>
         let data;
         let res;
         if(shouldParseScreenshot){
+          setScreenshotUploadBusy(true);
           resetManualSelectionState();
           const form=new FormData();
           form.append('file',file);
@@ -1851,6 +1869,7 @@ Murray over 2.5 threes'></textarea>
           if(!slipDate.value&&parsed.detected_bet_date){slipDate.value=parsed.detected_bet_date;}
           screenshotNeedsParse=false;
           parsedScreenshotSignature=screenshotSignature;
+          resetScreenshotInputValue();
           msg.textContent=parsedLegs.length?'Screenshot parsed. Review/edit the text, then click Check Slip.':'Screenshot parsed with limited confidence. Existing text was preserved for safety.';
           removeScreenshotBtn.style.display='inline-block';
           wrap.hidden=true;
@@ -1912,6 +1931,7 @@ Murray over 2.5 threes'></textarea>
         msg.textContent='Could not check this slip right now.';
         gradingSkeleton.classList.remove('show');
       }finally{
+        setScreenshotUploadBusy(false);
         btn.disabled=false;
         btn.textContent='Check Slip';
       }

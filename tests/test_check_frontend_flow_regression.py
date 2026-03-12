@@ -28,6 +28,9 @@ def test_submit_handler_stays_async_and_prevents_refresh() -> None:
 def test_screenshot_parse_then_check_flow_stays_in_place() -> None:
     script = _check_page_script()
     assert "res=await fetch('/ingest/screenshot/parse'" in script
+    assert 'setScreenshotUploadBusy(true);' in script
+    assert 'setScreenshotUploadBusy(false);' in script
+    assert 'resetScreenshotInputValue();' in script
     assert "Screenshot parsed. Review/edit the text, then click Check Slip." in script
     assert "Screenshot parsed with limited confidence. Existing text was preserved for safety." in script
     assert "return;" in script  # first submit exits after parsing
@@ -40,9 +43,36 @@ def test_screenshot_remove_then_text_check_flow_is_supported() -> None:
     script = _check_page_script()
     assert "removeScreenshotBtn.addEventListener('click'" in script
     assert "clearScreenshotSelection({keepMessage:true});" in script
+    assert "resetScreenshotInputValue();" in script
     assert "screenshotNeedsParse=false;" in script
     assert "parsedScreenshotSignature=null;" in script
     assert "else{" in script and "res=await fetch('/check-slip'" in script
+
+
+def test_upload_input_is_clickable_after_parse_success_and_low_confidence_paths() -> None:
+    script = _check_page_script()
+    assert "function setScreenshotUploadBusy(isBusy){" in script
+    assert 'slipImage.disabled=screenshotParseInFlight;' in script
+    assert 'removeScreenshotBtn.disabled=screenshotParseInFlight;' in script
+    assert "uploadWrap.classList.toggle('is-busy',screenshotParseInFlight);" in script
+    assert "msg.textContent=parsedLegs.length?'Screenshot parsed. Review/edit the text, then click Check Slip.':'Screenshot parsed with limited confidence. Existing text was preserved for safety.';" in script
+
+
+def test_upload_input_state_resets_after_screenshot_removal() -> None:
+    script = _check_page_script()
+    assert 'setScreenshotUploadBusy(false);' in script
+    assert "removeScreenshotBtn.style.display='none';" in script
+    assert "removeScreenshotBtn.addEventListener('click',()=>{" in script
+    assert "msg.textContent='Screenshot removed. You can keep editing the text or upload another screenshot.';" in script
+
+
+def test_uploading_new_screenshot_after_previous_parse_reuses_input_without_refresh() -> None:
+    script = _check_page_script()
+    assert "function resetScreenshotInputValue(){" in script
+    assert "slipImage.value='';" in script
+    assert "slipImage.addEventListener('change',()=>{" in script
+    assert 'if(screenshotParseInFlight){return;}' in script
+    assert "screenshotNeedsParse=Boolean(file)&&nextSignature!==parsedScreenshotSignature;" in script
 
 
 def test_share_actions_and_summary_rendering_exist_after_grading() -> None:
