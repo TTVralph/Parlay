@@ -552,3 +552,43 @@ def test_persisted_final_snapshot_with_non_final_scoreboard_status_rebuilds(tmp_
     assert snapshot is not None
     assert snapshot.snapshot_origin == 'rebuilt'
     assert gamecast.calls == ['evt-1']
+
+
+def test_snapshot_readiness_details_include_derived_market_metadata(monkeypatch) -> None:
+    class _SnapshotService:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def get_many_event_snapshots(self, event_ids, *, event_dates=None, include_play_by_play_event_ids=None):
+            return {
+                event_id: EventSnapshot(
+                    event_id=event_id,
+                    home_team={'name': 'Denver Nuggets'},
+                    away_team={'name': 'Boston Celtics'},
+                    normalized_player_stats={
+                        'nikolajokic': {
+                            'player_id': '15',
+                            'display_name': 'Nikola Jokic',
+                            'stats': {'PTS': 31.0, 'REB': 12.0, 'AST': 10.0, 'STL': 2.0, 'BLK': 1.0},
+                        }
+                    },
+                )
+                for event_id in event_ids
+            }
+
+    monkeypatch.setattr('app.grader.EventSnapshotService', _SnapshotService)
+
+    provider = _FakeESPNProvider()
+    result = grade_text('Nikola Jokic double double yes', provider=provider)
+
+    assert result.legs[0].settlement == 'win'
+    snapshot_run_diag = result.grading_diagnostics.get('snapshot') or {}
+    assert snapshot_run_diag.get('snapshot_stats_used') == 1
+    details = snapshot_run_diag.get('market_snapshot_details') or []
+    assert details
+    first = details[0]
+    assert first.get('market_type') == 'player_double_double'
+    assert first.get('snapshot_used') is True
+    assert first.get('provider_fallback') is False
+    assert first.get('required_component_stat_keys') == ['PTS', 'REB', 'AST', 'STL', 'BLK']
+    assert first.get('player_match_result') == 'matched'
