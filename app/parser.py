@@ -41,6 +41,12 @@ EVENT_SEQUENCE_PATTERN = re.compile(
     r"^(?P<name>[\w .\-'’]+?)\s+(?P<market>first basket|first bucket|first scorer|to score first|first rebound|to get first rebound|first assist|to record first assist|first three|first 3 pointer|first 3pt made|first three-pointer made|last basket|last bucket|to score last|first steal|first block)$",
     re.I,
 )
+
+TIME_WINDOW_MARKET_PATTERN = re.compile(
+    r"^(?P<name>[\w .\-'’]+?)\s+(?P<line>\d+(?:\.\d+)?)\+?\s*(?P<market>points|rebounds|assists|threes|three pointers made|3pm).*(?P<window>first\s+\d+\s+minutes|first\s+quarter|first\s+half|first\s+basket|race\s+to|first\s+to)",
+    re.I,
+)
+TIME_WINDOW_PHRASE = re.compile(r"(first\s+\d+\s+minutes|first\s+quarter|first\s+half|first\s+basket|race\s+to|first\s+to)", re.I)
 ML_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+ml$', re.I)
 MONEYLINE_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+moneyline$', re.I)
 SPREAD_PATTERN = re.compile(r'^(?P<team>[a-z0-9 .\-]+?)\s+(?P<line>[+\-]\d+(?:\.\d+)?)$', re.I)
@@ -246,6 +252,36 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             legs.append(Leg(raw_text=clean_line, sport=line_sport_hint or 'NBA', market_type='game_total', direction=direction, line=line_value, display_line=str(line_value), confidence=0.82, notes=['Will infer event from other legs in same ticket when possible'], american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
+        time_window_match = TIME_WINDOW_MARKET_PATTERN.match(normalized_line)
+        if time_window_match or TIME_WINDOW_PHRASE.search(normalized_line):
+            parsed_name = _normalize_whitespace((time_window_match.group('name') if time_window_match else normalized_line.split()[0:2] and ' '.join(normalized_line.split()[0:2])) or '')
+            resolved_player, resolution_conf = _player_lookup(parsed_name) if parsed_name else (None, 0.0)
+            player = resolved_player or parsed_name or None
+            market_token = (time_window_match.group('market') if time_window_match else 'points').lower()
+            market_type = _market_lookup(market_token) or 'player_points'
+            line_value = float(time_window_match.group('line')) - 0.5 if time_window_match else None
+            sport = _infer_sport(player=player, sport_hint=line_sport_hint)
+            notes = ['Unsupported time-window market', *opponent_note]
+            legs.append(Leg(
+                raw_text=clean_line,
+                sport=sport,
+                market_type=market_type,
+                player=player,
+                direction='over' if line_value is not None else None,
+                line=line_value,
+                display_line=(f"{time_window_match.group('line')}+" if time_window_match else None),
+                confidence=0.7,
+                notes=notes,
+                parse_confidence=0.7,
+                parsed_player_name=parsed_name or None,
+                normalized_stat_type=market_type,
+                resolution_confidence=resolution_conf if resolved_player else None,
+                resolved_player_name=resolved_player,
+                american_odds=line_odds,
+                decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None,
+            ))
+            continue
+
         yes_no_match = YES_NO_PATTERN.match(normalized_line)
         if yes_no_match:
             parsed_name = _normalize_whitespace(yes_no_match.group('name'))
@@ -347,7 +383,7 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
             parsed_name = _normalize_whitespace(number_first_match.group('name'))
             resolved_player, resolution_conf = _player_lookup(parsed_name)
             player = resolved_player or parsed_name
-            market_type = _market_lookup(number_first_match.group('market').lower()) or 'player_points'
+            market_type = _market_lookup(number_first_match.group('market').lower())
             line_value = float(number_first_match.group('line')) - 0.5
             sport = _infer_sport(player=player, sport_hint=line_sport_hint)
             notes = ['Mapped plus-threshold to over line for MVP settlement', *opponent_note]
@@ -355,6 +391,10 @@ def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
                 notes.append('player identity ambiguous: Ambiguous player shorthand; include full first name')
             parse_confidence = 0.8 if resolved_player else 0.68
             confidence = max(parse_confidence, resolution_conf if resolved_player else parse_confidence)
+            if not market_type:
+                notes.append('Could not parse stat type')
+                market_type = 'player_points'
+                confidence = min(confidence, 0.7)
             legs.append(Leg(raw_text=clean_line, sport=sport, market_type=market_type, player=player, direction='over', line=line_value, display_line=f"{number_first_match.group('line')}+", confidence=confidence, notes=notes, parse_confidence=parse_confidence, parsed_player_name=parsed_name, normalized_stat_type=market_type, resolution_confidence=resolution_conf if resolved_player else None, resolved_player_name=resolved_player, american_odds=line_odds, decimal_odds=_american_to_decimal(line_odds) if line_odds is not None else None))
             continue
 
