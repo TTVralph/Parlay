@@ -261,7 +261,10 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
     confidence = round(confidence if supported else confidence * 0.65, 2)
 
     betstack = BetStackProvider.from_env()
-    betstack_line = betstack.lookup_leg_line(leg)
+    odds_rows = context.get('betstack_odds_rows') if context else None
+    if odds_rows is None:
+        odds_rows = betstack.fetch_all_odds(sport='basketball')
+    betstack_line = betstack.lookup_leg_line_from_odds(leg, odds_rows)
     if betstack_line and betstack_line.get('line') is not None:
         line_value = analyze_line_value_against_market_line(leg, float(betstack_line['line']), 'betstack_consensus')
     elif betstack_line and leg.market_type == 'moneyline' and betstack_line.get('american_odds') is not None:
@@ -317,13 +320,13 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
     )
 
 
-def detect_trap_leg(parsed_legs: list[Leg]) -> tuple[AnalyzeLegRisk | None, float, list[str]]:
+def detect_trap_leg(parsed_legs: list[Leg], context: dict[str, Any] | None = None) -> tuple[AnalyzeLegRisk | None, float, list[str]]:
     if not parsed_legs:
         return None, 0.0, []
 
     trap_candidates: list[tuple[float, AnalyzeLegRisk, list[str]]] = []
     for leg in parsed_legs:
-        analyzed = analyze_leg_risk(leg)
+        analyzed = analyze_leg_risk(leg, context)
         baseline = _baseline_for_leg(leg)
         implied_probability = _implied_probability(leg.american_odds)
         reason_codes: list[str] = []
@@ -369,7 +372,10 @@ def detect_trap_leg(parsed_legs: list[Leg]) -> tuple[AnalyzeLegRisk | None, floa
 
 
 def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
-    analyzed = [analyze_leg_risk(leg) for leg in parsed_legs]
+    betstack = BetStackProvider.from_env()
+    odds_rows = betstack.fetch_all_odds(sport='basketball') if betstack.enabled else []
+    shared_context = {'betstack_odds_rows': odds_rows}
+    analyzed = [analyze_leg_risk(leg, context=shared_context) for leg in parsed_legs]
     if not analyzed:
         return AnalyzeSlipResponse(
             ok=False,
@@ -404,7 +410,7 @@ def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
     weakest = max(analyzed, key=lambda item: (item.risk_score, item.confidence * -1))
     safest = min(analyzed, key=lambda item: (item.risk_score, item.confidence * -1))
     likely_seller = weakest
-    trap_leg, trap_score, trap_reason_codes = detect_trap_leg(parsed_legs)
+    trap_leg, trap_score, trap_reason_codes = detect_trap_leg(parsed_legs, shared_context)
 
     supported_count = sum(1 for leg in analyzed if leg.supported_market)
     unsupported_count = len(analyzed) - supported_count

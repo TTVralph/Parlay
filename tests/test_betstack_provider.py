@@ -35,8 +35,13 @@ def test_analyze_leg_uses_betstack_consensus_when_found(monkeypatch) -> None:
     )
 
     class FakeProvider:
-        def lookup_leg_line(self, _: Leg):
-            return {'market_type': 'player_points', 'line': 25.5}
+        enabled = True
+
+        def fetch_all_odds(self, *, sport: str = 'basketball'):
+            return [{'market_type': 'player_points', 'line': 25.5, 'normalized_player': 'jokic nikola'}]
+
+        def lookup_leg_line_from_odds(self, _: Leg, odds_rows):
+            return odds_rows[0]
 
     monkeypatch.setattr('app.services.slip_risk_analyzer.BetStackProvider.from_env', lambda: FakeProvider())
 
@@ -58,7 +63,12 @@ def test_analyze_leg_falls_back_to_statistical_baseline_when_no_betstack_match(m
     )
 
     class FakeProvider:
-        def lookup_leg_line(self, _: Leg):
+        enabled = True
+
+        def fetch_all_odds(self, *, sport: str = 'basketball'):
+            return []
+
+        def lookup_leg_line_from_odds(self, _: Leg, odds_rows):
             return None
 
     monkeypatch.setattr('app.services.slip_risk_analyzer.BetStackProvider.from_env', lambda: FakeProvider())
@@ -74,3 +84,31 @@ def test_settlement_models_unchanged_by_analyzer_extension() -> None:
     leg = Leg(raw_text='Denver ML', market_type='moneyline', team='Denver Nuggets', confidence=0.9)
     assert hasattr(leg, 'market_type')
     assert not hasattr(leg, 'line_value_source')
+
+
+def test_analyze_slip_fetches_betstack_once_for_all_legs(monkeypatch) -> None:
+    from app.services.slip_risk_analyzer import analyze_slip_risk
+
+    calls = {'fetch': 0}
+
+    class FakeProvider:
+        enabled = True
+
+        def fetch_all_odds(self, *, sport: str = 'basketball'):
+            calls['fetch'] += 1
+            return [{'market_type': 'player_points', 'line': 25.5, 'normalized_player': 'jokic nikola'}]
+
+        def lookup_leg_line_from_odds(self, _: Leg, odds_rows):
+            return odds_rows[0] if odds_rows else None
+
+    monkeypatch.setattr('app.services.slip_risk_analyzer.BetStackProvider.from_env', lambda: FakeProvider())
+
+    legs = [
+        Leg(raw_text='Jokic over 24.5 points', market_type='player_points', player='Nikola Jokic', direction='over', line=24.5, confidence=0.9),
+        Leg(raw_text='Jokic over 26.5 points', market_type='player_points', player='Nikola Jokic', direction='over', line=26.5, confidence=0.9),
+    ]
+
+    response = analyze_slip_risk(legs)
+
+    assert response.ok is True
+    assert calls['fetch'] == 1
