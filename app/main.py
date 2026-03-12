@@ -940,140 +940,147 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
 <head>
   <title>Did This Parlay Cash?</title>
   <style>
-    :root{color-scheme:dark;}
-    body{font-family:Inter,Arial,Helvetica,sans-serif;margin:0;background:#090c12;color:#f8fafc;}
-    .shell{max-width:960px;margin:0 auto;padding:20px 16px 40px;}
-    .hero-card,.card{background:#121924;border:1px solid #1f2937;border-radius:18px;padding:18px;box-shadow:0 16px 28px rgba(0,0,0,.35);}
-    h1{margin:0;font-size:40px;line-height:1.08;letter-spacing:-0.02em;}
-    p{color:#94a3b8;line-height:1.5;}
-    .status{margin-top:8px;padding:10px 12px;border-radius:10px;font-weight:600;display:none;}
+    :root{--bg:#070b14;--bg-soft:#0b1220;--surface:#111a2d;--surface-elev:#16223a;--surface-glass:rgba(18,27,46,.82);--border:#263954;--text:#f8fbff;--muted:#95a5c4;--primary:#3b82f6;--primary-2:#60a5fa;--success:#16a34a;--danger:#dc2626;--warning:#d97706;color-scheme:dark;}
+    :root[data-theme='light']{--bg:#edf3ff;--bg-soft:#e2ebfb;--surface:#ffffff;--surface-elev:#f8fbff;--surface-glass:rgba(255,255,255,.88);--border:#cfddf1;--text:#0f172a;--muted:#475569;--primary:#2563eb;--primary-2:#1d4ed8;--success:#15803d;--danger:#b91c1c;--warning:#b45309;color-scheme:light;}
+    body{font-family:Inter,system-ui,Arial,Helvetica,sans-serif;margin:0;background:radial-gradient(1200px 600px at 5% -10%,#1d4ed833,transparent 65%),radial-gradient(1000px 600px at 95% -20%,#9333ea2e,transparent 62%),var(--bg);color:var(--text);}
+    .shell{max-width:1080px;margin:0 auto;padding:22px 14px 56px;}
+    .hero-card,.card{background:var(--surface-glass);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:20px;padding:18px;box-shadow:0 18px 35px rgba(2,6,23,.28);}
+    .hero-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;}
+    .hero-card{position:relative;overflow:hidden;}
+    .hero-card::after{content:'';position:absolute;inset:auto -120px -120px auto;width:280px;height:280px;background:radial-gradient(circle,var(--primary) 0%,transparent 70%);opacity:.2;pointer-events:none;}
+    h1{margin:0;font-size:36px;line-height:1.08;letter-spacing:-.02em;}
+    p{color:var(--muted);line-height:1.5;}
+    .grid{display:grid;grid-template-columns:1fr;gap:14px;align-items:start;}
+    .panel-title{margin:0 0 8px;font-size:20px;}
+    .status{margin-top:10px;padding:10px 12px;border-radius:12px;font-weight:600;display:none;}
     .status.show{display:block;}
-    .status.success{background:#ecfdf3;color:#166534;border:1px solid #bbf7d0;}
-    .status.error{background:#fef2f2;color:#991b1b;border:1px solid #fecaca;}
-    textarea{width:100%;min-height:190px;padding:12px;border:1px solid #2b394f;border-radius:14px;background:#0d141f;color:#f8fafc;font-family:inherit;box-sizing:border-box;}
-    button{margin-top:12px;padding:11px 16px;border:1px solid #3864d8;border-radius:12px;background:#2563eb;color:#fff;cursor:pointer;font-weight:700;transition:.15s ease;}
-    button:hover{filter:brightness(1.08);} button:active{transform:translateY(1px);}
-    button[disabled]{opacity:.6;cursor:not-allowed;}
-    button.sample{margin-top:0;background:#1a2333;color:#dbeafe;border:1px solid #2a3a52;padding:8px 12px;border-radius:999px;}
-    button.secondary{background:#1a2333;color:#dbeafe;border-color:#2a3a52;}
-    .candidate-btn{display:inline-flex;align-items:center;gap:6px;margin-top:8px;margin-right:8px;padding:11px 14px;border-radius:12px;border:1px solid #334155;background:#111827;color:#e2e8f0;cursor:pointer;pointer-events:auto;font-size:13px;font-weight:700;}
-    .candidate-btn:hover{background:#1e293b;border-color:#3b82f6;}
-    .candidate-btn.selected{background:#1d4ed8;border-color:#60a5fa;color:#eff6ff;}
-    .candidate-btn:focus-visible{outline:2px solid #60a5fa;outline-offset:2px;}
-    .review-panel{margin-top:6px;padding:10px;border:1px solid #854d0e;background:#2a1a05;border-radius:10px;color:#fde68a;}
+    .status.success{background:#dcfce7;color:#166534;border:1px solid #86efac;}
+    .status.error{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;}
+    textarea,input,button,select{font:inherit;border-radius:12px;box-sizing:border-box;}
+    textarea,input,select{width:100%;padding:11px 12px;border:1px solid var(--border);background:var(--bg-soft);color:var(--text);}
+    textarea{min-height:190px;}
+    button{margin-top:12px;padding:11px 16px;border:1px solid var(--primary-2);background:linear-gradient(180deg,var(--primary),var(--primary-2));color:#fff;cursor:pointer;font-weight:700;transition:.15s ease;}
+    button:hover{filter:brightness(1.05);} button:active{transform:translateY(1px);} button[disabled]{opacity:.6;cursor:not-allowed;}
+    button.sample{margin-top:0;background:transparent;color:var(--text);border:1px solid var(--border);padding:8px 12px;border-radius:999px;}
+    button.secondary{background:var(--bg-soft);color:var(--text);border-color:var(--border);}
+    .candidate-btn{display:inline-flex;align-items:center;gap:6px;margin-top:8px;margin-right:8px;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--bg-soft);color:var(--text);cursor:pointer;pointer-events:auto;font-size:13px;font-weight:700;}
+    .candidate-btn:hover{border-color:var(--primary);} .candidate-btn.selected{background:linear-gradient(180deg,var(--primary),var(--primary-2));border-color:transparent;color:#fff;box-shadow:0 8px 20px #1d4ed844;}
+    .review-panel{margin-top:6px;padding:10px;border:1px solid #854d0e33;background:#f59e0b22;border-radius:10px;color:var(--text);}
     .review-title{font-size:12px;font-weight:800;letter-spacing:.02em;text-transform:uppercase;}
-    .review-reason{margin-top:4px;font-size:13px;color:#fef3c7;}
-    .leg-progress{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
-    .leg-progress-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid #334155;border-radius:999px;padding:6px 10px;font-size:12px;background:#0b1220;color:#e2e8f0;font-weight:700;}
-    .leg-progress-chip.loss{border-color:#ef4444;color:#fecaca;}
-    .leg-progress-chip.win{border-color:#22c55e;color:#bbf7d0;}
-    .leg-progress-chip.review{border-color:#f59e0b;color:#fde68a;}
-    .autopsy-card{border:1px solid #7f1d1d;background:#2a1116;color:#fecaca;border-radius:12px;padding:12px;}
-    .autopsy-card.soft{border-color:#854d0e;background:#2a1a05;color:#fde68a;}
-
-    #samples{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px;}
-    #uploadWrap{margin-top:12px;padding:12px;border:1px dashed #334155;border-radius:12px;background:#0f172a;}
-    #message{margin-top:12px;color:#bfdbfe;font-weight:600;}
-    #resultWrap{margin-top:14px;padding:0;display:flex;flex-direction:column;gap:12px;}
+    .review-reason{margin-top:4px;font-size:13px;color:var(--muted);}
+    #samples{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 14px;}
+    .field-row{display:grid;grid-template-columns:1fr;gap:10px;}
+    #uploadWrap{margin-top:12px;padding:12px;border:1px dashed var(--border);border-radius:12px;background:var(--bg-soft);}
+    #message{margin-top:12px;color:var(--primary-2);font-weight:600;}
+    #resultWrap{margin-top:14px;padding:16px;display:flex;flex-direction:column;gap:12px;}
     #overall{font-size:34px;font-weight:900;border-radius:16px;padding:16px 18px;margin:0;}
-    #overall.win{background:linear-gradient(135deg,#14532d,#166534);border:1px solid #22c55e;}
-    #overall.loss{background:linear-gradient(135deg,#450a0a,#7f1d1d);border:1px solid #ef4444;}
-    #overall.review{background:linear-gradient(135deg,#422006,#78350f);border:1px solid #f59e0b;}
-    .result-summary{display:flex;flex-wrap:wrap;gap:8px;}
-    .result-chip{display:inline-flex;align-items:center;border:1px solid #334155;border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;background:#111827;color:#e2e8f0;}
-    .result-chip.win{border-color:#22c55e;color:#bbf7d0;}
-    .result-chip.loss{border-color:#ef4444;color:#fecaca;}
-    .result-chip.review{border-color:#f59e0b;color:#fde68a;}
-    .recent-slip-card{display:flex;justify-content:space-between;align-items:stretch;gap:14px;padding:12px;border:1px solid #273449;border-radius:14px;background:linear-gradient(180deg,#0f172a,#0c1322);}
-    .recent-slip-main{min-width:0;display:flex;flex-direction:column;gap:6px;}
-    .recent-slip-summary{font-weight:800;color:#f8fafc;font-size:15px;line-height:1.2;}
-    .recent-slip-meta{font-size:12px;color:#94a3b8;}
-    .recent-slip-preview{font-size:12px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-    .recent-slip-side{display:flex;flex-direction:column;gap:8px;align-items:flex-end;}
-    .recent-slip-progress{width:100%;height:6px;border-radius:999px;background:#1f2a40;overflow:hidden;position:relative;}
-    .recent-slip-progress-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#22c55e,#16a34a);}
-    .recent-slip-progress-fill.review{background:linear-gradient(90deg,#f59e0b,#d97706);}
-    .recent-slip-progress-fill.loss{background:linear-gradient(90deg,#f43f5e,#dc2626);}
-    @media (max-width:640px){.recent-slip-card{flex-direction:column;}.recent-slip-side{align-items:flex-start;}}
-    .result-meta{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px;}
-    .meta-chip{display:inline-flex;align-items:center;border:1px solid #334155;border-radius:999px;padding:6px 11px;font-size:12px;background:#0f172a;color:#cbd5e1;}
-    #summaryWrap{margin-top:12px;}
-    #summaryOut{min-height:98px;background:#0d141f;color:#e2e8f0;}
-    .died-card{border:1px solid #7f1d1d;background:#2a1116;color:#fecaca;border-radius:12px;padding:12px;}
-    table,thead,tbody{display:block;} thead{display:none;} table{width:100%;}
-    tr{display:block;margin-bottom:10px;border:1px solid #243244;border-radius:14px;background:#111827;padding:12px;}
-    td{text-align:left;padding:4px 0;display:block;vertical-align:top;border:none;}
-    td.leg-result-cell{display:none;}
-    code{background:#111827;padding:2px 6px;border-radius:6px;color:#bfdbfe;}
+    #overall.win{background:linear-gradient(135deg,#14532d,#166534);border:1px solid #22c55e;color:#f0fdf4;}
+    #overall.loss{background:linear-gradient(135deg,#450a0a,#7f1d1d);border:1px solid #ef4444;color:#fff1f2;}
+    #overall.review{background:linear-gradient(135deg,#422006,#78350f);border:1px solid #f59e0b;color:#fffbeb;}
+    .result-summary,.result-meta,.leg-progress{display:flex;flex-wrap:wrap;gap:8px;}
+    .result-chip,.meta-chip,.leg-progress-chip{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;background:var(--bg-soft);color:var(--text);}
+    .result-chip.win,.leg-progress-chip.win{border-color:#22c55e;color:#15803d;}
+    .result-chip.loss,.leg-progress-chip.loss{border-color:#ef4444;color:#b91c1c;}
+    .result-chip.review,.leg-progress-chip.review{border-color:#f59e0b;color:#b45309;}
+    .autopsy-card{border:1px solid #7f1d1d33;background:#fecdd322;color:#991b1b;border-radius:12px;padding:12px;}
+    .autopsy-card.soft{border-color:#854d0e33;background:#fed7aa33;color:#92400e;}
+    .recent-slip-card{display:flex;justify-content:space-between;align-items:stretch;gap:14px;padding:12px;border:1px solid var(--border);border-radius:14px;background:var(--surface-elev);}
+    .recent-slip-main{min-width:0;display:flex;flex-direction:column;gap:6px;}.recent-slip-summary{font-weight:800;font-size:15px;line-height:1.2;}
+    .recent-slip-meta,.recent-slip-preview{font-size:12px;color:var(--muted);} .recent-slip-preview{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .recent-slip-side{display:flex;flex-direction:column;gap:8px;align-items:flex-end;}.recent-slip-progress{width:100%;height:6px;border-radius:999px;background:var(--bg-soft);overflow:hidden;}
+    .recent-slip-progress-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#22c55e,#16a34a);} .recent-slip-progress-fill.review{background:linear-gradient(90deg,#f59e0b,#d97706);} .recent-slip-progress-fill.loss{background:linear-gradient(90deg,#f43f5e,#dc2626);}
+    .empty-polish{border:1px dashed var(--border);border-radius:12px;padding:12px;background:var(--bg-soft);color:var(--muted);}
+    table{width:100%;border-collapse:collapse;} th,td{padding:8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;}
+    a{color:var(--primary);} code{background:var(--bg-soft);padding:2px 6px;border-radius:6px;color:var(--primary-2);} .loading-skeleton{display:none;grid-template-columns:1fr;gap:8px;}
+    .loading-skeleton.show{display:grid;} .loading-skeleton div{height:14px;border-radius:8px;background:linear-gradient(90deg,var(--bg-soft),var(--surface),var(--bg-soft));background-size:200% 100%;animation:pulse 1.2s infinite;}
+    @keyframes pulse{0%{background-position:200% 0;}100%{background-position:-200% 0;}}
+    @media (min-width:860px){.shell{padding:30px 20px 60px;}.grid{grid-template-columns:1.05fr .95fr;}.field-row{grid-template-columns:1fr 1fr;}.hero-actions{display:flex;gap:10px;align-items:center;}}
+    @media (max-width:640px){h1{font-size:31px;} .recent-slip-card{flex-direction:column;}.recent-slip-side{align-items:flex-start;} table,thead,tbody{display:block;} thead{display:none;} tr{display:block;margin-bottom:10px;border:1px solid var(--border);border-radius:14px;background:var(--bg-soft);padding:12px;} td{text-align:left;padding:4px 0;display:block;border:none;} td.leg-result-cell{display:none;}}
   </style>
 </head>
 <body>
   <div class='shell'>
-  <div class='hero-card'>
-  <h1>Did This Parlay Cash?</h1>
-  <p>One leg per line. Pick a sample, paste your slip, or upload a screenshot, then hit <code>Check Slip</code>.</p>
-  <p style='margin-top:-8px;font-size:12px;color:#64748b;'>MLB/NFL grading is currently beta preview only. NBA grading is the most reliable right now.</p>
-  <div id='samples'>
-    <button type='button' class='sample' data-sample='sample_nba_props'>NBA Props</button>
-    <button type='button' class='sample' data-sample='sample_mlb'>MLB Mix (Beta)</button>
-    <button type='button' class='sample' data-sample='sample_nfl'>NFL Mix (Beta)</button>
-  </div>
-  <form id='checkForm'>
-  <textarea id='slip' placeholder='Jokic over 24.5 points
+    <div class='hero-card'>
+      <div class='hero-top'>
+        <div>
+          <h1>Did This Parlay Cash?</h1>
+          <p>Fast, accurate slip grading with a premium review workflow. Paste text, upload a screenshot, and validate every leg without leaving this page.</p>
+        </div>
+        <div class='hero-actions'>
+          <select id='themeMode' aria-label='Theme mode'>
+            <option value='system'>System theme</option>
+            <option value='dark'>Dark</option>
+            <option value='light'>Light</option>
+          </select>
+        </div>
+      </div>
+      <p style='margin-top:0;font-size:12px;'>MLB/NFL grading is beta preview only. NBA grading is currently the most reliable.</p>
+      <div id='samples'>
+        <button type='button' class='sample' data-sample='sample_nba_props'>NBA Props</button>
+        <button type='button' class='sample' data-sample='sample_mlb'>MLB Mix (Beta)</button>
+        <button type='button' class='sample' data-sample='sample_nfl'>NFL Mix (Beta)</button>
+      </div>
+    </div>
+    <div class='grid' style='margin-top:14px;'>
+      <div class='card'>
+        <h2 class='panel-title'>Slip input</h2>
+        <form id='checkForm'>
+          <textarea id='slip' placeholder='Jokic over 24.5 points
 Denver ML
 Murray over 2.5 threes'></textarea>
-  <div id='nameSuggestions' style='display:none;margin-top:8px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;'></div>
-  <input id='stakeAmount' type='number' min='0.01' step='0.01' placeholder='Stake amount (optional)' style='margin-top:10px;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;box-sizing:border-box;'>
-  <label for='slipDate' style='display:block;margin-top:10px;font-weight:700;'>Bet Date</label>
-  <input id='slipDate' type='date' placeholder='Bet Date (optional, recommended)' style='margin-top:6px;width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;box-sizing:border-box;'>
-  <div style='font-size:12px;color:#64748b;margin-top:4px;'>Optional, but strongly recommended for NBA player props.</div>
-  <label style='display:flex;align-items:center;gap:8px;margin-top:10px;'>
-    <input id='searchHistorical' type='checkbox' style='width:auto;'>
-    <span>Search historical results</span>
-  </label>
-  <div id='uploadWrap'>
-    <label for='slipImage'><strong>Or upload a slip screenshot</strong></label>
-    <input id='slipImage' type='file' accept='image/*'>
-    <button id='removeScreenshotBtn' class='secondary' type='button' style='margin-top:8px;display:none;'>Remove Screenshot</button>
-  </div>
-  <button id='checkBtn' type='submit'>Check Slip</button>
-  </form>
-  <div id='message'></div>
-  <div id='actionStatus' class='status' role='status' aria-live='polite'></div>
-  <div class='card' style='margin-top:12px;'>
-    <div style='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;'>
-      <strong>My Slips</strong>
-      <button id='refreshRecentBtn' class='secondary' type='button' style='margin-top:0;'>Refresh</button>
-    </div>
-    <div id='recentSlipsEmpty' style='margin-top:8px;color:#94a3b8;'>No saved checks yet.</div>
-    <div id='recentSlipsList' style='display:flex;flex-direction:column;gap:8px;margin-top:10px;'></div>
-  </div>
-  <div id='resultWrap' hidden class='card'>
-    <div id='overall'></div>
-    <div id='resultSummary' class='result-summary' hidden></div>
-    <div id='legProgressStrip' class='leg-progress' hidden></div>
-    <div id='metaSummary' class='result-meta' hidden></div>
-    <div id='diedHere' hidden></div>
-    <div id='payoutOut' style='margin:8px 0;color:#cbd5e1;'></div>
-    <details><summary>Show technical details</summary><div id='debugOut' style='margin:8px 0 12px;color:#94a3b8;'></div></details>
-    <table>
-      <thead><tr><th>Leg</th><th>Result</th><th>Matched event</th></tr></thead>
-      <tbody id='legsBody'></tbody>
-    </table>
-    <div id='summaryWrap'>
-      <div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;'>
-        <button id='copyBtn' class='secondary' type='button' disabled>Copy Summary</button>
-        <button id='copyLinkBtn' class='secondary' type='button' disabled>Copy Public Link</button>
-        <button id='openLinkBtn' class='secondary' type='button' disabled>Open Public Result</button>
-        <button id='downloadCardBtn' class='secondary' type='button' disabled>Download Share Card</button>
+          <div id='nameSuggestions' style='display:none;margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);'></div>
+          <div class='field-row' style='margin-top:10px;'>
+            <div><input id='stakeAmount' type='number' min='0.01' step='0.01' placeholder='Stake amount (optional)'></div>
+            <div><input id='slipDate' type='date' placeholder='Bet Date (optional, recommended)'></div>
+          </div>
+          <div style='font-size:12px;color:var(--muted);margin-top:4px;'>Bet date is optional but strongly recommended for NBA props.</div>
+          <label style='display:flex;align-items:center;gap:8px;margin-top:10px;'><input id='searchHistorical' type='checkbox' style='width:auto;'><span>Search historical results</span></label>
+          <div id='uploadWrap'>
+            <label for='slipImage'><strong>Upload slip screenshot</strong></label>
+            <div style='font-size:12px;color:var(--muted);margin:4px 0 8px;'>PNG/JPG up to 8MB. We parse first, then you can review before grading.</div>
+            <input id='slipImage' type='file' accept='image/*'>
+            <button id='removeScreenshotBtn' class='secondary' type='button' style='margin-top:8px;display:none;'>Remove Screenshot</button>
+          </div>
+          <button id='checkBtn' type='submit'>Check Slip</button>
+        </form>
+        <div id='message'></div>
+        <div id='actionStatus' class='status' role='status' aria-live='polite'></div>
       </div>
-      <textarea id='summaryOut' readonly placeholder='Summary will appear here after checking a slip.'></textarea>
-      <canvas id='shareCardCanvas' width='1080' height='1350' style='display:none;'></canvas>
+      <div class='card'>
+        <div style='display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;'>
+          <strong>My Slips</strong>
+          <button id='refreshRecentBtn' class='secondary' type='button' style='margin-top:0;'>Refresh</button>
+        </div>
+        <div id='recentSlipsEmpty' class='empty-polish' style='margin-top:10px;'>No saved checks yet.</div>
+        <div id='recentSlipsList' style='display:flex;flex-direction:column;gap:8px;margin-top:10px;'></div>
+      </div>
+    </div>
+    <div id='resultWrap' hidden class='card'>
+      <div id='overall'></div>
+      <div id='resultSummary' class='result-summary' hidden></div>
+      <div id='legProgressStrip' class='leg-progress' hidden></div>
+      <div id='metaSummary' class='result-meta' hidden></div>
+      <div id='diedHere' hidden></div>
+      <div id='payoutOut' style='margin:8px 0;color:var(--muted);'></div>
+      <div id='gradingSkeleton' class='loading-skeleton'><div></div><div></div><div></div></div>
+      <details><summary>Show technical details</summary><div id='debugOut' style='margin:8px 0 12px;color:var(--muted);'></div></details>
+      <table>
+        <thead><tr><th>Leg</th><th>Result</th><th>Matched event</th></tr></thead>
+        <tbody id='legsBody'></tbody>
+      </table>
+      <div id='summaryWrap'>
+        <div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;'>
+          <button id='copyBtn' class='secondary' type='button' disabled>Copy Summary</button>
+          <button id='copyLinkBtn' class='secondary' type='button' disabled>Copy Public Link</button>
+          <button id='openLinkBtn' class='secondary' type='button' disabled>Open Public Result</button>
+          <button id='downloadCardBtn' class='secondary' type='button' disabled>Download Share Card</button>
+        </div>
+        <textarea id='summaryOut' readonly placeholder='Summary will appear here after checking a slip.'></textarea>
+        <canvas id='shareCardCanvas' width='1080' height='1350' style='display:none;'></canvas>
+      </div>
     </div>
   </div>
-  </div>
-  </div>
-  <script>
+<script>
     const sampleSlips={
       sample_nba_props:'Jokic over 24.5 points\\nMurray over 2.5 threes\\nDenver ML',
       sample_mlb:'Dodgers ML\\nYankees +1.5\\nGame Total Over 8.5',
@@ -1099,6 +1106,7 @@ Murray over 2.5 threes'></textarea>
     const recentSlipsList=document.getElementById('recentSlipsList');
     const recentSlipsEmpty=document.getElementById('recentSlipsEmpty');
     const refreshRecentBtn=document.getElementById('refreshRecentBtn');
+    const themeMode=document.getElementById('themeMode');
     const wrap=document.getElementById('resultWrap');
     const overall=document.getElementById('overall');
     const resultSummary=document.getElementById('resultSummary');
@@ -1108,6 +1116,7 @@ Murray over 2.5 threes'></textarea>
     const diedHere=document.getElementById('diedHere');
     const debugOut=document.getElementById('debugOut');
     const legsBody=document.getElementById('legsBody');
+    const gradingSkeleton=document.getElementById('gradingSkeleton');
     const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
     const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
     const screenshotGradeEndpoint='/ingest/screenshot/grade';
@@ -1122,6 +1131,25 @@ Murray over 2.5 threes'></textarea>
     let screenshotNeedsParse=false;
     let parsedScreenshotSignature=null;
     let latestPlayerSuggestions=[];
+
+    function applyTheme(mode){
+      const root=document.documentElement;
+      if(mode==='light'){root.setAttribute('data-theme','light'); return;}
+      if(mode==='dark'){root.setAttribute('data-theme','dark'); return;}
+      const prefersDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;
+      root.setAttribute('data-theme',prefersDark?'dark':'light');
+    }
+
+    function initTheme(){
+      const stored=localStorage.getItem('parlay_theme_mode')||'system';
+      themeMode.value=stored;
+      applyTheme(stored);
+      themeMode.addEventListener('change',()=>{
+        const next=themeMode.value||'system';
+        localStorage.setItem('parlay_theme_mode',next);
+        applyTheme(next);
+      });
+    }
 
     // Legacy regression-test literals kept for compatibility:
     // const canPickGame=(item.result==='review'||showGamePicker)&&candidateGames.length>0
@@ -1677,6 +1705,7 @@ Murray over 2.5 threes'></textarea>
       overall.className='review';
       overall.textContent='⚠️ NEEDS REVIEW';
       payoutOut.textContent='';
+      gradingSkeleton.classList.remove('show');
     }
 
     async function submitCheck(){
@@ -1693,8 +1722,9 @@ Murray over 2.5 threes'></textarea>
       if(shouldParseScreenshot&&file.size>8*1024*1024){msg.textContent='Screenshot is too large. Please use an image under 8MB.';return;}
 
       btn.disabled=true;
-      btn.textContent='Checking your slip...';
+      btn.innerHTML="<span class='spinner'></span>Checking your slip...";
       msg.textContent='Parsing slip… Matching players… Finding games… Grading results…';
+      gradingSkeleton.classList.add('show');
       try{
         let data;
         let res;
@@ -1723,6 +1753,7 @@ Murray over 2.5 threes'></textarea>
           msg.textContent='Screenshot parsed. Review/edit the text, then click Check Slip.';
           removeScreenshotBtn.style.display='inline-block';
           wrap.hidden=true;
+          gradingSkeleton.classList.remove('show');
           return;
         }else{
           clearScreenshotSelection({keepMessage:true});
@@ -1774,9 +1805,11 @@ Murray over 2.5 threes'></textarea>
         openLinkBtn.disabled=!latestPublicUrl;
         downloadCardBtn.disabled=false;
         wrap.hidden=false;
+        gradingSkeleton.classList.remove('show');
       }catch(err){
         console.error('Check Slip request failed:', err);
         msg.textContent='Could not check this slip right now.';
+        gradingSkeleton.classList.remove('show');
       }finally{
         btn.disabled=false;
         btn.textContent='Check Slip';
@@ -1856,6 +1889,7 @@ Murray over 2.5 threes'></textarea>
     }
 
     refreshRecentBtn.addEventListener('click',()=>{loadRecentSlips();});
+    initTheme();
     loadRecentSlips();
 
     copyLinkBtn.addEventListener('click',async()=>{
