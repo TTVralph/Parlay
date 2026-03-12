@@ -307,6 +307,36 @@ def _dnp_settlement_mode(provider: ResultsProvider) -> str:
     return 'VOID'
 
 
+def _is_high_confidence_player_event_match(leg: Leg) -> bool:
+    identity_is_confident = leg.identity_match_confidence == 'HIGH' or (
+        bool(leg.resolved_player_id) and float(leg.resolution_confidence or 0.0) >= 0.85
+    )
+    event_is_confident = leg.event_resolution_confidence == 'high' or (
+        bool(leg.event_id)
+        and len(leg.event_candidates or []) <= 1
+        and not leg.event_review_reason_code
+    )
+    return identity_is_confident and event_is_confident
+
+
+def _player_confirmed_dnp(provider: ResultsProvider, player: str, event_id: str | None) -> bool | None:
+    if not event_id:
+        return None
+    did_appear_fn = getattr(provider, 'did_player_appear', None)
+    if callable(did_appear_fn):
+        try:
+            appeared = did_appear_fn(player, event_id=event_id)
+        except TypeError:
+            appeared = did_appear_fn(player, event_id)
+        except Exception:
+            appeared = None
+        if appeared is False:
+            return True
+        if appeared is True:
+            return False
+    return None
+
+
 def _base_leg_kwargs(leg: Leg, *, input_source_path: str = 'manual_text') -> dict:
     return {
         'matched_event': leg.event_label,
@@ -1029,8 +1059,25 @@ def settle_leg(
         base_kwargs['validation_warnings'] = list(validation.warnings)
     if not validation.is_valid:
         code = reason_codes.MATCHED_EVENT_TEAM_MISMATCH
-        if any('not on either roster' in warning.lower() for warning in validation.warnings):
+        roster_mismatch = any('not on either roster' in warning.lower() for warning in validation.warnings)
+        if roster_mismatch:
             code = reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER
+
+        high_confidence_match = _is_high_confidence_player_event_match(leg)
+        confirmed_dnp = roster_mismatch and high_confidence_match and _player_confirmed_dnp(provider, player_lookup_name, leg.event_id)
+        if confirmed_dnp:
+            settlement_diagnostics['event_match_rejection_reason'] = '; '.join(validation.warnings)
+            settlement_diagnostics['settlement_failure_reason'] = 'player did not play'
+            settlement_diagnostics['unmatched_reason_code'] = reason_codes.PLAYER_DID_NOT_PLAY
+            return explained(
+                settlement='void',
+                reason='Leg voided: player did not appear in the matched game.',
+                reason_code=reason_codes.PLAYER_DID_NOT_PLAY,
+                reason_message='Player did not appear in the matched game',
+                explanation_reason='player did not appear in box score / game log',
+                player_found_in_boxscore=False,
+            )
+
         settlement_diagnostics['event_match_rejection_reason'] = '; '.join(validation.warnings)
         settlement_diagnostics['settlement_failure_reason'] = '; '.join(validation.warnings)
         if code == reason_codes.PLAYER_NOT_FOUND_ON_EVENT_ROSTER:
@@ -1149,15 +1196,11 @@ def settle_leg(
             settlement_diagnostics['settlement_failure_reason'] = 'event not final'
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_NOT_FINAL
             return explained(settlement='pending', reason='Game is in progress', reason_code=reason_codes.EVENT_UNRESOLVED, reason_message='Game is in progress', explanation_reason='event unresolved', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
-        did_appear_fn = getattr(provider, 'did_player_appear', None)
         appeared = None
-        if callable(did_appear_fn):
-            try:
-                appeared = did_appear_fn(player_lookup_name, event_id=leg.event_id)
-            except TypeError:
-                appeared = did_appear_fn(player_lookup_name, leg.event_id)
-            except Exception:
-                appeared = None
+        if leg.event_id:
+            dnp_confirmed = _player_confirmed_dnp(provider, player_lookup_name, leg.event_id)
+            if dnp_confirmed is not None:
+                appeared = not dnp_confirmed
             if appeared is False:
                 dnp_mode = _dnp_settlement_mode(provider)
                 dnp_warnings = ['Player did not appear in box score', 'Leg marked void/review instead of graded']
@@ -1166,10 +1209,10 @@ def settle_leg(
                 if dnp_mode == 'NEEDS_REVIEW':
                     settlement_diagnostics['settlement_failure_reason'] = 'player did not play'
                     settlement_diagnostics['unmatched_reason_code'] = reason_codes.PLAYER_DID_NOT_PLAY
-                    return explained(settlement='unmatched', reason=f'{player_lookup_name} did not appear in box score (DNP)', reason_code=reason_codes.DNP_REVIEW_REQUIRED, reason_message='Player did not appear in box score', review_reason='Player did not appear in box score', explanation_reason='Leg marked void/review instead of graded', player_found_in_boxscore=False, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
+                    return explained(settlement='unmatched', reason='Leg voided: player did not appear in the matched game.', reason_code=reason_codes.DNP_REVIEW_REQUIRED, reason_message='Player did not appear in box score', review_reason='Player did not appear in box score', explanation_reason='Leg marked void/review instead of graded', player_found_in_boxscore=False, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
                 settlement_diagnostics['settlement_failure_reason'] = 'player did not play'
                 settlement_diagnostics['unmatched_reason_code'] = reason_codes.PLAYER_DID_NOT_PLAY
-                return explained(settlement='void', reason=f'{player_lookup_name} did not appear in box score (DNP)', reason_code=reason_codes.PLAYER_DID_NOT_PLAY, reason_message='Player did not appear in box score', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
+                return explained(settlement='void', reason='Leg voided: player did not appear in the matched game.', reason_code=reason_codes.PLAYER_DID_NOT_PLAY, reason_message='Player did not appear in box score', explanation_reason='player did not appear in box score / game log', player_found_in_boxscore=False, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, matched_boxscore_player_name=matched_boxscore_player_name)
         settlement_diagnostics['settlement_failure_reason'] = 'stat not found'
         settlement_diagnostics['unmatched_reason_code'] = reason_codes.STAT_NOT_FOUND
         review_reason = 'combo component stats incomplete' if market_entry and market_entry.get('market_type') == 'combo_stat' else 'Matched event but no stat result'

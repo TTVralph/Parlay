@@ -129,3 +129,64 @@ def test_low_confidence_single_candidate_uses_specific_review_text() -> None:
     graded = settle_leg(leg, DnpProvider())
     assert graded.review_reason_text == 'Review: player likely refers to Shai Gilgeous-Alexander, but identity confidence was not high enough to auto-resolve'
     assert graded.review_reason_text != 'Review: player/event validation failed'
+
+
+class RosterMismatchDnpProvider(DnpProvider):
+    def is_player_on_event_roster(self, player: str, event_id: str | None = None):
+        return False
+
+
+class RosterMismatchAmbiguousProvider(DnpProvider):
+    def is_player_on_event_roster(self, player: str, event_id: str | None = None):
+        return False
+
+    def did_player_appear(self, player: str, event_id: str | None = None):
+        return None
+
+
+def test_roster_mismatch_with_confirmed_dnp_voids_when_match_is_confident() -> None:
+    leg = Leg(
+        raw_text='Jokic over 24.5 points',
+        sport='NBA',
+        market_type='player_points',
+        player='Jokic',
+        direction='over',
+        line=24.5,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='LA Clippers @ Denver Nuggets',
+        resolved_player_name='Nikola Jokic',
+        resolved_player_id='203999',
+        resolution_confidence=0.99,
+        identity_match_confidence='HIGH',
+        event_resolution_confidence='high',
+        event_candidates=[{'event_id': 'evt-1'}],
+    )
+    from app.grader import settle_leg
+
+    graded = settle_leg(leg, RosterMismatchDnpProvider())
+    assert graded.settlement == 'void'
+    assert graded.reason == 'Leg voided: player did not appear in the matched game.'
+    assert graded.review_reason_text is None
+
+
+def test_roster_mismatch_without_confirmed_dnp_stays_review_when_match_is_ambiguous() -> None:
+    leg = Leg(
+        raw_text='Jokic over 24.5 points',
+        sport='NBA',
+        market_type='player_points',
+        player='Jokic',
+        direction='over',
+        line=24.5,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='LA Clippers @ Denver Nuggets',
+        resolved_player_name='Nikola Jokic',
+        event_resolution_confidence='medium',
+        event_candidates=[{'event_id': 'evt-1'}, {'event_id': 'evt-2'}],
+    )
+    from app.grader import settle_leg
+
+    graded = settle_leg(leg, RosterMismatchAmbiguousProvider())
+    assert graded.settlement == 'unmatched'
+    assert graded.review_reason_text == 'Review: Matched game does not contain the resolved player on the roster.'
