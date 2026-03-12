@@ -8,42 +8,78 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    :root { color-scheme: dark; }
-    body { margin:0; font-family: Inter, Arial, sans-serif; background:#0b1020; color:#edf2ff; }
+    :root {
+      color-scheme: dark light;
+      --bg-base: hsl(228 38% 10%);
+      --bg-card: hsl(227 34% 15%);
+      --bg-raised: hsl(226 30% 19%);
+      --border: hsl(222 27% 31% / 0.7);
+      --highlight: hsl(220 80% 85% / 0.2);
+
+      --text-primary: hsl(220 36% 95%);
+      --text-muted: hsl(222 25% 70%);
+
+      --brand-primary: hsl(223 94% 67%);
+
+      --win: hsl(143 72% 64%);
+      --loss: hsl(2 90% 74%);
+      --review: hsl(42 94% 67%);
+      --trap: hsl(283 78% 73%);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg-base: hsl(220 44% 97%);
+        --bg-card: hsl(0 0% 100%);
+        --bg-raised: hsl(220 36% 95%);
+        --border: hsl(224 27% 76% / 0.9);
+        --highlight: hsl(0 0% 100% / 0.95);
+
+        --text-primary: hsl(225 30% 16%);
+        --text-muted: hsl(224 16% 42%);
+
+        --brand-primary: hsl(224 84% 57%);
+
+        --win: hsl(147 66% 34%);
+        --loss: hsl(4 70% 45%);
+        --review: hsl(38 88% 42%);
+        --trap: hsl(281 52% 46%);
+      }
+    }
+    body { margin:0; font-family: Inter, Arial, sans-serif; background:var(--bg-base); color:var(--text-primary); }
     .shell { max-width:1200px; margin:0 auto; padding:24px; }
     .hero { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:24px; }
     .title { font-size:32px; font-weight:800; margin:0; }
-    .subtitle { color:#aab4d6; margin-top:8px; }
+    .subtitle { color:var(--text-muted); margin-top:8px; }
     .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:16px; }
-    .card { background:#131a31; border:1px solid #26304f; border-radius:20px; padding:18px; box-shadow:0 12px 30px rgba(0,0,0,.25); }
+    .card { background:linear-gradient(180deg, color-mix(in hsl, var(--bg-card), white 4%) 0%, color-mix(in hsl, var(--bg-card), black 7%) 100%); border:1px solid var(--border); border-top-color:color-mix(in hsl, var(--highlight), var(--border) 30%); border-radius:20px; padding:18px; box-shadow:0 12px 30px hsl(228 45% 5% / 0.28); }
     .card h3 { margin:0 0 10px; }
-    .muted { color:#96a3c9; }
-    input, button { border-radius:14px; border:1px solid #31406b; padding:12px 14px; font:inherit; }
-    input { background:#0f1630; color:white; width:100%; box-sizing:border-box; }
-    button { background:#4f7cff; color:white; cursor:pointer; font-weight:700; }
-    button.secondary { background:#1a2342; }
+    .muted { color:var(--text-muted); }
+    input, button { border-radius:14px; border:1px solid var(--border); padding:12px 14px; font:inherit; }
+    input { background:var(--bg-raised); color:var(--text-primary); width:100%; box-sizing:border-box; }
+    button { background:var(--brand-primary); color:var(--text-primary); cursor:pointer; font-weight:700; }
+    button.secondary { background:var(--bg-raised); }
     .row { display:flex; gap:10px; }
     .row > * { flex:1; }
     .stack { display:flex; flex-direction:column; gap:10px; }
     table { width:100%; border-collapse:collapse; }
-    th, td { padding:10px 8px; border-bottom:1px solid #243052; text-align:left; }
-    .badge { display:inline-block; padding:4px 10px; border-radius:999px; background:#1f2b50; color:#c7d7ff; font-size:12px; }
+    th, td { padding:10px 8px; border-bottom:1px solid var(--border); text-align:left; }
+    .badge { display:inline-block; padding:4px 10px; border-radius:999px; background:var(--bg-raised); color:var(--text-muted); font-size:12px; border:1px solid var(--border); }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
-    .success { color:#7ef29a; }
-    .danger { color:#ff8f8f; }
-    .warn { color:#ffd36e; }
-    .result-banner { border-radius:16px; padding:14px 16px; border:1px solid #2f3f67; background:#172248; }
+    .success { color:var(--win); }
+    .danger { color:var(--loss); }
+    .warn { color:var(--review); }
+    .result-banner { border-radius:16px; padding:14px 16px; border:1px solid var(--border); border-top-color:color-mix(in hsl, var(--highlight), var(--border) 30%); background:linear-gradient(180deg, color-mix(in hsl, var(--bg-raised), white 5%) 0%, color-mix(in hsl, var(--bg-raised), black 8%) 100%); }
     .result-banner strong { font-size:24px; text-transform:uppercase; letter-spacing:0.03em; }
     .legs-list { display:flex; flex-direction:column; gap:10px; }
-    .leg-card { border:1px solid #243052; border-radius:14px; padding:12px; background:#101a35; }
+    .leg-card { border:1px solid var(--border); border-top-color:color-mix(in hsl, var(--highlight), var(--border) 30%); border-radius:14px; padding:12px; background:linear-gradient(180deg, color-mix(in hsl, var(--bg-raised), white 4%) 0%, color-mix(in hsl, var(--bg-raised), black 6%) 100%); }
     .leg-header { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:8px; }
     .pill { display:inline-block; padding:4px 9px; border-radius:999px; font-size:12px; font-weight:700; text-transform:uppercase; }
-    .pill.win { background:rgba(41, 201, 115, 0.18); color:#7ef29a; }
-    .pill.loss { background:rgba(225, 80, 80, 0.2); color:#ff8f8f; }
-    .pill.push, .pill.void { background:rgba(241, 188, 29, 0.2); color:#ffd36e; }
-    .pill.pending { background:rgba(117, 139, 192, 0.25); color:#c7d7ff; }
-    a { color:#8bb4ff; }
-    textarea { width:100%; min-height:120px; border-radius:14px; border:1px solid #31406b; background:#0f1630; color:white; padding:12px 14px; box-sizing:border-box; }
+    .pill.win { background:color-mix(in hsl, var(--win), transparent 78%); color:var(--win); }
+    .pill.loss { background:color-mix(in hsl, var(--loss), transparent 80%); color:var(--loss); }
+    .pill.push, .pill.void { background:color-mix(in hsl, var(--review), transparent 78%); color:var(--review); }
+    .pill.pending { background:color-mix(in hsl, var(--trap), transparent 80%); color:var(--trap); }
+    a { color:color-mix(in hsl, var(--brand-primary), white 18%); }
+    textarea { width:100%; min-height:120px; border-radius:14px; border:1px solid var(--border); background:var(--bg-raised); color:var(--text-primary); padding:12px 14px; box-sizing:border-box; }
   </style>
 </head>
 <body>
