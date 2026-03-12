@@ -237,6 +237,9 @@ class GradeResponse(BaseModel):
     legs: list[GradedLeg]
     grading_diagnostics: dict[str, Any] = Field(default_factory=dict)
     sold_leg_explanations: list[SoldLegExplanation] = Field(default_factory=list)
+    parlay_closeness_score: float | None = None
+    closest_miss_leg: dict[str, Any] | None = None
+    worst_miss_leg: dict[str, Any] | None = None
 
 
 class AllSportsGame(BaseModel):

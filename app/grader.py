@@ -1271,6 +1271,50 @@ def settle_leg(
         matched_boxscore_player_name=matched_boxscore_player_name or leg.resolved_player_name or leg.player,
         player_found_in_boxscore=True,
     )
+
+
+def _compute_parlay_closeness(graded_legs: list[GradedLeg]) -> tuple[float | None, dict | None, dict | None]:
+    distances: list[tuple[GradedLeg, float]] = []
+    losing: list[tuple[GradedLeg, float]] = []
+    for item in graded_legs:
+        if item.settlement == 'void':
+            continue
+        if item.line is None or item.actual_value is None:
+            continue
+        distance = abs(float(item.actual_value) - float(item.line))
+        distances.append((item, distance))
+        if item.settlement == 'loss':
+            losing.append((item, distance))
+
+    if not distances:
+        return None, None, None
+
+    avg_distance = sum(distance for _, distance in distances) / len(distances)
+    score = max(0.0, min(100.0, round(100.0 / (1.0 + avg_distance), 1)))
+
+    def _miss_leg_payload(pair: tuple[GradedLeg, float] | None) -> dict | None:
+        if pair is None:
+            return None
+        leg, distance = pair
+        diff = float(leg.actual_value) - float(leg.line)
+        miss_amount = abs(diff)
+        direction = '-' if diff < 0 else '+'
+        return {
+            'leg': leg.leg.raw_text,
+            'player_or_team': leg.leg.player or leg.leg.team,
+            'market': leg.normalized_market or leg.leg.market_type,
+            'target_line': leg.line,
+            'final_stat': leg.actual_value,
+            'miss_distance': round(distance, 2),
+            'delta': round(diff, 2),
+            'delta_display': f"{direction}{round(miss_amount, 2):g}",
+            'event_name': leg.matched_event,
+        }
+
+    closest = min(losing, key=lambda row: row[1]) if losing else None
+    worst = max(losing, key=lambda row: row[1]) if losing else None
+    return score, _miss_leg_payload(closest), _miss_leg_payload(worst)
+
 def grade_text(
     text: str,
     provider: ResultsProvider | None = None,
@@ -1367,6 +1411,10 @@ def grade_text(
         overall = 'needs_review'
 
     response = GradeResponse(overall=overall, legs=graded, grading_diagnostics={'snapshot': run_snapshot_diagnostics})
+    closeness_score, closest_miss_leg, worst_miss_leg = _compute_parlay_closeness(graded)
+    response.parlay_closeness_score = closeness_score
+    response.closest_miss_leg = closest_miss_leg
+    response.worst_miss_leg = worst_miss_leg
     try:
         sold_leg_explanations = explain_sold_legs(response, snapshots_by_event_id)
     except Exception:
