@@ -302,7 +302,7 @@ def test_settle_leg_snapshot_prefers_double_double_derived_market() -> None:
     assert snapshot_diag.get('used_snapshot') is True
     assert snapshot_diag.get('provider_fallback_used') is False
     assert snapshot_diag.get('required_component_stat_keys') == ['PTS', 'REB', 'AST', 'STL', 'BLK']
-    assert snapshot_diag.get('player_match_result') == 'matched'
+    assert snapshot_diag.get('player_match_result') == 'normalized_match'
 
 
 def test_settle_leg_snapshot_fallback_for_triple_double_when_component_missing() -> None:
@@ -377,5 +377,42 @@ def test_settle_leg_snapshot_fallback_for_derived_market_when_player_match_fails
     assert graded.settlement == 'win'
     assert provider.player_result_calls > 0
     snapshot_diag = graded.settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
-    assert snapshot_diag.get('player_match_result') == 'not_found'
+    assert snapshot_diag.get('player_match_result') == 'match_failed'
     assert snapshot_diag.get('provider_fallback_used') is True
+
+def test_settle_leg_snapshot_direct_id_match_keeps_existing_behavior() -> None:
+    provider = RegistryProvider()
+    leg = Leg(
+        raw_text='Lebron points',
+        sport='NBA',
+        market_type='player_points',
+        player='LeBron James',
+        resolved_player_name='L. James',
+        resolved_player_id='23',
+        direction='over',
+        line=29.5,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Boston Celtics @ Denver Nuggets',
+        resolved_team='Denver Nuggets',
+    )
+    snapshot = EventSnapshot(
+        event_id='evt-1',
+        home_team={'name': 'Denver Nuggets'},
+        away_team={'name': 'Boston Celtics'},
+        normalized_player_stats={
+            'lebronjames': {
+                'player_id': '23',
+                'display_name': 'LeBron James',
+                'stats': {'PTS': 31.0},
+            }
+        },
+    )
+
+    graded = settle_leg(leg, provider, event_snapshot=snapshot)
+
+    assert graded.settlement == 'win'
+    assert provider.player_result_calls == 0
+    snapshot_diag = graded.settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
+    assert snapshot_diag.get('used_snapshot') is True
+    assert snapshot_diag.get('player_match_result') == 'direct_match'

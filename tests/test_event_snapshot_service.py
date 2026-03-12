@@ -591,4 +591,4 @@ def test_snapshot_readiness_details_include_derived_market_metadata(monkeypatch)
     assert first.get('snapshot_used') is True
     assert first.get('provider_fallback') is False
     assert first.get('required_component_stat_keys') == ['PTS', 'REB', 'AST', 'STL', 'BLK']
-    assert first.get('player_match_result') == 'matched'
+    assert first.get('player_match_result') == 'normalized_match'

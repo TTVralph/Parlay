@@ -10,6 +10,7 @@ from .services.market_registry import MARKET_REGISTRY, player_market_to_canonica
 from .services.play_by_play_provider import ESPNPlayByPlayProvider, PlayByPlayEvent
 from .services.provider_router import ProviderRouter
 from .services.event_snapshot import EventSnapshot, EventSnapshotService
+from .services.player_alias_index import resolve_snapshot_player
 from .providers.base import ResultsProvider
 from .providers.factory import get_results_provider
 from .event_matcher import resolve_leg_events
@@ -129,13 +130,25 @@ def _snapshot_player_entry(
     player_id: str | None,
     player_name: str | None,
 ) -> dict | None:
-    for entry in snapshot.normalized_player_stats.values():
-        if player_id and str(entry.get('player_id') or '').strip() == str(player_id).strip():
-            return entry
-    if player_name:
-        normalized_name = ''.join(ch for ch in player_name.lower() if ch.isalnum())
-        return snapshot.normalized_player_stats.get(normalized_name)
-    return None
+    return resolve_snapshot_player(
+        player_entries=snapshot.normalized_player_stats.values(),
+        player_id=player_id,
+        player_name=player_name,
+    ).entry
+
+
+def _snapshot_player_match_result(
+    snapshot: EventSnapshot,
+    *,
+    player_id: str | None,
+    player_name: str | None,
+) -> tuple[dict | None, str]:
+    match = resolve_snapshot_player(
+        player_entries=snapshot.normalized_player_stats.values(),
+        player_id=player_id,
+        player_name=player_name,
+    )
+    return match.entry, match.strategy
 
 
 def get_player_stat(
@@ -856,7 +869,7 @@ def settle_leg(
             snapshot_diag['requested_stat_key'] = requested_stat_key
             snapshot_diag['required_component_stat_keys'] = list(_SNAPSHOT_DERIVED_MARKET_COMPONENTS.get(leg.market_type) or [])
             snapshot_diag['snapshot_coverage'] = event_snapshot.get_stat_coverage()
-        snapshot_entry = _snapshot_player_entry(
+        snapshot_entry, player_match_result = _snapshot_player_match_result(
             event_snapshot,
             player_id=leg.resolved_player_id,
             player_name=player_lookup_name,
@@ -865,9 +878,9 @@ def settle_leg(
             matched_boxscore_player_name = snapshot_entry.get('display_name')
             if isinstance(snapshot_diag, dict):
                 snapshot_diag['player_snapshot_found'] = True
-                snapshot_diag['player_match_result'] = 'matched'
+                snapshot_diag['player_match_result'] = player_match_result
         elif isinstance(snapshot_diag, dict):
-            snapshot_diag['player_match_result'] = 'not_found'
+            snapshot_diag['player_match_result'] = 'match_failed'
 
     detail_lookup = getattr(provider, 'get_player_result_details', None)
     actual_value = None
