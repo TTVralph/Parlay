@@ -1078,7 +1078,7 @@ Murray over 2.5 threes'></textarea>
             <input id='slipImage' type='file' accept='image/*'>
             <button id='removeScreenshotBtn' class='secondary' type='button' style='margin-top:8px;display:none;'>Remove Screenshot</button>
           </div>
-          <button id='checkBtn' type='submit'>Check Slip</button>
+          <button id='checkBtn' type='button'>Check Slip</button>
         </form>
         <div id='message'></div>
         <div id='actionStatus' class='status' role='status' aria-live='polite'></div>
@@ -1841,11 +1841,11 @@ Murray over 2.5 threes'></textarea>
           collectPlayerNameSuggestions(parsedLegObjects);
           const existingSlipText=slip.value.trim();
           if(parsedLegs.length){
-            slip.value=parsedLegs.join('\n');
+            slip.value=parsedLegs.join('\\n');
             slip.dispatchEvent(new Event('input',{bubbles:true}));
           }else if(body.cleaned_text&&!existingSlipText){
-            const cleanedLines=String(body.cleaned_text).split(/\r?\n/).map((line)=>line.trim()).filter(Boolean);
-            slip.value=cleanedLines.join('\n');
+            const cleanedLines=String(body.cleaned_text).split(/\\r?\\n/).map((line)=>line.trim()).filter(Boolean);
+            slip.value=cleanedLines.join('\\n');
             slip.dispatchEvent(new Event('input',{bubbles:true}));
           }
           if(!slipDate.value&&parsed.detected_bet_date){slipDate.value=parsed.detected_bet_date;}
@@ -1919,6 +1919,9 @@ Murray over 2.5 threes'></textarea>
 
     form.addEventListener('submit',async(event)=>{
       event.preventDefault();
+      await submitCheck();
+    });
+    btn.addEventListener('click',async()=>{
       await submitCheck();
     });
 
