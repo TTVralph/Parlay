@@ -3146,7 +3146,7 @@ def get_public_check_job(job_id: str) -> CheckJobStatusResponse:
 
 @app.get('/r/{public_id}', response_class=HTMLResponse)
 @app.get('/parlay/{public_id}', response_class=HTMLResponse)
-def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> HTMLResponse:
+def public_parlay_result_page(public_id: str, request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     normalized_public_id = public_id.strip().lower()
     if not _PUBLIC_SLIP_ID_PATTERN.fullmatch(normalized_public_id):
         html = (
@@ -3158,7 +3158,7 @@ def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> 
             ".cta{background:#0f172a;color:#fff;}</style></head><body>"
             "<h1>ParlayBot Result</h1><div class='card'><h2>We couldn't open that shared slip.</h2>"
             "<div class='notice'>The public ID format is invalid. Please verify the link and try again.</div>"
-            "<a class='cta' href='/check'>Check a new slip</a></div></body></html>"
+            "<a class='cta' href='/check'>Check your own slip</a></div></body></html>"
         )
         return HTMLResponse(html, status_code=404)
 
@@ -3173,7 +3173,7 @@ def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> 
             ".cta{background:#0f172a;color:#fff;}</style></head><body>"
             "<h1>ParlayBot Result</h1><div class='card'><h2>This public slip was not found.</h2>"
             "<div class='notice'>It may have expired, been removed, or the link may be incomplete.</div>"
-            "<a class='cta' href='/check'>Check a new slip</a></div></body></html>"
+            "<a class='cta' href='/check'>Check your own slip</a></div></body></html>"
         )
         return HTMLResponse(html, status_code=404)
 
@@ -3210,44 +3210,150 @@ def public_parlay_result_page(public_id: str, db: Session = Depends(get_db)) -> 
         leg_rows.append("<tr><td colspan='4'>No leg details were available for this shared result.</td></tr>")
 
     events_html = ''.join(f"<li>{escape(str(event))}</li>" for event in matched_events) or '<li>—</li>'
-
     sold_leg = next((leg.get('sold_leg_explanation') for leg in legs if isinstance(leg, dict) and isinstance(leg.get('sold_leg_explanation'), dict)), None)
-    sold_html = ''
-    if row.overall_result == 'lost' and sold_leg:
-        sold_label = escape(str(sold_leg.get('player_or_team') or 'Losing leg'))
-        sold_market = escape(str(sold_leg.get('market_type') or ''))
-        sold_target = escape(str(sold_leg.get('target_line') if sold_leg.get('target_line') is not None else '—'))
-        sold_final = escape(str(sold_leg.get('final_value') if sold_leg.get('final_value') is not None else '—'))
-        sold_miss = escape(str(sold_leg.get('miss_by') if sold_leg.get('miss_by') is not None else '—'))
-        sold_game = escape(str(sold_leg.get('event_name') or sold_leg.get('matched_event') or '—'))
-        sold_html = f"<div style='margin:14px 0;padding:12px;border-radius:12px;border:1px solid #fecaca;background:#7f1d1d;color:#fff1f2;'><div style='font-weight:900;'>❌ SOLD THIS SLIP</div><div style='margin-top:6px;'><strong>{sold_label}</strong> — {sold_market}<br>Target: {sold_target}<br>Final: {sold_final}<br>Missed by: {sold_miss}<br>Game: {sold_game}</div></div>"
+
+    legs_hit = sum(1 for leg in legs if isinstance(leg, dict) and leg.get('result') == 'win')
+    miss_by = abs(float(sold_leg.get('miss_by'))) if sold_leg and sold_leg.get('miss_by') is not None else None
+    seconds_remaining = _estimate_seconds_remaining((sold_leg or {}).get('last_relevant_period'), (sold_leg or {}).get('last_relevant_clock'))
+    pain_score = _compute_parlay_pain_score(legs_hit=legs_hit, miss_margin=miss_by, seconds_remaining=seconds_remaining)
+
+    sold_label = escape(str((sold_leg or {}).get('player_or_team') or 'Losing leg'))
+    sold_market = escape(str((sold_leg or {}).get('market_type') or '—'))
+    sold_target = escape(_format_share_number((sold_leg or {}).get('target_line')))
+    sold_final = escape(_format_share_number((sold_leg or {}).get('final_value')))
+    sold_miss = escape(_format_share_number((sold_leg or {}).get('miss_by')))
+    sold_game = escape(str((sold_leg or {}).get('event_name') or (sold_leg or {}).get('matched_event') or '—'))
+    kill_moment = escape(str((sold_leg or {}).get('kill_moment_summary') or (sold_leg or {}).get('last_relevant_context') or 'No play-by-play kill moment available.'))
+    time_left_label = escape(str((sold_leg or {}).get('last_relevant_clock') or '—'))
+    period_label = escape(str((sold_leg or {}).get('last_relevant_period') or '—'))
 
     stake_text = f"${row.stake_amount:.2f}" if row.stake_amount is not None else '—'
     bet_date_text = row.bet_date.date().isoformat() if row.bet_date else '—'
+
+    base_url = str(request.base_url).rstrip('/')
+    current_url = f"{base_url}/r/{escape(row.public_id)}"
+    og_image_url = f"{base_url}/r/{escape(row.public_id)}/og-image.svg"
+    og_title = escape(f"ParlayBot Bad Beat: {legs_hit}/{len(legs)} legs hit | Pain Score {pain_score}")
+    og_description = escape(f"{sold_label} sold the slip. Final stat vs line: {sold_final} vs {sold_target}. Kill moment: {kill_moment}")
+
     html = (
-        "<!doctype html><html><head><title>ParlayBot Result</title>"
-        "<style>body{font-family:Arial,Helvetica,sans-serif;margin:40px;max-width:1100px;color:#0f172a;line-height:1.45;}"
-        ".card{border:1px solid #e2e8f0;border-radius:12px;padding:18px;background:#fff;}"
+        "<!doctype html><html><head>"
+        f"<title>{og_title}</title>"
+        f"<meta name='description' content='{og_description}'>"
+        f"<meta property='og:type' content='website'>"
+        f"<meta property='og:url' content='{current_url}'>"
+        f"<meta property='og:title' content='{og_title}'>"
+        f"<meta property='og:description' content='{og_description}'>"
+        f"<meta property='og:image' content='{og_image_url}'>"
+        "<meta name='twitter:card' content='summary_large_image'>"
+        f"<meta name='twitter:title' content='{og_title}'>"
+        f"<meta name='twitter:description' content='{og_description}'>"
+        f"<meta name='twitter:image' content='{og_image_url}'>"
+        "<style>"
+        "body{font-family:Inter,Arial,Helvetica,sans-serif;margin:0;background:#f1f5f9;color:#0f172a;line-height:1.45;}"
+        ".shell{max-width:1120px;margin:28px auto;padding:0 16px;}"
+        ".card{border:1px solid #e2e8f0;border-radius:16px;padding:22px;background:#fff;box-shadow:0 10px 28px rgba(15,23,42,.06);}"
         ".meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px 16px;margin:10px 0 14px;}"
+        ".share-card{max-width:1080px;padding:28px;border-radius:20px;background:linear-gradient(120deg,#0f172a,#1e293b);color:#f8fafc;margin:16px 0;}"        ".score{display:inline-block;background:#f43f5e;color:#fff;padding:8px 12px;border-radius:999px;font-weight:800;margin-bottom:14px;}"
+        ".bad-beat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:12px;}"
+        ".cell{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:12px;}"
+        ".label{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;font-weight:700;}"
+        ".value{margin-top:5px;font-weight:700;color:#fff;}"
         ".tableWrap{overflow-x:auto;border:1px solid #e2e8f0;border-radius:10px;}"
         "table{width:100%;border-collapse:collapse;table-layout:fixed;}"
         "th,td{text-align:left;padding:10px;border-bottom:1px solid #e2e8f0;vertical-align:top;white-space:normal;overflow-wrap:anywhere;word-break:break-word;}"
         "th{font-size:12px;text-transform:uppercase;color:#64748b;}"
-        "th:nth-child(1),td:nth-child(1){width:42%;}"
-        "th:nth-child(2),td:nth-child(2){width:14%;}"
-        "th:nth-child(3),td:nth-child(3){width:24%;}"
-        "th:nth-child(4),td:nth-child(4){width:20%;}"
+        "th:nth-child(1),td:nth-child(1){width:42%;}th:nth-child(2),td:nth-child(2){width:14%;}"
+        "th:nth-child(3),td:nth-child(3){width:24%;}th:nth-child(4),td:nth-child(4){width:20%;}"
         "ul{padding-left:20px;margin-top:8px;}li{margin-bottom:6px;overflow-wrap:anywhere;}"
         "a{text-decoration:none;border-radius:10px;padding:10px 14px;font-weight:700;display:inline-block;margin-top:16px;}"
-        ".cta{background:#0f172a;color:#fff;}"
-        "</style></head><body>"
-        f"<h1>ParlayBot Result</h1><div class='card'><div><strong>Overall:</strong> {result_label}</div>"
+        ".cta{background:#0f172a;color:#fff;} .cta-ghost{background:#fff;color:#0f172a;border:1px solid #cbd5e1;margin-left:8px;}"
+        "</style></head><body><div class='shell'>"
+        f"<h1>ParlayBot Bad Beat Report</h1><div class='card'><div><strong>Overall:</strong> {result_label}</div>"
         f"<div class='meta'><div><strong>Public ID:</strong> {escape(row.public_id)}</div><div><strong>Parser confidence:</strong> {escape(row.parser_confidence or 'low')}</div>"
         f"<div><strong>Bet date:</strong> {bet_date_text}</div><div><strong>Stake:</strong> {stake_text}</div><div><strong>Checked at:</strong> {escape(checked_at)}</div></div>"
-        f"{sold_html}<h3>Leg Results ({len(legs)})</h3><div class='tableWrap'><table><thead><tr><th>Leg</th><th>Result</th><th>Matched Event</th><th>Review Reason</th></tr></thead><tbody>{''.join(leg_rows)}</tbody></table></div>"
-        f"<h3>Matched Events</h3><ul>{events_html}</ul><div style='margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;'><strong>Share card:</strong> Open this slip in the main checker to download the PNG card.</div></div><div style='margin-top:16px;'><a class='cta' href='/check'>Check another slip</a></div></body></html>"
+        f"<div class='share-card'><div class='score'>Parlay Pain Score: {pain_score}/100</div><h2 style='margin:0 0 8px 0;'>Screenshot-ready share card</h2>"
+        f"<div style='color:#cbd5e1;'>Legs hit: <strong style='color:#fff;'>{legs_hit}/{len(legs)}</strong></div>"
+        "<div class='bad-beat-grid'>"
+        f"<div class='cell'><div class='label'>Sold Leg</div><div class='value'>{sold_label}<br><span style='font-weight:500;color:#cbd5e1;'>{sold_market}</span></div></div>"
+        f"<div class='cell'><div class='label'>Kill Moment</div><div class='value'>{kill_moment}<br><span style='font-weight:500;color:#cbd5e1;'>{period_label} • {time_left_label}</span></div></div>"
+        f"<div class='cell'><div class='label'>Final Stat vs Line</div><div class='value'>{sold_final} vs {sold_target}<br><span style='font-weight:500;color:#cbd5e1;'>Missed by: {sold_miss}</span></div></div>"
+        f"<div class='cell'><div class='label'>Game</div><div class='value'>{sold_game}</div></div>"
+        "</div></div>"
+        f"<h3>Leg Results ({len(legs)})</h3><div class='tableWrap'><table><thead><tr><th>Leg</th><th>Result</th><th>Matched Event</th><th>Review Reason</th></tr></thead><tbody>{''.join(leg_rows)}</tbody></table></div>"
+        f"<h3>Matched Events</h3><ul>{events_html}</ul>"
+        "<div style='margin-top:16px;'>"
+        "<a class='cta' href='/check'>Check your own slip</a>"
+        "<a class='cta-ghost' href='/check?mode=analyze'>Analyze before you bet</a>"
+        "</div></div></div></body></html>"
     )
     return HTMLResponse(html)
+
+
+def _format_share_number(value: object) -> str:
+    if isinstance(value, (int, float)):
+        rounded = round(float(value), 2)
+        return str(int(rounded)) if rounded.is_integer() else f"{rounded:.2f}".rstrip('0').rstrip('.')
+    return str(value or '—')
+
+
+def _estimate_seconds_remaining(period_text: object, clock_text: object) -> int | None:
+    clock = str(clock_text or '').strip()
+    if not clock or ':' not in clock:
+        return None
+    try:
+        minutes_text, seconds_text = clock.split(':', 1)
+        remaining_in_period = max(0, int(minutes_text) * 60 + int(seconds_text))
+    except ValueError:
+        return None
+
+    period_raw = str(period_text or '').strip().lower()
+    period_match = re.search(r'(\d+)', period_raw)
+    period_num = int(period_match.group(1)) if period_match else 4
+    period_num = max(1, min(4, period_num))
+    periods_left = max(0, 4 - period_num)
+    return remaining_in_period + (periods_left * 12 * 60)
+
+
+def _compute_parlay_pain_score(*, legs_hit: int, miss_margin: float | None, seconds_remaining: int | None) -> int:
+    hit_score = min(55, legs_hit * 9)
+    margin = miss_margin if miss_margin is not None else 6.0
+    margin_score = max(0.0, min(30.0, (3.0 - min(margin, 3.0)) / 3.0 * 30.0))
+    if seconds_remaining is None:
+        time_score = 8.0
+    else:
+        time_score = max(0.0, min(15.0, (seconds_remaining / (48 * 60)) * 15.0))
+    return max(0, min(100, int(round(hit_score + margin_score + time_score))))
+
+
+@app.get('/r/{public_id}/og-image.svg')
+def public_parlay_result_og_image(public_id: str, db: Session = Depends(get_db)) -> Response:
+    row = get_public_slip_result(db, public_id.strip().lower())
+    if not row:
+        raise HTTPException(status_code=404, detail='Shared slip not found')
+    legs = json.loads(row.legs_json or '[]')
+    sold_leg = next((leg.get('sold_leg_explanation') for leg in legs if isinstance(leg, dict) and isinstance(leg.get('sold_leg_explanation'), dict)), None)
+    legs_hit = sum(1 for leg in legs if isinstance(leg, dict) and leg.get('result') == 'win')
+    total_legs = len(legs)
+    miss_by = abs(float(sold_leg.get('miss_by'))) if sold_leg and sold_leg.get('miss_by') is not None else None
+    seconds_remaining = _estimate_seconds_remaining((sold_leg or {}).get('last_relevant_period'), (sold_leg or {}).get('last_relevant_clock'))
+    pain_score = _compute_parlay_pain_score(legs_hit=legs_hit, miss_margin=miss_by, seconds_remaining=seconds_remaining)
+
+    sold_label = escape(str((sold_leg or {}).get('player_or_team') or '—'))
+    market = escape(str((sold_leg or {}).get('market_type') or 'leg'))
+    target = _format_share_number((sold_leg or {}).get('target_line'))
+    final = _format_share_number((sold_leg or {}).get('final_value'))
+    svg = f"""<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='630'>
+<defs><linearGradient id='g' x1='0' x2='1' y1='0' y2='1'><stop offset='0%' stop-color='#0f172a'/><stop offset='100%' stop-color='#1e293b'/></linearGradient></defs>
+<rect width='1200' height='630' fill='url(#g)'/>
+<text x='64' y='110' font-size='56' fill='#f8fafc' font-family='Arial, sans-serif' font-weight='700'>ParlayBot Bad Beat</text>
+<text x='64' y='180' font-size='34' fill='#fda4af' font-family='Arial, sans-serif'>Pain Score: {pain_score}/100</text>
+<text x='64' y='250' font-size='30' fill='#e2e8f0' font-family='Arial, sans-serif'>Legs hit: {legs_hit}/{total_legs}</text>
+<text x='64' y='300' font-size='30' fill='#e2e8f0' font-family='Arial, sans-serif'>Sold leg: {sold_label}</text>
+<text x='64' y='350' font-size='28' fill='#cbd5e1' font-family='Arial, sans-serif'>{market}</text>
+<text x='64' y='410' font-size='30' fill='#e2e8f0' font-family='Arial, sans-serif'>Final stat vs line: {final} vs {target}</text>
+</svg>"""
+    return Response(content=svg, media_type='image/svg+xml')
 
 
 @app.post('/auth/register', response_model=SessionResponse)
