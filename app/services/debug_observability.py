@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 from copy import deepcopy
 from datetime import datetime, timezone
 import os
@@ -21,9 +21,15 @@ class DebugObservabilityService:
         max_grading_history: int = 50,
         max_hydration_history: int = 20,
         snapshot_store: SnapshotStore | None = None,
+        readiness_min_samples: int = 10,
+        readiness_ready_fallback_rate: float = 0.1,
+        readiness_not_ready_fallback_rate: float = 0.35,
     ) -> None:
         self._max_grading_history = max(1, int(max_grading_history))
         self._max_hydration_history = max(1, int(max_hydration_history))
+        self._readiness_min_samples = max(1, int(readiness_min_samples))
+        self._readiness_ready_fallback_rate = max(0.0, min(1.0, float(readiness_ready_fallback_rate)))
+        self._readiness_not_ready_fallback_rate = max(0.0, min(1.0, float(readiness_not_ready_fallback_rate)))
         self._grading_history: deque[dict[str, Any]] = deque(maxlen=self._max_grading_history)
         self._hydration_history: deque[dict[str, Any]] = deque(maxlen=self._max_hydration_history)
         self._latest_hydration_summary: dict[str, Any] | None = None
@@ -206,14 +212,104 @@ class DebugObservabilityService:
             },
         }
 
+
+    def _readiness_status(self, *, runs: int, fallback_rate: float, missing_key_count: int, player_match_failures: int) -> str:
+        if runs < self._readiness_min_samples:
+            return 'partial'
+        if fallback_rate >= self._readiness_not_ready_fallback_rate or missing_key_count > max(1, runs // 2):
+            return 'not_ready'
+        if fallback_rate <= self._readiness_ready_fallback_rate and player_match_failures <= max(1, runs // 10):
+            return 'ready'
+        return 'partial'
+
+    def get_snapshot_market_coverage_report(self) -> dict[str, Any]:
+        with self._lock:
+            recent = [deepcopy(item) for item in self._grading_history]
+
+        by_market: dict[str, dict[str, Any]] = defaultdict(lambda: {
+            'runs': 0,
+            'snapshot_successes': 0,
+            'provider_fallbacks': 0,
+            'missing_snapshot_keys': Counter(),
+            'players_missing_stats': 0,
+            'stat_family': None,
+            'sports': set(),
+            'leagues': set(),
+            'event_ids': set(),
+        })
+
+        for run in recent:
+            for detail in run.get('market_snapshot_details') or []:
+                market_type = str(detail.get('market_type') or 'unknown').strip() or 'unknown'
+                bucket = by_market[market_type]
+                bucket['runs'] += 1
+                if detail.get('used_snapshot'):
+                    bucket['snapshot_successes'] += 1
+                if detail.get('provider_fallback_used'):
+                    bucket['provider_fallbacks'] += 1
+                missing_key = detail.get('missing_snapshot_stat_key')
+                if missing_key:
+                    bucket['missing_snapshot_keys'][str(missing_key)] += 1
+                if detail.get('player_id_resolved') and not detail.get('player_snapshot_found'):
+                    bucket['players_missing_stats'] += 1
+                if detail.get('stat_family') and not bucket['stat_family']:
+                    bucket['stat_family'] = str(detail.get('stat_family'))
+                if detail.get('sport'):
+                    bucket['sports'].add(str(detail.get('sport')))
+                if detail.get('league'):
+                    bucket['leagues'].add(str(detail.get('league')))
+                if detail.get('event_id'):
+                    bucket['event_ids'].add(str(detail.get('event_id')))
+
+        report: dict[str, Any] = {}
+        for market_type in sorted(by_market):
+            bucket = by_market[market_type]
+            runs = int(bucket['runs'])
+            fallbacks = int(bucket['provider_fallbacks'])
+            fallback_rate = (fallbacks / runs) if runs else 0.0
+            missing_keys = dict(sorted(bucket['missing_snapshot_keys'].items()))
+            players_missing_stats = int(bucket['players_missing_stats'])
+            status = self._readiness_status(
+                runs=runs,
+                fallback_rate=fallback_rate,
+                missing_key_count=sum(missing_keys.values()),
+                player_match_failures=players_missing_stats,
+            )
+            report[market_type] = {
+                'runs': runs,
+                'snapshot_successes': int(bucket['snapshot_successes']),
+                'provider_fallbacks': fallbacks,
+                'fallback_rate': round(fallback_rate, 4),
+                'missing_snapshot_keys': missing_keys,
+                'players_missing_stats': players_missing_stats,
+                'stat_family': bucket['stat_family'],
+                'sports': sorted(bucket['sports']),
+                'leagues': sorted(bucket['leagues']),
+                'event_ids': sorted(bucket['event_ids']),
+                'status': status,
+            }
+
+        return {
+            'markets': report,
+            'thresholds': {
+                'min_samples': self._readiness_min_samples,
+                'ready_fallback_rate_max': self._readiness_ready_fallback_rate,
+                'not_ready_fallback_rate_min': self._readiness_not_ready_fallback_rate,
+            },
+            'recent_grading_runs_count': len(recent),
+        }
+
     def get_observability_snapshot(self) -> dict[str, Any]:
         with self._lock:
             grading = self._aggregate_grading_history()
             latest_hydration = deepcopy(self._latest_hydration_summary)
             hydration_history = [deepcopy(item) for item in self._hydration_history]
 
+        market_readiness = self.get_snapshot_market_coverage_report()
+
         return {
             **grading,
+            'market_readiness': market_readiness,
             'recent_hydration_summary': latest_hydration,
             'recent_hydration_runs': hydration_history,
             'recent_hydration_runs_count': len(hydration_history),
