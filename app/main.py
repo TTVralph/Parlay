@@ -1311,7 +1311,7 @@ Murray over 2.5 threes'></textarea>
       modeSettleBtn.setAttribute('aria-selected',String(settleSelected));
       modeAnalyzeBtn.setAttribute('aria-selected',String(!settleSelected));
       btn.textContent=settleSelected?'Check Slip':'Analyze Slip';
-      uploadWrap.classList.toggle('mode-hidden',!settleSelected);
+      uploadWrap.classList.remove('mode-hidden');
       searchHistorical.closest('label').classList.toggle('mode-hidden',!settleSelected);
       if(settleSelected){
         modeDescription.innerHTML='<strong>Settle Slip:</strong> Post-game grading for settled bets with per-leg outcomes and explanations.';
@@ -2150,30 +2150,6 @@ Murray over 2.5 threes'></textarea>
       const file=slipImage.files&&slipImage.files[0];
       const screenshotSignature=getScreenshotSignature(file);
       const shouldParseScreenshot=Boolean(file)&&screenshotNeedsParse;
-      if(activeSlipMode===modeAnalyze){
-        resetRenderedSlipResult();
-        wrap.hidden=true;
-        if(!text){
-          msg.textContent=emptyTextMessage;
-          return;
-        }
-        btn.disabled=true;
-        btn.innerHTML="<span class='spinner'></span>Analyzing your slip...";
-        msg.textContent='Running deterministic pre-game risk heuristics...';
-        try{
-          const res=await fetch('/analyze-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
-          const data=await res.json();
-          if(!res.ok){msg.textContent=data.detail||data.message||'Could not analyze this slip right now.';return;}
-          renderAnalyzeResult(data);
-        }catch(err){
-          console.error('Analyze Slip request failed:', err);
-          msg.textContent='Could not analyze this slip right now.';
-        }finally{
-          btn.disabled=false;
-          btn.textContent='Analyze Slip';
-        }
-        return;
-      }
       if(!text&&!file){
         resetRenderedSlipResult();
         msg.textContent='Paste at least one leg first, or upload a screenshot.';
@@ -2214,10 +2190,22 @@ Murray over 2.5 threes'></textarea>
           screenshotNeedsParse=false;
           parsedScreenshotSignature=screenshotSignature;
           resetScreenshotInputValue();
-          msg.textContent=parsedLegs.length?'Screenshot parsed. Review/edit the text, then click Check Slip.':'Screenshot parsed with limited confidence. Existing text was preserved for safety.';
+          msg.textContent=parsedLegs.length
+            ?`Screenshot parsed. Review/edit the text, then click ${activeSlipMode===modeAnalyze?'Analyze Slip':'Check Slip'}.`
+            :'Screenshot parsed with limited confidence. Existing text was preserved for safety.';
           removeScreenshotBtn.style.display='inline-block';
           wrap.hidden=true;
           gradingSkeleton.classList.remove('show');
+          return;
+        }else if(activeSlipMode===modeAnalyze){
+          clearScreenshotSelection({keepMessage:true});
+          btn.innerHTML="<span class='spinner'></span>Analyzing your slip...";
+          msg.textContent='Running deterministic pre-game risk heuristics...';
+          res=await fetch('/analyze-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+          data=await res.json();
+          if(!res.ok){msg.textContent=data.detail||data.message||'Could not analyze this slip right now.';return;}
+          resetRenderedSlipResult();
+          renderAnalyzeResult(data);
           return;
         }else{
           clearScreenshotSelection({keepMessage:true});

@@ -43,7 +43,7 @@ def test_check_page_updates_cta_and_hides_settled_only_fields_in_analyze_mode() 
     assert page.status_code == 200
     html = page.text
     assert "btn.textContent=settleSelected?'Check Slip':'Analyze Slip';" in html
-    assert "uploadWrap.classList.toggle('mode-hidden',!settleSelected);" in html
+    assert "uploadWrap.classList.remove('mode-hidden');" in html
     assert "searchHistorical.closest('label').classList.toggle('mode-hidden',!settleSelected);" in html
     assert 'Before you bet, get a pre-game risk read and weakest-leg advisory.' in html
 
@@ -53,10 +53,11 @@ def test_analyze_mode_submit_path_does_not_call_grading_logic() -> None:
     page = client.get('/check')
     assert page.status_code == 200
     html = page.text
-    assert 'if(activeSlipMode===modeAnalyze){' in html
+    assert '}else if(activeSlipMode===modeAnalyze){' in html
     assert 'Weakest leg:' in html
     assert 'Most likely seller:' in html
     assert "fetch('/analyze-slip'" in html
+    assert "res=await fetch('/check-slip'" in html
     assert "btn.textContent=activeSlipMode===modeAnalyze?'Analyze Slip':'Check Slip';" in html
 
 
@@ -97,7 +98,7 @@ def test_check_page_supports_screenshot_upload_flow():
     assert "id='slipImage'" in html
     assert "accept='image/*'" in html
     assert "fetch('/ingest/screenshot/parse'" in html
-    assert 'Review/edit the text, then click Check Slip.' in html
+    assert "Screenshot parsed. Review/edit the text, then click ${activeSlipMode===modeAnalyze?'Analyze Slip':'Check Slip'}." in html
 
 
 def test_check_page_shows_optional_stake_input():
