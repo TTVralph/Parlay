@@ -896,3 +896,148 @@ def test_check_slip_public_page_preserves_specific_review_reason_on_reopen(monke
     assert page.status_code == 200
     assert 'No games found for the selected date window' in page.text
     assert 'needs manual review' not in page.text.lower()
+
+
+def test_check_slip_adds_parlay_progress_summary_and_closest_live_leg(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        legs = [
+            GradedLeg(
+                leg=Leg(raw_text='A over 20.5 points', sport='NBA', market_type='player_points', player='A', confidence=0.9),
+                settlement='win',
+                reason='ok',
+            ),
+            GradedLeg(
+                leg=Leg(raw_text='B over 8.5 rebounds', sport='NBA', market_type='player_rebounds', player='B', confidence=0.9),
+                settlement='loss',
+                reason='ok',
+            ),
+            GradedLeg(
+                leg=Leg(raw_text='C over 10.5 assists', sport='NBA', market_type='player_assists', player='C', confidence=0.9),
+                settlement='live',
+                reason='ok',
+                normalized_market='assists',
+                live_progress={'remaining_to_hit': 1.0},
+            ),
+            GradedLeg(
+                leg=Leg(raw_text='D over 2.5 threes', sport='NBA', market_type='player_threes', player='D', confidence=0.9),
+                settlement='live',
+                reason='ok',
+            ),
+            GradedLeg(
+                leg=Leg(raw_text='E over 30.5 PRA', sport='NBA', market_type='player_pra', player='E', confidence=0.9),
+                settlement='review',
+                reason='x',
+            ),
+        ]
+        return GradeResponse(overall='lost', legs=legs)
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'LeBron James over 20.5 points'}).json()
+    summary = body['parlay_progress_summary']
+    assert summary == {
+        'total_legs': 5,
+        'won_legs': 1,
+        'lost_legs': 1,
+        'live_legs': 2,
+        'review_legs': 1,
+        'push_legs': 0,
+        'pending_legs': 0,
+        'parlay_status_text': '1 won, 1 lost, 2 live, 1 review',
+    }
+    assert body['closest_live_leg'] == {
+        'closest_live_leg_id': '2',
+        'closest_live_leg_text': 'C over 10.5 assists',
+        'closest_live_leg_remaining': 1.0,
+        'closest_live_leg_status_text': 'Needs 1 more assists',
+    }
+
+
+def test_check_slip_death_card_only_for_finalized_losing_legs(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg, SoldLegExplanation
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        loss_leg = GradedLeg(
+            leg=Leg(raw_text='Nikola Jokic Over 12.5 Rebounds', sport='NBA', market_type='player_rebounds', player='Nikola Jokic', line=12.5, confidence=0.9),
+            settlement='loss',
+            reason='x',
+            sold_leg_explanation=SoldLegExplanation(
+                is_sold_leg=True,
+                market_type='player_rebounds',
+                player_or_team='Nikola Jokic Over 12.5 Rebounds',
+                target_line=12.5,
+                final_value=12,
+                miss_by=0.5,
+                outcome='loss',
+                short_reason='Finished 0.5 rebounds short',
+                detailed_reason='d',
+                last_relevant_play_text='Missed tip-in with 21 seconds left',
+            ),
+        )
+        live_leg = GradedLeg(
+            leg=Leg(raw_text='Live leg', sport='NBA', market_type='player_points', player='P', confidence=0.9),
+            settlement='live',
+            reason='x',
+        )
+        win_leg = GradedLeg(
+            leg=Leg(raw_text='Win leg', sport='NBA', market_type='player_points', player='W', confidence=0.9),
+            settlement='win',
+            reason='x',
+        )
+        push_leg = GradedLeg(
+            leg=Leg(raw_text='Push leg', sport='NBA', market_type='player_points', player='Z', confidence=0.9),
+            settlement='push',
+            reason='x',
+        )
+        review_leg = GradedLeg(
+            leg=Leg(raw_text='Review leg', sport='NBA', market_type='player_points', player='R', confidence=0.9),
+            settlement='review',
+            reason='x',
+        )
+        return GradeResponse(overall='lost', legs=[loss_leg, live_leg, win_leg, push_leg, review_leg])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'LeBron James over 20.5 points'}).json()
+    cards = [leg['death_card'] for leg in body['legs']]
+    assert cards[0] == {
+        'enabled': True,
+        'title': 'Parlay died here',
+        'subtitle': 'Nikola Jokic Over 12.5 Rebounds',
+        'final_value': 12,
+        'target_value': 12.5,
+        'short_reason': 'Finished 0.5 rebounds short',
+        'late_game_reference': 'Missed tip-in with 21 seconds left',
+    }
+    assert cards[1] == {'enabled': False}
+    assert cards[2] == {'enabled': False}
+    assert cards[3] == {'enabled': False}
+    assert cards[4] == {'enabled': False}
+
+
+def test_check_slip_adds_display_order_priority(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        return GradeResponse(
+            overall='pending',
+            legs=[
+                GradedLeg(leg=Leg(raw_text='loss', sport='NBA', market_type='player_points', player='a', confidence=0.9), settlement='loss', reason='x'),
+                GradedLeg(leg=Leg(raw_text='live', sport='NBA', market_type='player_points', player='a', confidence=0.9), settlement='live', reason='x'),
+                GradedLeg(leg=Leg(raw_text='review', sport='NBA', market_type='player_points', player='a', confidence=0.9), settlement='review', reason='x'),
+                GradedLeg(leg=Leg(raw_text='pending', sport='NBA', market_type='player_points', player='a', confidence=0.9), settlement='pending', reason='x'),
+                GradedLeg(leg=Leg(raw_text='win', sport='NBA', market_type='player_points', player='a', confidence=0.9), settlement='win', reason='x'),
+                GradedLeg(leg=Leg(raw_text='push', sport='NBA', market_type='player_points', player='a', confidence=0.9), settlement='push', reason='x'),
+            ],
+        )
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    body = client.post('/check-slip', json={'text': 'LeBron James over 20.5 points'}).json()
+    priorities = {leg['result']: leg['display_order_priority'] for leg in body['legs']}
+    assert priorities == {'loss': 0, 'live': 1, 'review': 2, 'pending': 3, 'win': 4, 'push': 5}
