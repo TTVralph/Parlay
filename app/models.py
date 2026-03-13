@@ -5,7 +5,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-Sport = Literal["NBA", "NFL", "MLB"]
+Sport = Literal["NBA", "NFL", "MLB", "WNBA"]
 MarketType = Literal[
     "moneyline",
     "spread",

@@ -10,6 +10,7 @@ from .providers.base import EventInfo, ResultsProvider
 from .services.nba_game_resolver import resolve_player_game
 from .services.daily_event_manifest import DailyEventManifestService
 from .services.scoreboard_provider import ESPNScoreboardProvider
+from .services.sport_resolver_hooks import apply_sport_resolver_hook
 
 AMBIGUOUS_EVENT_WARNING = 'multiple games found for resolved team on date'
 PLAYER_TEAM_UNRESOLVED_WARNING = 'team could not be resolved from player identity'
@@ -595,6 +596,7 @@ def resolve_leg_events(
                 resolution_warnings.append('scoreboard_date_narrowing_used')
                 notes.append(f'diagnostic: scoreboard_narrowed_candidates={len(candidates)}')
 
+        candidates = apply_sport_resolver_hook(leg, candidates, slip_filter_value)
         candidates = _sorted_candidate_events(candidates, slip_value=slip_filter_value)
         all_candidates_before_date_filter = _sorted_candidate_events(all_candidates_before_date_filter, slip_value=slip_filter_value)
 
