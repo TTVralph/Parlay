@@ -393,7 +393,7 @@ class ESPNNBAResultsProvider(ResultsProvider):
         if not text or text == '--':
             return None
         canonical_market = player_market_to_canonical(market_type)
-        if canonical_market == 'threes' and '-' in text:
+        if canonical_market == 'three_pointers_made' and '-' in text:
             made, _sep, _attempts = text.partition('-')
             try:
                 return float(int(made))
