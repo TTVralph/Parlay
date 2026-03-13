@@ -768,3 +768,81 @@ def test_player_appearance_breaks_nba_ambiguity_on_selected_date() -> None:
     resolved = resolve_leg_events([leg], provider, posted_at=datetime(2026, 3, 8, tzinfo=timezone.utc), bet_date=date(2026, 3, 7))
     assert resolved[0].event_id == 'nba-2026-03-07-lac-mem'
     assert 'multiple games found for resolved team on date' not in resolved[0].notes
+
+
+class MatchupAwareProvider:
+    def __init__(self) -> None:
+        self._nets_hawks = EventInfo(
+            event_id='nba-2026-03-10-bkn-atl',
+            sport='NBA',
+            home_team='Atlanta Hawks',
+            away_team='Brooklyn Nets',
+            start_time=datetime.fromisoformat('2026-03-10T23:30:00+00:00'),
+        )
+        self._nets_spurs = EventInfo(
+            event_id='nba-2026-03-10-bkn-sas',
+            sport='NBA',
+            home_team='San Antonio Spurs',
+            away_team='Brooklyn Nets',
+            start_time=datetime.fromisoformat('2026-03-10T23:00:00+00:00'),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_team_event_candidates(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return []
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'Dyson Daniels':
+            return [self._nets_hawks, self._nets_spurs]
+        return []
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'Dyson Daniels':
+            return 'Atlanta Hawks'
+        return None
+
+    def get_team_result(self, team: str, event_id: str | None = None):
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return 10.0
+
+
+def test_matchup_context_prefers_exact_team_pair_for_event_resolution() -> None:
+    provider = MatchupAwareProvider()
+    result = grade_text(
+        'Dyson Daniels Over 9.5 Points\nBrooklyn Nets @ Atlanta Hawks',
+        provider=provider,
+        posted_at=date.fromisoformat('2026-03-10'),
+        include_historical=True,
+    )
+    assert result.legs[0].leg.event_id == 'nba-2026-03-10-bkn-atl'
+    assert 'exact_matchup_used' in result.legs[0].leg.event_resolution_warnings
+
+
+def test_event_resolution_falls_back_when_matchup_not_present() -> None:
+    provider = MatchupAwareProvider()
+    resolved = resolve_leg_events(
+        [
+            Leg(
+                raw_text='Dyson Daniels Over 9.5 Points',
+                sport='NBA',
+                market_type='player_points',
+                player='Dyson Daniels',
+                direction='over',
+                line=9.5,
+                confidence=0.95,
+                notes=[],
+            )
+        ],
+        provider,
+        posted_at=date.fromisoformat('2026-03-10'),
+        include_historical=True,
+    )
+    assert resolved[0].event_id == 'nba-2026-03-10-bkn-atl'
+    assert 'exact_matchup_used' not in resolved[0].event_resolution_warnings

@@ -47,6 +47,42 @@ def _opponent_from_leg(leg: Leg) -> str | None:
     return match.group(1).strip() if match else None
 
 
+
+
+def _matchup_teams_from_leg(leg: Leg) -> tuple[str | None, str | None]:
+    if leg.game_matchup:
+        matchup = re.match(r'^(?P<away>.+?)\s+@\s+(?P<home>.+)$', leg.game_matchup.strip(), re.I)
+        if matchup:
+            return matchup.group('away').strip(), matchup.group('home').strip()
+    teams = list(leg.possible_teams or [])
+    if len(teams) >= 2:
+        return teams[0], teams[1]
+    for note in leg.notes:
+        if note.startswith('Game matchup context: '):
+            payload = note.split(':', 1)[1].strip()
+            matchup = re.match(r'^(?P<away>.+?)\s+@\s+(?P<home>.+)$', payload, re.I)
+            if matchup:
+                return matchup.group('away').strip(), matchup.group('home').strip()
+    return None, None
+
+
+def _filter_by_matchup(candidates: list[EventInfo], away_team: str | None, home_team: str | None) -> tuple[list[EventInfo], int]:
+    if not away_team or not home_team:
+        return candidates, 0
+    away_norm = _norm(away_team)
+    home_norm = _norm(home_team)
+    both = [event for event in candidates if _norm(event.away_team) == away_norm and _norm(event.home_team) == home_norm]
+    if both:
+        return both, 2
+    one = [
+        event for event in candidates
+        if away_norm in {_norm(event.away_team), _norm(event.home_team)}
+        or home_norm in {_norm(event.away_team), _norm(event.home_team)}
+    ]
+    if one:
+        return one, 1
+    return candidates, 0
+
 def _filter_by_opponent(candidates: list[EventInfo], opponent: str | None) -> tuple[list[EventInfo], bool]:
     if not opponent:
         return candidates, False
@@ -378,6 +414,7 @@ def resolve_leg_events(
         resolution_warnings: list[str] = []
         candidates: list[EventInfo] = []
         opponent = _opponent_from_leg(leg)
+        matchup_away_team, matchup_home_team = _matchup_teams_from_leg(leg)
         player_team: str | None = None
         player_identity_id: str | None = None
         resolved_player_name: str | None = None
@@ -509,6 +546,14 @@ def resolve_leg_events(
                         notes.append(NO_TEAM_GAME_ON_SELECTED_DATE_WARNING)
                     resolution_warnings.append('no_candidate_events')
 
+            candidates, matchup_score = _filter_by_matchup(candidates, matchup_away_team, matchup_home_team)
+            if matchup_score == 2:
+                resolution_warnings.append('exact_matchup_used')
+                updates['matched_by'] = 'player_stat_exact_matchup_lookup'
+            elif matchup_score == 1:
+                resolution_warnings.append('partial_matchup_used')
+                updates['matched_by'] = updates.get('matched_by') or 'player_stat_single_team_lookup'
+
             candidates, opponent_used = _filter_by_opponent(candidates, opponent)
             if opponent_used:
                 resolution_warnings.append('screenshot_matchup_used')
@@ -529,7 +574,7 @@ def resolve_leg_events(
         should_use_scoreboard = (
             leg.sport == 'NBA'
             and slip_default_date is not None
-            and (not player_team or not opponent)
+            and (not player_team or (not opponent and not (matchup_away_team and matchup_home_team)))
         )
         if should_use_scoreboard:
             manifest = None
@@ -683,7 +728,10 @@ def resolve_leg_events(
             continue
 
         if len(candidates) > 1:
-            updates['event_candidates'] = _build_candidate_events(candidates, slip_value=slip_filter_value, reason='multiple plausible games for resolved player/date')
+            reason = 'multiple plausible games for resolved player/date'
+            if matchup_away_team and matchup_home_team:
+                reason = 'multiple plausible games after matchup filter; manual confirmation required'
+            updates['event_candidates'] = _build_candidate_events(candidates, slip_value=slip_filter_value, reason=reason)
             resolution_warnings.extend(['multiple_candidate_events', 'ambiguous_event_match'])
             if AMBIGUOUS_EVENT_WARNING not in notes:
                 notes.append(AMBIGUOUS_EVENT_WARNING)
