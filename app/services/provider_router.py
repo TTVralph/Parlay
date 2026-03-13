@@ -28,8 +28,8 @@ class ProviderRouter:
         self._scoreboard_provider = scoreboard_provider
         self._gamecast_provider = gamecast_provider
 
-    def route(self, market_type: str) -> ProviderRoute:
-        canonical_market = player_market_to_canonical(market_type)
+    def route(self, market_type: str, sport: str | None = None) -> ProviderRoute:
+        canonical_market = player_market_to_canonical(market_type, sport=sport)
         entry = MARKET_REGISTRY.get(canonical_market or '')
         required_data_source = (entry or {}).get('required_data_source', 'box_score')
         if required_data_source == 'play_by_play':
