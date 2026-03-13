@@ -9,6 +9,7 @@ from .services.settlement_explainer import build_settlement_explanation, with_ex
 from .services.leg_explainer import explain_sold_legs
 from .services.confidence_scoring import confidence_recommendation, score_leg_confidence, score_slip_confidence
 from .services.market_registry import MARKET_REGISTRY, player_market_to_canonical
+from .services.slip_fingerprint import generate_slip_hash, register_slip_hash
 from .services.play_by_play_provider import ESPNPlayByPlayProvider, PlayByPlayEvent
 from .services.provider_router import ProviderRouter
 from .services.event_snapshot import EventSnapshot, EventSnapshotService
@@ -1622,12 +1623,22 @@ def grade_text(
     if confidence_action == 'needs_review':
         overall = 'needs_review'
 
+    slip_hash = generate_slip_hash(resolved_legs)
+    _, duplicate_slip_count, unique_slip_count = register_slip_hash(slip_hash)
     response = GradeResponse(
         overall=overall,
         legs=graded,
+        slip_hash=slip_hash,
+        leg_count=len(resolved_legs),
+        sport_set=sorted({str(leg.sport) for leg in resolved_legs if leg.sport}),
+        event_ids=sorted({str(leg.event_id or leg.matched_event_id) for leg in resolved_legs if (leg.event_id or leg.matched_event_id)}),
         grading_diagnostics={
             'snapshot': run_snapshot_diagnostics,
             'sgp': _sgp_diagnostics(slip_groups),
+            'fingerprint': {
+                'duplicate_slip_count': duplicate_slip_count,
+                'unique_slip_count': unique_slip_count,
+            },
         },
         slip_confidence=slip_confidence,
         confidence_tier=confidence_tier,

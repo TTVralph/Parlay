@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from app.grader import grade_text
+from app.services.slip_fingerprint import reset_slip_hash_index
 
 
 def test_grade_sample_parlay() -> None:
@@ -169,3 +170,29 @@ def test_parlay_can_be_lost_with_final_loss_and_live_legs() -> None:
     assert result.overall == 'lost'
     assert result.legs[0].settlement == 'live'
     assert result.legs[1].settlement == 'loss'
+
+
+def test_slip_hash_same_slip_different_order_matches() -> None:
+    reset_slip_hash_index()
+    first = grade_text('Jokic over 24.5 points\nMurray over 1.5 threes', posted_at=datetime.fromisoformat('2026-03-07T19:00:00'))
+    second = grade_text('Murray over 1.5 threes\nJokic over 24.5 points', posted_at=datetime.fromisoformat('2026-03-07T19:00:00'))
+
+    assert first.slip_hash == second.slip_hash
+    assert second.grading_diagnostics['fingerprint']['duplicate_slip_count'] >= 1
+    assert second.grading_diagnostics['fingerprint']['unique_slip_count'] >= 1
+
+
+def test_slip_hash_normalizes_player_aliases() -> None:
+    reset_slip_hash_index()
+    alias_slip = grade_text('SGA over 6 assists', posted_at=datetime.fromisoformat('2026-03-09T00:00:00'))
+    canonical_slip = grade_text('Shai Gilgeous-Alexander over 6 assists', posted_at=datetime.fromisoformat('2026-03-09T00:00:00'))
+
+    assert alias_slip.slip_hash == canonical_slip.slip_hash
+
+
+def test_slip_hash_differs_for_different_slips() -> None:
+    reset_slip_hash_index()
+    first = grade_text('Jokic over 24.5 points', posted_at=datetime.fromisoformat('2026-03-07T19:00:00'))
+    second = grade_text('Jokic under 24.5 points', posted_at=datetime.fromisoformat('2026-03-07T19:00:00'))
+
+    assert first.slip_hash != second.slip_hash
