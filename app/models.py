@@ -59,6 +59,8 @@ class Leg(BaseModel):
     confidence: float = 0.0
     notes: list[str] = Field(default_factory=list)
     event_id: Optional[str] = None
+    group_id: Optional[str] = None
+    is_same_game_parlay: bool = False
     event_label: Optional[str] = None
     event_start_time: Optional[datetime] = None
     matched_by: Optional[str] = None
@@ -117,6 +119,13 @@ class Leg(BaseModel):
 
 class ParseResponse(BaseModel):
     legs: list[Leg]
+
+
+class SlipGroup(BaseModel):
+    group_id: str
+    event_id: str
+    sport: Sport
+    legs: list[Leg] = Field(default_factory=list)
 
 
 class GradeRequest(BaseModel):

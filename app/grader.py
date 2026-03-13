@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from .models import GradeResponse, GradedLeg, Leg
+from .models import GradeResponse, GradedLeg, Leg, SlipGroup
 from .services import grade_reason_codes as reason_codes
 from .services.settlement_explainer import build_settlement_explanation, with_explanation
 from .services.leg_explainer import explain_sold_legs
@@ -1420,6 +1420,44 @@ def settle_leg(
     )
 
 
+def build_slip_groups(legs: list[Leg]) -> list[SlipGroup]:
+    grouped: dict[tuple[str, str], list[Leg]] = {}
+    for leg in legs:
+        event_id = str(leg.event_id or '').strip()
+        sport = str(leg.sport or '').strip()
+        if not event_id or not sport:
+            continue
+        grouped.setdefault((event_id, sport), []).append(leg)
+
+    slip_groups: list[SlipGroup] = []
+    for index, ((event_id, sport), group_legs) in enumerate(grouped.items(), start=1):
+        group_id = f"sgp-{sport.lower()}-{event_id}-{index}"
+        is_sgp = len(group_legs) > 1
+        for leg in group_legs:
+            leg.group_id = group_id
+            leg.event_id = event_id
+            leg.is_same_game_parlay = is_sgp
+        slip_groups.append(SlipGroup(group_id=group_id, event_id=event_id, sport=sport, legs=group_legs))
+    return slip_groups
+
+
+def _sgp_diagnostics(groups: list[SlipGroup]) -> dict[str, object]:
+    return {
+        'sgp_group_count': len(groups),
+        'sgp_groups': [
+            {
+                'group_id': group.group_id,
+                'event_id': group.event_id,
+                'sport': group.sport,
+                'leg_count': len(group.legs),
+                'is_same_game_parlay': len(group.legs) > 1,
+            }
+            for group in groups
+        ],
+        'legs_per_group': {group.group_id: len(group.legs) for group in groups},
+    }
+
+
 def _compute_parlay_closeness(graded_legs: list[GradedLeg]) -> tuple[float | None, dict | None, dict | None]:
     finalized_settlements = {'win', 'loss', 'push'}
     distances: list[tuple[GradedLeg, float]] = []
@@ -1507,24 +1545,22 @@ def grade_text(
         )
     input_source_path = _input_source_from_code_path(code_path)
 
+    slip_groups = build_slip_groups(resolved_legs)
     snapshots_by_event_id: dict[str, EventSnapshot] = {}
     from .providers.espn_provider import ESPNNBAResultsProvider
     if isinstance(provider, ESPNNBAResultsProvider):
         router = ProviderRouter(box_score_provider=provider, play_by_play_provider=play_by_play_provider)
-        event_to_legs: dict[str, list[Leg]] = {}
-        for leg in resolved_legs:
-            if leg.event_id:
-                event_to_legs.setdefault(leg.event_id, []).append(leg)
+        event_to_legs = {group.event_id: group.legs for group in slip_groups if group.event_id}
         if event_to_legs:
             snapshot_service = EventSnapshotService(play_by_play_provider=play_by_play_provider)
             event_dates = {
-                event_id: next((leg.matched_event_date for leg in legs if leg.matched_event_date), '')
-                for event_id, legs in event_to_legs.items()
+                event_id: next((leg.matched_event_date for leg in grouped_legs if leg.matched_event_date), '')
+                for event_id, grouped_legs in event_to_legs.items()
             }
             include_play_by_play_event_ids = {
                 event_id
-                for event_id, legs in event_to_legs.items()
-                if any(router.route(leg.market_type).data_source == 'play_by_play' for leg in legs)
+                for event_id, grouped_legs in event_to_legs.items()
+                if any(router.route(leg.market_type).data_source == 'play_by_play' for leg in grouped_legs)
             }
             snapshots_by_event_id = snapshot_service.get_many_event_snapshots(
                 list(event_to_legs.keys()),
@@ -1568,7 +1604,10 @@ def grade_text(
     response = GradeResponse(
         overall=overall,
         legs=graded,
-        grading_diagnostics={'snapshot': run_snapshot_diagnostics},
+        grading_diagnostics={
+            'snapshot': run_snapshot_diagnostics,
+            'sgp': _sgp_diagnostics(slip_groups),
+        },
         slip_confidence=slip_confidence,
         confidence_tier=confidence_tier,
         confidence_recommendation=confidence_action,
