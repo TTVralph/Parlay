@@ -1290,10 +1290,11 @@ def settle_leg(
 
 
 def _compute_parlay_closeness(graded_legs: list[GradedLeg]) -> tuple[float | None, dict | None, dict | None]:
+    finalized_settlements = {'win', 'loss', 'push'}
     distances: list[tuple[GradedLeg, float]] = []
     losing: list[tuple[GradedLeg, float]] = []
     for item in graded_legs:
-        if item.settlement == 'void':
+        if item.settlement not in finalized_settlements or item.settlement == 'void':
             continue
         if item.line is None or item.actual_value is None:
             continue

@@ -29,6 +29,18 @@ def test_parlay_closeness_score_calculation():
     assert worst is not None and worst['player_or_team'] == 'Kevin Durant'
 
 
+def test_parlay_closeness_excludes_live_and_review_legs_from_miss_selection():
+    score, closest, worst = _compute_parlay_closeness([
+        _leg('Final Loss', 20, 18, 'loss'),
+        _leg('Live Leg', 10, 9, 'live'),
+        _leg('Review Leg', 12, 2, 'review'),
+        _leg('Final Win', 15, 17, 'win'),
+    ])
+    assert score is not None
+    assert closest is not None and closest['player_or_team'] == 'Final Loss'
+    assert worst is not None and worst['player_or_team'] == 'Final Loss'
+
+
 def test_check_slip_exposes_closeness_and_short_public_route():
     client = TestClient(app)
     resp = client.post('/check-slip', json={'text': 'Denver ML'})

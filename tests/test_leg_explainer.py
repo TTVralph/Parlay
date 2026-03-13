@@ -99,3 +99,18 @@ def test_multiple_losing_legs_each_get_explanation() -> None:
     sold = explain_sold_legs(response)
     assert len(sold) == 2
     assert {item.market_type for item in sold} == {'player_rebounds', 'player_assists'}
+
+
+def test_live_leg_not_selected_for_sold_or_kill_moment() -> None:
+    live_leg = _graded_leg(market_type='player_assists', settlement='live', line=6.5, actual=4.0)
+    response = GradeResponse(overall='pending', legs=[live_leg])
+    assert explain_sold_legs(response) == []
+
+
+def test_finalized_losing_leg_still_gets_sold_explanation() -> None:
+    loss_leg = _graded_leg(market_type='player_points', settlement='loss', line=30.5, actual=29.0)
+    response = GradeResponse(overall='lost', legs=[loss_leg])
+
+    sold = explain_sold_legs(response, {'evt-1': EventSnapshot(event_id='evt-1')})
+    assert len(sold) == 1
+    assert sold[0].kill_moment_supported is True
