@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from app.models import GradedLeg, Leg
+from app.services.espn_plays_provider import ESPNPlaysProvider
 from app.services.event_snapshot import EventSnapshot
 from app.services.play_by_play_provider import PlayByPlayEvent
 
@@ -50,6 +51,8 @@ _STAT_ALIASES = {
     'AST': {'AST', 'assists'},
     '3PM': {'3PM', '3PTM', 'threes', 'threes made'},
 }
+
+_DEFAULT_PLAYS_PROVIDER = ESPNPlaysProvider()
 
 
 def _fmt_num(value: float | None) -> str:
@@ -137,21 +140,21 @@ def get_last_relevant_team_swing_play(
     return scoring_events[-1]
 
 
-def _build_player_summary(
-    *,
-    leg: Leg,
-    final_value: float | None,
-    stat_label: str,
-    last_event: PlayByPlayEvent | None,
-) -> str:
+def _build_player_summary(*, leg: Leg, final_value: float | None, stat_label: str, last_event: PlayByPlayEvent | None) -> str:
     player = _player_label(leg)
     if last_event is not None:
         clock = last_event.clock or 'unknown clock'
         period = _period_label(last_event) or 'game'
-        return (
-            f"{player}'s last {stat_label} play came with {clock} left in {period}. "
-            f'He finished with {_fmt_num(final_value)} {stat_label} and did not add more.'
-        )
+        if stat_label == 'REB':
+            return f"{player}'s final rebound came with {clock} left in {period}. He finished with {_fmt_num(final_value)} rebounds."
+        if stat_label == 'AST':
+            return f"{player}'s final assist came with {clock} left in {period}. He finished with {_fmt_num(final_value)} assists."
+        if stat_label == '3PM':
+            return f"{player}'s final made three came with {clock} left in {period}. He finished with {_fmt_num(final_value)} threes."
+        return f"{player}'s last PTS play came with {clock} left in {period}. He finished with {_fmt_num(final_value)} PTS and did not add more."
+
+    if stat_label == 'AST' and (final_value or 0.0) <= 0:
+        return f"{player}'s last recorded assist opportunity never materialized; he finished with 0 assists."
     return f'{player} finished with {_fmt_num(final_value)} {stat_label}. No play-by-play kill moment was available.'
 
 
@@ -186,40 +189,73 @@ def _build_team_summary(*, leg: Leg, snapshot: EventSnapshot | None, last_event:
 
     if leg.market_type == 'moneyline':
         if last_event is not None:
-            return f"{team}'s moneyline was effectively dead after: {last_event.description}. Final score was {away} {_fmt_num(float(away_score) if away_score is not None else None)} - {home} {_fmt_num(float(home_score) if home_score is not None else None)}."
+            clock = last_event.clock or 'unknown clock'
+            period = _period_label(last_event) or 'game'
+            return f"The decisive scoring swing against {team} came with {clock} left in {period}: {last_event.description}. Final score was {away} {_fmt_num(float(away_score) if away_score is not None else None)} - {home} {_fmt_num(float(home_score) if home_score is not None else None)}."
         return f"{team} lost the moneyline. Final score was {away} {_fmt_num(float(away_score) if away_score is not None else None)} - {home} {_fmt_num(float(home_score) if home_score is not None else None)}."
 
     if leg.market_type == 'spread':
         line = leg.line
         if last_event is not None:
-            return f"{team} failed to cover {_fmt_num(line)} after this late swing: {last_event.description}. Final margin was {_fmt_num(float(margin) if margin is not None else None)}."
+            clock = last_event.clock or 'unknown clock'
+            period = _period_label(last_event) or 'game'
+            return f"{team} failed to cover {_fmt_num(line)} after the late scoring swing with {clock} left in {period}: {last_event.description}. Final margin was {_fmt_num(float(margin) if margin is not None else None)}."
         return f"{team} failed to cover {_fmt_num(line)}. Final margin was {_fmt_num(float(margin) if margin is not None else None)}."
 
     if last_event is not None:
-        return f"The total was decided after: {last_event.description}. Final total was {_fmt_num(float(combined_total) if combined_total is not None else None)}."
+        clock = last_event.clock or 'unknown clock'
+        period = _period_label(last_event) or 'game'
+        return f"The final scoring swing that put the total out of reach came with {clock} left in {period}: {last_event.description}. Final total was {_fmt_num(float(combined_total) if combined_total is not None else None)}."
     return f"The game total finished at {_fmt_num(float(combined_total) if combined_total is not None else None)}."
+
+
+def _with_effective_play_by_play(
+    *,
+    leg: Leg,
+    snapshot: EventSnapshot | None,
+    plays_provider: ESPNPlaysProvider,
+) -> tuple[EventSnapshot | None, str | None]:
+    if snapshot is not None and snapshot.normalized_play_by_play:
+        return snapshot, 'snapshot_plus_pbp'
+
+    event_id = str(leg.event_id or '').strip()
+    if not event_id:
+        return snapshot, None
+
+    feed = plays_provider.get_best_play_feed(event_id)
+    if feed is None or not feed.plays:
+        return snapshot, None
+
+    if snapshot is None:
+        return EventSnapshot(event_id=event_id, normalized_play_by_play=feed.plays), feed.source
+    return replace(snapshot, normalized_play_by_play=feed.plays), feed.source
 
 
 def explain_kill_moment(
     leg: GradedLeg,
     snapshot: EventSnapshot | None,
     settlement_result: str | None,
+    plays_provider: ESPNPlaysProvider | None = None,
 ) -> KillMomentExplanation | None:
     if leg.leg.market_type not in _SUPPORTED_MARKETS:
         return None
-    if (settlement_result or leg.settlement) != 'loss':
+    outcome = settlement_result or leg.settlement
+    if outcome != 'loss' or outcome in {'live', 'review'}:
         return None
 
     market_type = leg.leg.market_type
+    provider = plays_provider or _DEFAULT_PLAYS_PROVIDER
+    effective_snapshot, source = _with_effective_play_by_play(leg=leg.leg, snapshot=snapshot, plays_provider=provider)
+
     if market_type in _PLAYER_MARKET_TO_STAT_KEY:
         stat_key = _PLAYER_MARKET_TO_STAT_KEY[market_type]
         final_value = leg.actual_value
         if final_value is None and snapshot is not None:
             final_value = _stat_from_snapshot(snapshot, _player_label(leg.leg), stat_key)
-        last_event, _ = get_last_relevant_stat_play(leg=leg.leg, snapshot=snapshot, stat_keys=(stat_key,))
+        last_event, _ = get_last_relevant_stat_play(leg=leg.leg, snapshot=effective_snapshot, stat_keys=(stat_key,))
         return KillMomentExplanation(
             kill_moment_supported=True,
-            explanation_source='snapshot_plus_pbp' if last_event is not None else 'snapshot_only',
+            explanation_source=source if last_event is not None and source is not None else 'snapshot_only',
             kill_moment_summary=_build_player_summary(leg=leg.leg, final_value=final_value, stat_label=stat_key, last_event=last_event),
             last_relevant_play_text=last_event.description if last_event is not None else None,
             last_relevant_period=_period_label(last_event) if last_event is not None else None,
@@ -240,12 +276,12 @@ def explain_kill_moment(
 
         last_event, component_changed = get_last_relevant_stat_play(
             leg=leg.leg,
-            snapshot=snapshot,
+            snapshot=effective_snapshot,
             stat_keys=_COMBO_COMPONENTS[market_type],
         )
         return KillMomentExplanation(
             kill_moment_supported=True,
-            explanation_source='snapshot_plus_pbp' if last_event is not None else 'snapshot_only',
+            explanation_source=source if last_event is not None and source is not None else 'snapshot_only',
             kill_moment_summary=_build_combo_summary(
                 leg=leg.leg,
                 final_value=leg.actual_value,
@@ -258,10 +294,10 @@ def explain_kill_moment(
             last_relevant_clock=last_event.clock if last_event is not None else None,
         )
 
-    last_team_event = get_last_relevant_team_swing_play(leg=leg.leg, snapshot=snapshot)
+    last_team_event = get_last_relevant_team_swing_play(leg=leg.leg, snapshot=effective_snapshot)
     return KillMomentExplanation(
         kill_moment_supported=True,
-        explanation_source='snapshot_plus_pbp' if last_team_event is not None else 'snapshot_only',
+        explanation_source=source if last_team_event is not None and source is not None else 'snapshot_only',
         kill_moment_summary=_build_team_summary(leg=leg.leg, snapshot=snapshot, last_event=last_team_event),
         last_relevant_play_text=last_team_event.description if last_team_event is not None else None,
         last_relevant_period=_period_label(last_team_event) if last_team_event is not None else None,

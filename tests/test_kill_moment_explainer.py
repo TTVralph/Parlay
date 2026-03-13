@@ -1,7 +1,17 @@
 from app.models import GradedLeg, Leg
+from app.services.espn_plays_provider import ESPNPlayFeedResult, ESPNPlaysProvider
 from app.services.event_snapshot import EventSnapshot
 from app.services.kill_moment_explainer import explain_kill_moment
 from app.services.play_by_play_provider import PlayByPlayEvent
+
+
+class StubESPNPlaysProvider(ESPNPlaysProvider):
+    def __init__(self, result: ESPNPlayFeedResult | None):
+        super().__init__()
+        self._result = result
+
+    def get_best_play_feed(self, event_id: str, *, sport: str = 'basketball', league: str = 'nba', limit: int = 500):
+        return self._result
 
 
 def _graded_leg(*, market_type: str, settlement: str = 'loss', direction: str | None = 'over', line: float | None = 4.5, actual: float | None = 4.0, player: str | None = 'Kevin Durant', team: str | None = None, event_id: str = 'evt-1', component_values=None) -> GradedLeg:
@@ -83,22 +93,57 @@ def test_team_market_spread_and_total_kill_moment() -> None:
 
     assert total_explanation is not None
     assert total_explanation.last_relevant_play_text is not None
-    assert 'Final total was 204' in total_explanation.kill_moment_summary
+    assert 'final scoring swing' in total_explanation.kill_moment_summary
+
+
+def test_fetches_experimental_feed_when_snapshot_lacks_play_by_play() -> None:
+    graded = _graded_leg(market_type='player_rebounds', actual=5.0)
+    snapshot = EventSnapshot(event_id='evt-3', normalized_play_by_play=None)
+    provider = StubESPNPlaysProvider(
+        ESPNPlayFeedResult(
+            source='espn_core_plays',
+            plays=[
+                PlayByPlayEvent(
+                    event_order=1,
+                    event_type='play',
+                    description='Kevin Durant defensive rebound',
+                    period=4,
+                    clock='05:42',
+                    team='Suns',
+                    primary_player='Kevin Durant',
+                    is_rebound=True,
+                )
+            ],
+        )
+    )
+
+    explanation = explain_kill_moment(graded, snapshot, graded.settlement, plays_provider=provider)
+    assert explanation is not None
+    assert explanation.explanation_source == 'espn_core_plays'
+    assert "final rebound came with 05:42 left in Q4" in explanation.kill_moment_summary
 
 
 def test_snapshot_only_fallback_and_no_win_labeling() -> None:
-    losing = _graded_leg(market_type='player_assists', line=7.5, actual=5.0)
+    losing = _graded_leg(market_type='player_assists', line=7.5, actual=0.0)
     no_pbp_snapshot = EventSnapshot(
         event_id='evt-1',
         normalized_player_stats={
-            'durant': {'display_name': 'Kevin Durant', 'stats': {'AST': 5}},
+            'durant': {'display_name': 'Kevin Durant', 'stats': {'AST': 0}},
         },
     )
 
-    fallback = explain_kill_moment(losing, no_pbp_snapshot, losing.settlement)
+    fallback = explain_kill_moment(losing, no_pbp_snapshot, losing.settlement, plays_provider=StubESPNPlaysProvider(None))
     assert fallback is not None
     assert fallback.explanation_source == 'snapshot_only'
     assert fallback.last_relevant_play_text is None
+    assert 'never materialized' in fallback.kill_moment_summary
 
     winning = _graded_leg(market_type='player_assists', settlement='win', line=7.5, actual=8.0)
     assert explain_kill_moment(winning, no_pbp_snapshot, winning.settlement) is None
+
+
+def test_review_and_live_states_are_excluded() -> None:
+    review = _graded_leg(market_type='moneyline', settlement='review', player=None, team='Lakers')
+    live = _graded_leg(market_type='moneyline', settlement='live', player=None, team='Lakers')
+    assert explain_kill_moment(review, EventSnapshot(event_id='evt-5'), review.settlement) is None
+    assert explain_kill_moment(live, EventSnapshot(event_id='evt-5'), live.settlement) is None
