@@ -77,7 +77,7 @@
     .pill.win { background:color-mix(in hsl, var(--win), transparent 78%); color:var(--win); }
     .pill.loss { background:color-mix(in hsl, var(--loss), transparent 80%); color:var(--loss); }
     .pill.push, .pill.void { background:color-mix(in hsl, var(--review), transparent 78%); color:var(--review); }
-    .pill.pending { background:color-mix(in hsl, var(--trap), transparent 80%); color:var(--trap); }
+    .pill.pending, .pill.live { background:color-mix(in hsl, var(--trap), transparent 80%); color:var(--trap); }
     a { color:color-mix(in hsl, var(--brand-primary), white 18%); }
     textarea { width:100%; min-height:120px; border-radius:14px; border:1px solid var(--border); background:var(--bg-raised); color:var(--text-primary); padding:12px 14px; box-sizing:border-box; }
   </style>
@@ -170,8 +170,9 @@ function TicketWorkbench({ token }) {
 
 
   const normalizeSettlement = (settlement) => {
-    if (settlement === 'unmatched') return 'void';
-    return settlement || 'pending';
+    if (settlement === 'unmatched') return 'review';
+    if (settlement === 'pending') return 'live';
+    return settlement || 'live';
   };
 
   const grade = async () => {

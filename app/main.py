@@ -1031,14 +1031,16 @@ def _slip_status_summary(legs: list[dict]) -> str:
     wins = sum(1 for leg in legs if str(leg.get('result', '')).lower() in {'win', 'push'})
     losses = sum(1 for leg in legs if str(leg.get('result', '')).lower() == 'loss')
     voids = sum(1 for leg in legs if str(leg.get('result', '')).lower() == 'void')
-    unresolved = sum(1 for leg in legs if str(leg.get('result', '')).lower() in {'review', 'pending', 'unmatched'})
+    live = sum(1 for leg in legs if str(leg.get('result', '')).lower() in {'live', 'pending'})
+    review = sum(1 for leg in legs if str(leg.get('result', '')).lower() in {'review', 'unmatched'})
+    unresolved = live + review
     graded = wins + losses
     if losses and unresolved:
         noun = 'leg' if unresolved == 1 else 'legs'
         plural = '' if losses == 1 else 'es'
-        return f'Already lost · {losses} loss{plural} · {unresolved} {noun} still need review'
+        return f'Already lost · {losses} loss{plural} · {unresolved} {noun} unresolved ({live} live, {review} review)'
     if unresolved:
-        return f'{wins} wins · {losses} losses · {voids} void · {unresolved} review'
+        return f'{wins} wins · {losses} losses · {voids} void · {live} live · {review} review'
     if voids:
         return f'{wins} of {graded} graded legs hit · {voids} void'
     return f'{wins} of {graded} graded legs hit'
@@ -1331,8 +1333,8 @@ Murray over 2.5 threes'></textarea>
     const colResultHeader=document.getElementById('colResultHeader');
     const colThirdHeader=document.getElementById('colThirdHeader');
     const gradingSkeleton=document.getElementById('gradingSkeleton');
-    const resultLabel={win:'Win',loss:'Loss',pending:'Pending',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
-    const resultEmoji={win:'✅',loss:'❌',pending:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
+    const resultLabel={win:'Win',loss:'Loss',pending:'Live',live:'Live',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
+    const resultEmoji={win:'✅',loss:'❌',pending:'⏳',live:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
     const screenshotGradeEndpoint='/ingest/screenshot/grade';
     const slipModeStorageKey='parlay_slip_mode';
     const modeSettle='settle';
@@ -1811,7 +1813,7 @@ Murray over 2.5 threes'></textarea>
 
 
     function countLegResults(legs){
-      const counts={total:0,won:0,lost:0,review:0,void:0,pending:0};
+      const counts={total:0,won:0,lost:0,review:0,void:0,live:0};
       for(const item of (legs||[])){
         counts.total+=1;
         const normalized=item.result==='unmatched'?'review':item.result;
@@ -1819,7 +1821,7 @@ Murray over 2.5 threes'></textarea>
         else if(normalized==='loss'){counts.lost+=1;}
         else if(normalized==='review'){counts.review+=1;}
         else if(normalized==='void'){counts.void+=1;}
-        else if(normalized==='pending'){counts.pending+=1; counts.review+=1;}
+        else if(normalized==='pending'||normalized==='live'){counts.live+=1;}
       }
       return counts;
     }
@@ -1956,6 +1958,7 @@ Murray over 2.5 threes'></textarea>
       resultSummary.innerHTML=`
         <span class='result-chip'>${counts.won} ✅ Win</span>
         <span class='result-chip'>${counts.lost} ❌ Loss</span>
+        <span class='result-chip'>${counts.live} ⏳ Live</span>
         <span class='result-chip'>${counts.review} ⚠️ Review</span>
         <span class='result-chip'>${counts.void} ⭕ Void</span>
       `;
