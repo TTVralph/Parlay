@@ -69,6 +69,7 @@ def test_combo_market_kill_moment_reports_components_and_last_component_play() -
     assert explanation.explanation_source == 'snapshot_plus_pbp'
     assert '31 PRA (22 PTS, 6 REB, 3 AST)' in explanation.kill_moment_summary
     assert 'last AST play that changed the total came with 08:12 left in Q4' in explanation.kill_moment_summary
+    assert 'vs line 33.5' in explanation.kill_moment_summary
 
 
 def test_team_market_spread_and_total_kill_moment() -> None:
@@ -120,7 +121,8 @@ def test_fetches_experimental_feed_when_snapshot_lacks_play_by_play() -> None:
     explanation = explain_kill_moment(graded, snapshot, graded.settlement, plays_provider=provider)
     assert explanation is not None
     assert explanation.explanation_source == 'espn_core_plays'
-    assert "final rebound came with 05:42 left in Q4" in explanation.kill_moment_summary
+    assert "closest late-game rebound came with 05:42 left in Q4" in explanation.kill_moment_summary
+    assert 'vs line 4.5' in explanation.kill_moment_summary
 
 
 def test_snapshot_only_fallback_and_no_win_labeling() -> None:

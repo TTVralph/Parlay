@@ -125,6 +125,95 @@ _SNAPSHOT_DERIVED_MARKET_COMPONENTS = {
 }
 
 
+
+
+_LIVE_PROGRESS_MARKETS = {
+    'player_points': ('PTS',),
+    'player_rebounds': ('REB',),
+    'player_assists': ('AST',),
+    'player_pr': ('PTS', 'REB'),
+    'player_pa': ('PTS', 'AST'),
+    'player_ra': ('REB', 'AST'),
+    'player_pra': ('PTS', 'REB', 'AST'),
+}
+
+
+def _build_live_progress_payload(
+    leg: Leg,
+    *,
+    actual_value: float | None,
+    line: float | None,
+    component_values: dict[str, float] | None,
+) -> dict[str, object] | None:
+    stat_keys = _LIVE_PROGRESS_MARKETS.get(leg.market_type)
+    if not stat_keys or line is None:
+        return None
+    target_value = float(line)
+    current_value = float(actual_value) if actual_value is not None else 0.0
+    remaining = max(0.0, target_value - current_value) if leg.direction == 'over' else max(0.0, current_value - target_value)
+    status = 'On pace'
+    if remaining <= 0:
+        status = 'Line hit'
+    elif current_value <= 0:
+        status = 'No stats yet'
+
+    payload: dict[str, object] = {
+        'current_stat_value': round(current_value, 2),
+        'target_value': round(target_value, 2),
+        'remaining_to_hit': round(remaining, 2),
+        'live_status_text': status,
+    }
+    if len(stat_keys) > 1:
+        breakdown: dict[str, float] = {}
+        values = component_values or {}
+        for key in stat_keys:
+            label = _STAT_COMPONENT_LABELS.get(key, key)
+            raw = values.get(label)
+            if raw is None:
+                raw = values.get(key)
+            if raw is None:
+                continue
+            breakdown[key] = float(raw)
+        payload['component_breakdown'] = breakdown
+    return payload
+
+
+def _build_live_progress_timeline(
+    leg: Leg,
+    snapshot: EventSnapshot | None,
+    *,
+    player_name: str,
+) -> list[dict[str, object]]:
+    stat_keys = _LIVE_PROGRESS_MARKETS.get(leg.market_type)
+    if not stat_keys or snapshot is None or not snapshot.normalized_play_by_play:
+        return []
+    player_norm = player_name.lower().strip()
+    cumulative = {key: 0.0 for key in stat_keys}
+    by_period: dict[str, dict[str, object]] = {}
+
+    for event in snapshot.normalized_play_by_play:
+        period_label = f"Q{event.period}" if event.period is not None else 'game'
+        changed: set[str] = set()
+        primary = str(event.primary_player or '').lower().strip()
+        assister = str(event.assist_player or '').lower().strip()
+        if 'PTS' in stat_keys and event.is_made_shot and primary == player_norm:
+            cumulative['PTS'] += 3.0 if event.is_three_pointer_made else 2.0
+            changed.add('PTS')
+        if 'REB' in stat_keys and event.is_rebound and primary == player_norm:
+            cumulative['REB'] += 1.0
+            changed.add('REB')
+        if 'AST' in stat_keys and event.is_assist and assister == player_norm:
+            cumulative['AST'] += 1.0
+            changed.add('AST')
+        if not changed:
+            continue
+        bucket = by_period.setdefault(period_label, {'period_label': period_label, 'cumulative': {}, 'components': {}})
+        bucket['cumulative'] = {k: round(v, 2) for k, v in cumulative.items()}
+        bucket['components'] = {k: round(cumulative[k], 2) for k in stat_keys}
+
+    return [by_period[key] for key in sorted(by_period.keys(), key=lambda x: (x != 'game', x))]
+
+
 def _snapshot_player_entry(
     snapshot: EventSnapshot,
     *,
@@ -1187,10 +1276,26 @@ def settle_leg(
 
     settlement_diagnostics['stat_source'] = 'snapshot' if used_snapshot else 'provider'
 
+    live_progress = _build_live_progress_payload(
+        leg,
+        actual_value=actual_value,
+        line=leg.line,
+        component_values=component_values_dict,
+    )
+    live_timeline = _build_live_progress_timeline(
+        leg,
+        event_snapshot,
+        player_name=player_lookup_name,
+    )
+
     status = (event_snapshot.event_status if event_snapshot is not None else None) or _event_status(provider, leg.event_id)
     if status is not None and not _is_final_event_status(status):
         settlement_diagnostics['settlement_failure_reason'] = 'event not final'
         settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_NOT_FINAL
+        if live_progress is not None:
+            settlement_diagnostics['live_progress'] = live_progress
+        if live_timeline:
+            settlement_diagnostics['live_progress_timeline'] = live_timeline
         return explained(
             settlement='live',
             reason='Game is in progress',
@@ -1201,6 +1306,8 @@ def settle_leg(
             component_values=component_values_dict,
             stat_components=stat_components,
             computed_total=computed_total,
+            live_progress=live_progress,
+            live_progress_timeline=live_timeline,
         )
 
     settlement_diagnostics['stat_lookup_result'] = 'found' if actual_value is not None else 'missing'
@@ -1211,7 +1318,11 @@ def settle_leg(
         if status is not None and not _is_final_event_status(status):
             settlement_diagnostics['settlement_failure_reason'] = 'event not final'
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_NOT_FINAL
-            return explained(settlement='live', reason='Game is in progress', reason_code=reason_codes.EVENT_NOT_FINAL, reason_message='Game is in progress', explanation_reason='event unresolved', actual_value=float(actual_value) if actual_value is not None else None, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
+            if live_progress is not None:
+                settlement_diagnostics['live_progress'] = live_progress
+            if live_timeline:
+                settlement_diagnostics['live_progress_timeline'] = live_timeline
+            return explained(settlement='live', reason='Game is in progress', reason_code=reason_codes.EVENT_NOT_FINAL, reason_message='Game is in progress', explanation_reason='event unresolved', actual_value=float(actual_value) if actual_value is not None else None, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, live_progress=live_progress, live_progress_timeline=live_timeline)
         appeared = None
         if leg.event_id:
             dnp_confirmed = _player_confirmed_dnp(provider, player_lookup_name, leg.event_id)

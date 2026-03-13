@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import json
 import re
 from typing import Any
@@ -17,6 +18,18 @@ class ESPNPlayFeedResult:
     source: str
     plays: list[PlayByPlayEvent]
     raw_payload: dict[str, Any] | None = None
+    summary_payload: dict[str, Any] | None = None
+    event_status: str | None = None
+
+
+@dataclass
+class _CacheEntry:
+    value: dict[str, Any]
+    fetched_at: datetime
+    ttl_seconds: int
+
+    def is_fresh(self, now: datetime) -> bool:
+        return (now - self.fetched_at).total_seconds() <= self.ttl_seconds
 
 
 class ESPNPlaysProvider:
@@ -26,37 +39,117 @@ class ESPNPlaysProvider:
         self._timeout_s = timeout_s
         self._cache = cache or RequestCache[str, Any](max_entries=256)
 
-    def _fetch_json(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _event_status(summary_payload: dict[str, Any] | None) -> str | None:
+        if not isinstance(summary_payload, dict):
+            return None
+        competitions = ((summary_payload.get('header') or {}).get('competitions') or [])
+        if not competitions:
+            return None
+        status_obj = ((competitions[0].get('status') or {}).get('type') or {})
+        if status_obj.get('completed') is True:
+            return 'final'
+        state = str(status_obj.get('state') or '').strip().lower()
+        if state in {'in', 'in_progress', 'inprogress', 'halftime'}:
+            return 'live'
+        if state:
+            return state
+        return None
+
+    @staticmethod
+    def _event_start(summary_payload: dict[str, Any] | None) -> datetime | None:
+        if not isinstance(summary_payload, dict):
+            return None
+        competitions = ((summary_payload.get('header') or {}).get('competitions') or [])
+        if not competitions:
+            return None
+        date_raw = str(competitions[0].get('date') or '').strip()
+        if not date_raw:
+            return None
+        try:
+            return datetime.fromisoformat(date_raw.replace('Z', '+00:00')).astimezone(timezone.utc)
+        except ValueError:
+            return None
+
+    def _ttl_for_event(self, summary_payload: dict[str, Any] | None) -> int:
+        now = self._now()
+        status = self._event_status(summary_payload)
+        if status == 'live':
+            return 30
+        if status == 'final':
+            event_start = self._event_start(summary_payload)
+            if event_start is not None and now - event_start <= timedelta(hours=24):
+                return 600
+            return 86400
+        return 30
+
+    def _event_cache_key(self, *, sport: str, event_id: str, feed_type: str) -> str:
+        return f'normalized:{sport}:{event_id}:{feed_type}'
+
+    def _fetch_event_feed_json(
+        self,
+        *,
+        cache_key: str,
+        url: str,
+        params: dict[str, Any] | None = None,
+        ttl_seconds: int,
+    ) -> dict[str, Any] | None:
+        now = self._now()
+        cached = self._cache.get(cache_key)
+        stale_value: dict[str, Any] | None = None
+        if isinstance(cached, _CacheEntry):
+            stale_value = cached.value
+            if cached.is_fresh(now):
+                return cached.value
+        
         full_url = url
         if params:
             full_url = f'{url}?{urlencode(params)}'
-        cached = self._cache.get(full_url)
-        if isinstance(cached, dict):
-            return cached
         try:
             with urlopen(full_url, timeout=self._timeout_s) as resp:  # noqa: S310
                 if getattr(resp, 'status', 200) != 200:
-                    return None
+                    return stale_value
                 payload = json.loads(resp.read().decode('utf-8'))
                 if isinstance(payload, dict):
-                    self._cache.set(full_url, payload)
+                    self._cache.set(cache_key, _CacheEntry(value=payload, fetched_at=now, ttl_seconds=ttl_seconds))
                     return payload
-                return None
+                return stale_value
         except (URLError, TimeoutError, json.JSONDecodeError, ValueError):
-            return None
+            return stale_value
         except Exception:
-            return None
+            return stale_value
 
-    def fetch_core_plays(self, event_id: str, sport: str = 'basketball', league: str = 'nba', limit: int = 500) -> dict[str, Any] | None:
-        return self._fetch_json(
-            f'https://sports.core.api.espn.com/v2/sports/{sport}/leagues/{league}/events/{event_id}/competitions/{event_id}/plays',
-            params={'limit': limit},
+    def fetch_summary(self, event_id: str, sport: str = 'basketball', league: str = 'nba') -> dict[str, Any] | None:
+        cache_key = self._event_cache_key(sport=sport, event_id=event_id, feed_type='summary')
+        return self._fetch_event_feed_json(
+            cache_key=cache_key,
+            url=f'https://site.api.espn.com/apis/site/v2/sports/{sport}/leagues/{league}/summary',
+            params={'event': event_id},
+            ttl_seconds=30,
         )
 
-    def fetch_cdn_playbyplay(self, event_id: str, league: str = 'nba') -> dict[str, Any] | None:
-        return self._fetch_json(
-            f'https://cdn.espn.com/core/{league}/playbyplay',
+    def fetch_core_plays(self, event_id: str, sport: str = 'basketball', league: str = 'nba', limit: int = 500) -> dict[str, Any] | None:
+        summary_payload = self.fetch_summary(event_id, sport=sport, league=league)
+        ttl_seconds = self._ttl_for_event(summary_payload)
+        return self._fetch_event_feed_json(
+            cache_key=self._event_cache_key(sport=sport, event_id=event_id, feed_type='core_plays'),
+            url=f'https://sports.core.api.espn.com/v2/sports/{sport}/leagues/{league}/events/{event_id}/competitions/{event_id}/plays',
+            params={'limit': limit},
+            ttl_seconds=ttl_seconds,
+        )
+
+    def fetch_cdn_playbyplay(self, event_id: str, sport: str = 'basketball', league: str = 'nba') -> dict[str, Any] | None:
+        summary_payload = self.fetch_summary(event_id, sport=sport, league=league)
+        ttl_seconds = self._ttl_for_event(summary_payload)
+        return self._fetch_event_feed_json(
+            cache_key=self._event_cache_key(sport=sport, event_id=event_id, feed_type='cdn_playbyplay'),
+            url=f'https://cdn.espn.com/core/{league}/playbyplay',
             params={'xhr': 1, 'gameId': event_id},
+            ttl_seconds=ttl_seconds,
         )
 
     @staticmethod
@@ -167,7 +260,8 @@ class ESPNPlaysProvider:
         league: str = 'nba',
         limit: int = 500,
     ) -> ESPNPlayFeedResult | None:
-        cache_key = f'normalized:{sport}:{league}:{event_id}'
+        summary_payload = self.fetch_summary(event_id, sport=sport, league=league)
+        cache_key = self._event_cache_key(sport=sport, event_id=event_id, feed_type='best_play_feed')
         cached = self._cache.get(cache_key)
         if isinstance(cached, ESPNPlayFeedResult):
             return cached
@@ -175,14 +269,26 @@ class ESPNPlaysProvider:
         core_payload = self.fetch_core_plays(event_id, sport=sport, league=league, limit=limit)
         core_normalized = self._normalize_core_payload(core_payload or {}) if core_payload else []
         if core_normalized:
-            result = ESPNPlayFeedResult(source='espn_core_plays', plays=core_normalized, raw_payload=core_payload)
+            result = ESPNPlayFeedResult(
+                source='espn_core_plays',
+                plays=core_normalized,
+                raw_payload=core_payload,
+                summary_payload=summary_payload,
+                event_status=self._event_status(summary_payload),
+            )
             self._cache.set(cache_key, result)
             return result
 
-        cdn_payload = self.fetch_cdn_playbyplay(event_id, league=league)
+        cdn_payload = self.fetch_cdn_playbyplay(event_id, sport=sport, league=league)
         cdn_normalized = self._normalize_cdn_payload(cdn_payload or {}) if cdn_payload else []
         if cdn_normalized:
-            result = ESPNPlayFeedResult(source='espn_cdn_playbyplay', plays=cdn_normalized, raw_payload=cdn_payload)
+            result = ESPNPlayFeedResult(
+                source='espn_cdn_playbyplay',
+                plays=cdn_normalized,
+                raw_payload=cdn_payload,
+                summary_payload=summary_payload,
+                event_status=self._event_status(summary_payload),
+            )
             self._cache.set(cache_key, result)
             return result
 
