@@ -15,6 +15,8 @@ from .services.provider_router import ProviderRouter
 from .services.event_snapshot import EventSnapshot, EventSnapshotService
 from .services.event_snapshot_cache import get_event_snapshot_cache
 from .services.player_alias_index import resolve_snapshot_player
+from .rules.registry import get_stat_rule
+from .rules.helpers import get_player_stat as _rule_get_player_stat, compute_combo_stat
 from .providers.base import ResultsProvider
 from .providers.factory import get_results_provider
 from .event_matcher import resolve_leg_events
@@ -88,40 +90,6 @@ def _name_matches(target_player: str, candidate: str | None) -> bool:
     return ''.join(target_tokens) == ''.join(candidate_tokens) or target_tokens[-1] == candidate_tokens[-1]
 
 
-_SNAPSHOT_STAT_ALIASES = {
-    'PTS': {'PTS', 'points'},
-    'REB': {'REB', 'rebounds'},
-    'AST': {'AST', 'assists'},
-    '3PM': {'3PM', '3PTM', '3PT FG', '3PT made', '3PT Made', 'threes', 'threes made'},
-    'STL': {'STL', 'steals'},
-    'BLK': {'BLK', 'blocks'},
-    'TOV': {'TOV', 'TO', 'turnovers'},
-    'PR': {'PR'},
-    'PA': {'PA'},
-    'RA': {'RA'},
-    'PRA': {'PRA'},
-}
-
-
-_SNAPSHOT_SINGLE_STAT_MARKETS = {
-    'player_points': 'PTS',
-    'player_rebounds': 'REB',
-    'player_assists': 'AST',
-    'player_threes': '3PM',
-    'player_steals': 'STL',
-    'player_blocks': 'BLK',
-    'player_turnovers': 'TOV',
-}
-
-
-_SNAPSHOT_COMBO_STAT_MARKETS = {
-    'player_pr': 'PR',
-    'player_pa': 'PA',
-    'player_ra': 'RA',
-    'player_pra': 'PRA',
-}
-
-
 _SNAPSHOT_DERIVED_MARKET_COMPONENTS = {
     'player_double_double': ('PTS', 'REB', 'AST', 'STL', 'BLK'),
     'player_triple_double': ('PTS', 'REB', 'AST', 'STL', 'BLK'),
@@ -148,7 +116,8 @@ def _build_live_progress_payload(
     line: float | None,
     component_values: dict[str, float] | None,
 ) -> dict[str, object] | None:
-    stat_keys = _LIVE_PROGRESS_MARKETS.get(leg.market_type)
+    rule = get_stat_rule(leg.sport, leg.market_type)
+    stat_keys = tuple(rule.live_progress_components) if rule and rule.supports_live_progress else _LIVE_PROGRESS_MARKETS.get(leg.market_type)
     if not stat_keys or line is None:
         return None
     target_value = float(line)
@@ -187,7 +156,8 @@ def _build_live_progress_timeline(
     *,
     player_name: str,
 ) -> list[dict[str, object]]:
-    stat_keys = _LIVE_PROGRESS_MARKETS.get(leg.market_type)
+    rule = get_stat_rule(leg.sport, leg.market_type)
+    stat_keys = tuple(rule.live_progress_components) if rule and rule.supports_live_progress else _LIVE_PROGRESS_MARKETS.get(leg.market_type)
     if not stat_keys or snapshot is None or not snapshot.normalized_play_by_play:
         return []
     player_norm = player_name.lower().strip()
@@ -251,19 +221,7 @@ def get_player_stat(
     *,
     player_name: str | None = None,
 ) -> float | None:
-    entry = _snapshot_player_entry(snapshot, player_id=player_id, player_name=player_name)
-    if not entry:
-        return None
-    stats = entry.get('stats') or {}
-    for alias in _SNAPSHOT_STAT_ALIASES.get(stat_key, {stat_key}):
-        value = stats.get(alias)
-        if value is None:
-            continue
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            continue
-    return None
+    return _rule_get_player_stat(snapshot, player_id, stat_key, player_name=player_name)
 
 
 def get_player_combo_stat(
@@ -285,13 +243,7 @@ def get_player_combo_stat(
     components = combo_components.get(stat_key)
     if not components:
         return None
-    values: list[float] = []
-    for component in components:
-        value = get_player_stat(snapshot, player_id, component, player_name=player_name)
-        if value is None:
-            return None
-        values.append(value)
-    return float(sum(values))
+    return compute_combo_stat(snapshot, player_id, components, player_name=player_name)
 
 
 def get_player_milestone_stat(
@@ -1208,7 +1160,10 @@ def settle_leg(
             settlement_diagnostics['settlement_failure_reason'] = 'market mapping missing'
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.MARKET_MAPPING_MISSING
 
-    snapshot_supported_markets = set(_SNAPSHOT_SINGLE_STAT_MARKETS) | set(_SNAPSHOT_COMBO_STAT_MARKETS) | set(_SNAPSHOT_DERIVED_MARKET_COMPONENTS)
+    stat_rule = get_stat_rule(leg.sport, leg.market_type)
+    snapshot_supported_markets = set(_SNAPSHOT_DERIVED_MARKET_COMPONENTS)
+    if stat_rule is not None:
+        snapshot_supported_markets.add(leg.market_type)
     used_snapshot = False
     snapshot_entry = None
     snapshot_diag = settlement_diagnostics.get('snapshot_stat_diagnostics')
@@ -1216,7 +1171,7 @@ def settle_leg(
         snapshot_diag['player_id_resolved'] = bool(leg.resolved_player_id)
     if event_snapshot is not None and leg.market_type in snapshot_supported_markets:
         if isinstance(snapshot_diag, dict):
-            requested_stat_key = _SNAPSHOT_SINGLE_STAT_MARKETS.get(leg.market_type) or _SNAPSHOT_COMBO_STAT_MARKETS.get(leg.market_type) or leg.market_type
+            requested_stat_key = stat_rule.stat_dependencies[0] if stat_rule and len(stat_rule.stat_dependencies) == 1 else leg.market_type
             snapshot_diag['requested_stat_key'] = requested_stat_key
             snapshot_diag['required_component_stat_keys'] = list(_SNAPSHOT_DERIVED_MARKET_COMPONENTS.get(leg.market_type) or [])
             snapshot_diag['snapshot_coverage'] = event_snapshot.get_stat_coverage()
@@ -1236,18 +1191,11 @@ def settle_leg(
     detail_lookup = getattr(provider, 'get_player_result_details', None)
     actual_value = None
     if event_snapshot is not None and leg.market_type in snapshot_supported_markets:
-        single_stat_key = _SNAPSHOT_SINGLE_STAT_MARKETS.get(leg.market_type)
-        combo_stat_key = _SNAPSHOT_COMBO_STAT_MARKETS.get(leg.market_type)
-        if single_stat_key is not None:
-            actual_value = get_player_stat(event_snapshot, leg.resolved_player_id, single_stat_key, player_name=player_lookup_name)
+        if stat_rule is not None:
+            actual_value = stat_rule.compute_actual_value(event_snapshot, leg.resolved_player_id, player_lookup_name)
             if isinstance(snapshot_diag, dict) and actual_value is None:
-                snapshot_diag['missing_snapshot_stat_key'] = single_stat_key
-                snapshot_diag['missing_snapshot_stat_keys'] = [single_stat_key]
-        elif combo_stat_key is not None:
-            actual_value = get_player_combo_stat(event_snapshot, leg.resolved_player_id, combo_stat_key, player_name=player_lookup_name)
-            if isinstance(snapshot_diag, dict) and actual_value is None:
-                snapshot_diag['missing_snapshot_stat_key'] = combo_stat_key
-                snapshot_diag['missing_snapshot_stat_keys'] = [combo_stat_key]
+                snapshot_diag['missing_snapshot_stat_key'] = leg.market_type
+                snapshot_diag['missing_snapshot_stat_keys'] = list(stat_rule.stat_dependencies)
         elif leg.market_type in _SNAPSHOT_DERIVED_MARKET_COMPONENTS:
             actual_value, missing_keys = get_player_milestone_stat(event_snapshot, leg.resolved_player_id, leg.market_type, player_name=player_lookup_name)
             if isinstance(snapshot_diag, dict):
