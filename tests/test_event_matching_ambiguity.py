@@ -463,3 +463,18 @@ def test_combined_selected_player_not_on_selected_event_roster_returns_specific_
     assert leg['result'] == 'review'
     assert leg['review_reason_text'] == 'Matched game does not contain the resolved player on the roster.'
     assert leg['event_review_reason_code'] == 'matched_event_rejected_by_roster_validation'
+
+
+def test_candidate_game_order_prefers_exact_bet_date_and_dedupes() -> None:
+    from app.resolver import _build_candidate_events
+
+    events = [
+        EventInfo(event_id='evt-near', sport='NBA', home_team='Utah Jazz', away_team='Golden State Warriors', start_time=datetime.fromisoformat('2026-03-11T03:30:00+00:00')),
+        EventInfo(event_id='evt-exact', sport='NBA', home_team='Memphis Grizzlies', away_team='LA Clippers', start_time=datetime.fromisoformat('2026-03-10T02:00:00+00:00')),
+        EventInfo(event_id='evt-exact', sport='NBA', home_team='Memphis Grizzlies', away_team='LA Clippers', start_time=datetime.fromisoformat('2026-03-10T02:00:00+00:00')),
+    ]
+
+    payload = _build_candidate_events(events, slip_value=datetime.fromisoformat('2026-03-09T12:00:00'), reason='test')
+    assert len(payload) == 2
+    assert payload[0]['event_id'] == 'evt-exact'
+    assert payload[0]['event_date'] == '2026-03-09'
