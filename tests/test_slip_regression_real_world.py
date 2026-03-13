@@ -22,9 +22,9 @@ def test_threshold_first_slash_format_normalizes() -> None:
     3+ / Reed Sheppard Three Pointers Made
     """
     normalized = normalize_sportsbook_ocr_text(raw)
-    assert 'Kevin Durant 20+ Points' in normalized
-    assert 'Nikola Jokic 10+ Rebounds' in normalized
-    assert 'Reed Sheppard 3+ Threes' in normalized
+    assert 'Kevin Durant Over 19.5 Points' in normalized
+    assert 'Nikola Jokic Over 9.5 Rebounds' in normalized
+    assert 'Reed Sheppard Over 2.5 Threes' in normalized
 
 
 def test_grouped_sgp_and_split_fragments_parse_all_legs() -> None:
@@ -41,9 +41,9 @@ def test_grouped_sgp_and_split_fragments_parse_all_legs() -> None:
     6+
     """
     normalized = normalize_sportsbook_ocr_text(raw)
-    assert 'Amen Thompson 4+ Assists' in normalized
-    assert 'Trae Young 18+ Points + Assists' in normalized
-    assert 'Paolo Banchero 6+ Rebounds' in normalized
+    assert 'Amen Thompson Over 3.5 Assists' in normalized
+    assert 'Trae Young Over 17.5 Points + Assists' in normalized
+    assert 'Paolo Banchero Over 5.5 Rebounds' in normalized
 
 
 def test_noise_headers_are_filtered() -> None:

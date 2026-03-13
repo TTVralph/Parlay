@@ -1,4 +1,4 @@
-from app.screenshot_parser import normalize_sportsbook_ocr_text, parse_screenshot_text
+from app.screenshot_parser import normalize_sportsbook_ocr_text, normalize_sportsbook_slip_text, parse_screenshot_text
 
 
 def test_parse_screenshot_extracts_multiple_legs_and_date_and_ignores_odds() -> None:
@@ -201,20 +201,20 @@ def test_alt_market_phrases_with_split_lines_normalize_and_parse() -> None:
     """
     normalized = normalize_sportsbook_ocr_text(raw)
     assert normalized.splitlines() == [
-        'Jerami Grant 15+ Points',
-        'Michael Porter Jr. 20+ Points',
-        'Daniel Gafford 6+ Rebounds',
-        'Luka Doncic 8+ Rebounds',
-        'Derrick White 4+ Rebounds',
+        'Jerami Grant Over 14.5 Points',
+        'Michael Porter Jr. Over 19.5 Points',
+        'Daniel Gafford Over 5.5 Rebounds',
+        'Luka Doncic Over 7.5 Rebounds',
+        'Derrick White Over 3.5 Rebounds',
     ]
 
     parsed = parse_screenshot_text(raw, raw)
     labels = [leg.normalized_label for leg in parsed.parsed_legs]
-    assert 'Jerami Grant Over 15+ Points' in labels
-    assert 'Michael Porter Jr. Over 20+ Points' in labels
-    assert 'Daniel Gafford Over 6+ Rebounds' in labels
-    assert 'Luka Doncic Over 8+ Rebounds' in labels
-    assert 'Derrick White Over 4+ Rebounds' in labels
+    assert 'Jerami Grant Over 14.5 Points' in labels
+    assert 'Michael Porter Jr. Over 19.5 Points' in labels
+    assert 'Daniel Gafford Over 5.5 Rebounds' in labels
+    assert 'Luka Doncic Over 7.5 Rebounds' in labels
+    assert 'Derrick White Over 3.5 Rebounds' in labels
 
 
 def test_inline_alt_market_phrases_parse_with_ocr_spacing_variants() -> None:
@@ -226,10 +226,10 @@ def test_inline_alt_market_phrases_parse_with_ocr_spacing_variants() -> None:
     """
     normalized = normalize_sportsbook_ocr_text(raw)
     assert normalized.splitlines() == [
-        'Jalen Duren 15+ Points',
-        'Ty Jerome 15+ Points',
-        'Nikola Jokic 12+ Assists',
-        'Aaron Gordon 32+ Points + Rebounds + Assists',
+        'Jalen Duren Over 14.5 Points',
+        'Ty Jerome Over 14.5 Points',
+        'Nikola Jokic Over 11.5 Assists',
+        'Aaron Gordon Over 31.5 Points + Rebounds + Assists',
     ]
 
 
@@ -246,6 +246,7 @@ def test_top_grouped_sgp_lines_are_reconstructed_and_parsed() -> None:
     """
     normalized = normalize_sportsbook_ocr_text(raw)
     assert normalized.splitlines() == [
+        'Lakers @ Celtics',
         'LeBron James Over 24.5 Points',
         'Anthony Davis Under 11.5 Rebounds',
     ]
@@ -306,3 +307,48 @@ def test_parse_debug_stages_expose_grouped_reconstruction() -> None:
     assert parsed.parse_debug.summary['leg_candidate_count'] >= 2
     assert any('kevin durant' in line.lower() for line in parsed.parse_debug.normalized_lines)
     assert any('Under 15.5 Rebounds + Assists' in line for line in parsed.parse_debug.leg_candidates)
+
+
+def test_noisy_multi_sgp_ocr_normalization_keeps_matchups_and_cleans_noise() -> None:
+    raw = """
+    8 leg Same Game Parlay+
+    Profit Boost 50%
+    Same Game Parlay
+    Brooklyn Nets @ Atlanta Hawks
+    Dyson Daniels
+    TO SCORE 10+
+    POINTS
+    Noah Clowney
+    TO RECORD 4+ REBOUNDS
+    Onyeka Okongwu
+    TO RECORD 8+
+    REBOUNDS
+    +291
+    SGP
+    Same Game Parlay
+    Denver Nuggets @ San Antonio Spurs
+    Victor Wembanyama
+    TO RECORD 10+ REBOUNDS
+    Victor Wembanyama
+    TO RECORD 10+ REBOUNDS
+    Christian Braun
+    TO RECORD 4+
+    REBOUNDS
+    Includes: boosted odds
+    7:40PM ET
+    """
+    normalized = normalize_sportsbook_slip_text(raw)
+    assert normalized == [
+        'Brooklyn Nets @ Atlanta Hawks',
+        'Dyson Daniels Over 9.5 Points',
+        'Noah Clowney Over 3.5 Rebounds',
+        'Onyeka Okongwu Over 7.5 Rebounds',
+        'Denver Nuggets @ San Antonio Spurs',
+        'Victor Wembanyama Over 9.5 Rebounds',
+        'Christian Braun Over 3.5 Rebounds',
+    ]
+
+    parsed = parse_screenshot_text(raw, raw)
+    labels = [leg.normalized_label for leg in parsed.parsed_legs]
+    assert 'Dyson Daniels Over 9.5 Points' in labels
+    assert 'Victor Wembanyama Over 9.5 Rebounds' in labels
