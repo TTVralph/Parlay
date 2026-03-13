@@ -148,6 +148,23 @@ def test_parse_opponent_context_at_and_matchup_suffixes() -> None:
     assert 'Opponent context: Los Angeles Lakers' in matchup_legs[0].notes
 
 
+
+
+def test_parse_matchup_line_attaches_game_matchup_context_with_alias_resolution() -> None:
+    legs = parse_text('Dyson Daniels Over 9.5 Points\nNets @ Hawks')
+    assert len(legs) == 1
+    leg = legs[0]
+    assert leg.game_matchup == 'Brooklyn Nets @ Atlanta Hawks'
+    assert leg.possible_teams == ['Brooklyn Nets', 'Atlanta Hawks']
+    assert any(note.startswith('Game matchup context: ') for note in leg.notes)
+
+
+def test_parse_matchup_line_supports_vs_and_at_formats() -> None:
+    vs_legs = parse_text('Dyson Daniels Over 9.5 Points\nBucks vs Heat')
+    at_legs = parse_text('Dyson Daniels Over 9.5 Points\nWizards at Magic')
+    assert vs_legs[0].game_matchup == 'Milwaukee Bucks @ Miami Heat'
+    assert at_legs[0].game_matchup == 'Washington Wizards @ Orlando Magic'
+
 def test_parse_number_first_notation() -> None:
     legs = parse_text('24.5+ points Nikola Jokic')
     assert len(legs) == 1

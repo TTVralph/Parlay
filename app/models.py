@@ -110,6 +110,8 @@ class Leg(BaseModel):
     override_used_for_grading: bool = False
     original_leg_text: Optional[str] = None
     normalized_line_value: Optional[float] = None
+    possible_teams: list[str] = Field(default_factory=list)
+    game_matchup: Optional[str] = None
 
 
 class ParseResponse(BaseModel):
