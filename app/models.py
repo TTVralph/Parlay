@@ -112,6 +112,7 @@ class Leg(BaseModel):
     normalized_line_value: Optional[float] = None
     possible_teams: list[str] = Field(default_factory=list)
     game_matchup: Optional[str] = None
+    player_team_mismatch_detected: bool = False
 
 
 class ParseResponse(BaseModel):
@@ -199,6 +200,7 @@ class GradedLeg(BaseModel):
     event_match_score: Optional[float] = None
     stat_parse_score: Optional[float] = None
     ocr_quality_score: Optional[float] = None
+    player_team_mismatch_detected: bool = False
 
 
 class SettlementExplanation(BaseModel):
