@@ -12,6 +12,7 @@ from .services.market_registry import MARKET_REGISTRY, player_market_to_canonica
 from .services.play_by_play_provider import ESPNPlayByPlayProvider, PlayByPlayEvent
 from .services.provider_router import ProviderRouter
 from .services.event_snapshot import EventSnapshot, EventSnapshotService
+from .services.event_snapshot_cache import get_event_snapshot_cache
 from .services.player_alias_index import resolve_snapshot_player
 from .providers.base import ResultsProvider
 from .providers.factory import get_results_provider
@@ -1553,8 +1554,13 @@ def grade_text(
         event_to_legs = {group.event_id: group.legs for group in slip_groups if group.event_id}
         if event_to_legs:
             snapshot_service = EventSnapshotService(play_by_play_provider=play_by_play_provider)
+            snapshot_cache = get_event_snapshot_cache()
             event_dates = {
                 event_id: next((leg.matched_event_date for leg in grouped_legs if leg.matched_event_date), '')
+                for event_id, grouped_legs in event_to_legs.items()
+            }
+            event_sports = {
+                event_id: next((leg.sport for leg in grouped_legs if leg.sport), None)
                 for event_id, grouped_legs in event_to_legs.items()
             }
             include_play_by_play_event_ids = {
@@ -1562,11 +1568,26 @@ def grade_text(
                 for event_id, grouped_legs in event_to_legs.items()
                 if any(router.route(leg.market_type).data_source == 'play_by_play' for leg in grouped_legs)
             }
-            snapshots_by_event_id = snapshot_service.get_many_event_snapshots(
-                list(event_to_legs.keys()),
-                event_dates={k: v for k, v in event_dates.items() if v},
-                include_play_by_play_event_ids=include_play_by_play_event_ids,
-            )
+            try:
+                for event_id in event_to_legs.keys():
+                    include_play_by_play = event_id in include_play_by_play_event_ids
+                    snapshots_by_event_id[event_id] = snapshot_cache.get_snapshot(
+                        sport=event_sports.get(event_id),
+                        event_id=event_id,
+                        include_play_by_play=include_play_by_play,
+                        fetcher=lambda event_id=event_id, include_play_by_play=include_play_by_play: snapshot_service.get_event_snapshot(
+                            event_id,
+                            event_date=(event_dates.get(event_id) or None),
+                            include_play_by_play=include_play_by_play,
+                        ),
+                    )
+                snapshots_by_event_id = {k: v for k, v in snapshots_by_event_id.items() if v is not None}
+            except Exception:
+                snapshots_by_event_id = snapshot_service.get_many_event_snapshots(
+                    list(event_to_legs.keys()),
+                    event_dates={k: v for k, v in event_dates.items() if v},
+                    include_play_by_play_event_ids=include_play_by_play_event_ids,
+                )
 
     graded = [
         settle_leg(
@@ -1616,6 +1637,7 @@ def grade_text(
     response.parlay_closeness_score = closeness_score
     response.closest_miss_leg = closest_miss_leg
     response.worst_miss_leg = worst_miss_leg
+    response.grading_diagnostics['snapshot'].update(get_event_snapshot_cache().get_stats())
     try:
         sold_leg_explanations = explain_sold_legs(response, snapshots_by_event_id)
     except Exception:

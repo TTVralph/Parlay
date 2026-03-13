@@ -818,3 +818,42 @@ def test_snapshot_team_market_readiness_details_include_event_fields(monkeypatch
     assert diag.get('event_status_used') == 'in_progress'
     assert 'event_not_final' in (diag.get('missing_snapshot_event_fields') or [])
     assert diag.get('settlement_path') == 'provider_fallback'
+
+def test_multiple_grade_calls_share_cached_snapshot(monkeypatch) -> None:
+    from app.services.event_snapshot_cache import get_event_snapshot_cache
+
+    class _CountingSnapshotService:
+        calls = 0
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def get_event_snapshot(self, event_id: str, *, event_date=None, include_play_by_play=False):
+            _CountingSnapshotService.calls += 1
+            return EventSnapshot(
+                event_id=event_id,
+                home_team={'name': 'Denver Nuggets'},
+                away_team={'name': 'Boston Celtics'},
+                normalized_player_stats={
+                    'nikolajokic': {
+                        'player_id': '15',
+                        'display_name': 'Nikola Jokic',
+                        'stats': {'PTS': 31.0},
+                    }
+                },
+                event_status='final',
+                sport='NBA',
+            )
+
+    monkeypatch.setattr('app.grader.EventSnapshotService', _CountingSnapshotService)
+    get_event_snapshot_cache().clear()
+
+    provider = _FakeESPNProvider()
+    first = grade_text('Nikola Jokic over 29.5 points', provider=provider)
+    second = grade_text('Nikola Jokic over 29.5 points', provider=provider)
+
+    assert first.legs[0].settlement == 'win'
+    assert second.legs[0].settlement == 'win'
+    assert _CountingSnapshotService.calls == 1
+    snapshot_diag = second.grading_diagnostics.get('snapshot') or {}
+    assert snapshot_diag.get('snapshot_cache_hits', 0) >= 1
