@@ -30,7 +30,7 @@ def _event_candidate_payload(event: EventInfo, *, match_confidence: str | None =
     return {
         'event_id': event.event_id,
         'event_label': event.label,
-        'event_date': event.start_time.date().isoformat(),
+        'event_date': _event_local_date(event).isoformat(),
         'event_start_time': event.start_time.isoformat(),
         'home_team': event.home_team,
         'away_team': event.away_team,
@@ -108,7 +108,7 @@ def _event_date_match_quality(event: EventInfo, slip_value: date | datetime | No
     if slip_value is None:
         return 'unknown'
     slip_date = slip_value.date() if isinstance(slip_value, datetime) else slip_value
-    delta = abs((event.start_time.date() - slip_date).days)
+    delta = abs((_event_local_date(event) - slip_date).days)
     if delta == 0:
         return 'exact'
     if delta <= 2:
@@ -118,10 +118,34 @@ def _event_date_match_quality(event: EventInfo, slip_value: date | datetime | No
 
 def _build_candidate_events(events: list[EventInfo], *, slip_value: date | datetime | None, reason: str) -> list[dict[str, object]]:
     payload: list[dict[str, object]] = []
-    for event in events[:5]:
+    for event in _sorted_candidate_events(events, slip_value=slip_value)[:5]:
         quality = _event_date_match_quality(event, slip_value)
         payload.append(_event_candidate_payload(event, match_confidence='medium' if quality in {'exact', 'nearby'} else 'low', reason=reason))
     return payload
+
+
+def _event_local_date(event: EventInfo) -> date:
+    event_time = event.start_time
+    if event_time.tzinfo is None:
+        return event_time.date()
+    return (event_time.astimezone(timezone.utc) - timedelta(hours=8)).date()
+
+
+def _sorted_candidate_events(events: list[EventInfo], *, slip_value: date | datetime | None) -> list[EventInfo]:
+    unique: dict[str, EventInfo] = {}
+    for event in events:
+        unique.setdefault(event.event_id, event)
+
+    slip_date = slip_value.date() if isinstance(slip_value, datetime) else slip_value
+    quality_rank = {'exact': 0, 'nearby': 1, 'mismatch': 2, 'unknown': 3}
+
+    def _key(event: EventInfo) -> tuple[int, int, str, str]:
+        quality = _event_date_match_quality(event, slip_value)
+        event_date = _event_local_date(event)
+        distance = abs((event_date - slip_date).days) if slip_date is not None else 0
+        return (quality_rank.get(quality, 4), distance, event.start_time.isoformat(), event.event_id)
+
+    return sorted(unique.values(), key=_key)
 
 
 def _narrow_candidates_with_scoreboard(
@@ -164,7 +188,7 @@ def _context_date_for_leg(slip_value: date | datetime | None) -> date | None:
 
 def _context_date_for_event(event: EventInfo, slip_value: date | datetime | None) -> date:
     context_date = _context_date_for_leg(slip_value)
-    return context_date or event.start_time.date()
+    return context_date or _event_local_date(event)
 
 
 def _team_candidates(provider: ResultsProvider, team: str, posted_at: datetime | None, include_historical: bool) -> list[EventInfo]:
@@ -525,6 +549,9 @@ def resolve_leg_events(
             if narrowed_by_scoreboard:
                 resolution_warnings.append('scoreboard_date_narrowing_used')
                 notes.append(f'diagnostic: scoreboard_narrowed_candidates={len(candidates)}')
+
+        candidates = _sorted_candidate_events(candidates, slip_value=slip_filter_value)
+        all_candidates_before_date_filter = _sorted_candidate_events(all_candidates_before_date_filter, slip_value=slip_filter_value)
 
         if leg.player and leg.sport == 'NBA' and player_team and explicit_slip_date is not None and not candidates:
             if NO_TEAM_GAME_ON_SELECTED_DATE_WARNING not in notes:

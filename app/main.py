@@ -1193,6 +1193,7 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     #overall.win{background:linear-gradient(135deg,#14532d,#166534);border:1px solid #22c55e;color:#f0fdf4;}
     #overall.loss{background:linear-gradient(135deg,#450a0a,#7f1d1d);border:1px solid #ef4444;color:#fff1f2;}
     #overall.review{background:linear-gradient(135deg,#422006,#78350f);border:1px solid #f59e0b;color:#fffbeb;}
+    #overall.live{background:linear-gradient(135deg,#422006,#78350f);border:1px solid #facc15;color:#fefce8;}
     .result-summary,.result-meta,.leg-progress{display:flex;flex-wrap:wrap;gap:8px;}
     .live-updates-indicator{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid #ef444488;background:#450a0a66;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#fecaca;}
     .live-updates-indicator .dot{width:8px;height:8px;border-radius:50%;background:#ef4444;box-shadow:0 0 0 0 #ef444488;animation:livePulse 1.6s infinite;}
@@ -1201,6 +1202,8 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .result-chip.win,.leg-progress-chip.win{border-color:#22c55e;color:#15803d;}
     .result-chip.loss,.leg-progress-chip.loss{border-color:#ef4444;color:#b91c1c;}
     .result-chip.review,.leg-progress-chip.review{border-color:#f59e0b;color:#b45309;}
+    .result-chip.void,.leg-progress-chip.void{border-color:#94a3b8;color:#475569;}
+    .result-chip.live,.leg-progress-chip.live,.result-chip.pending,.leg-progress-chip.pending{border-color:#facc15;color:#a16207;}
     .sold-hero{position:relative;overflow:hidden;border:1px solid #7f1d1d55;background:linear-gradient(140deg,#3f0606 0%,#7f1d1d 46%,#b91c1c 100%);color:#fff1f2;border-radius:18px;padding:16px;box-shadow:0 16px 36px rgba(127,29,29,.38);}
     .sold-hero::after{content:'';position:absolute;right:-70px;top:-65px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,#fca5a566 0%,transparent 70%);pointer-events:none;}
     .sold-hero-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;position:relative;z-index:1;}
@@ -1461,13 +1464,13 @@ Murray over 2.5 threes'></textarea>
     const colThirdHeader=document.getElementById('colThirdHeader');
     const gradingSkeleton=document.getElementById('gradingSkeleton');
     const resultLabel={win:'Win',loss:'Loss',pending:'Live',live:'Live',push:'Push',void:'Void',review:'Review',unmatched:'Review'};
-    const resultEmoji={win:'✅',loss:'❌',pending:'⏳',live:'⏳',push:'➖',void:'🚫',review:'🧐',unmatched:'🧐'};
+    const resultEmoji={win:'✅',loss:'❌',pending:'🟡',live:'🟡',push:'➖',void:'⭕',review:'⚠️',unmatched:'⚠️'};
     const screenshotGradeEndpoint='/ingest/screenshot/grade';
     const slipModeStorageKey='parlay_slip_mode';
     const modeSettle='settle';
     const modeAnalyze='analyze';
     const overallLabel={cashed:'CASHED',lost:'LOST',still_live:'STILL LIVE',needs_review:'NEEDS REVIEW'};
-    const overallTone={cashed:'win',lost:'loss',still_live:'review',needs_review:'review'};
+    const overallTone={cashed:'win',lost:'loss',still_live:'live',needs_review:'review'};
     const emptyTextMessage='Paste at least one leg first.';
     let selectedGameByLegId={};
     let selectedPlayerByLegId={};
@@ -1865,6 +1868,9 @@ Murray over 2.5 threes'></textarea>
           legCell.innerHTML+=`<div style="margin-top:4px;font-size:12px;color:#cbd5e1;">Game: ${escapeHtml(item.matched_event)}</div>`;
         }
 
+        const normalizedStatus=status==='unmatched'?'review':status;
+        resultCell.innerHTML=`<span class='result-chip ${escapeHtml(normalizedStatus)}'>${resultEmoji[normalizedStatus]||'⚠️'} ${escapeHtml(resultLabel[normalizedStatus]||'Review')}</span>`;
+
         const needsReview=status==='review'||status==='unmatched';
         if(needsReview){
           const unsupportedMarketReview=isUnsupportedSpecialMarketReview(item);
@@ -2096,10 +2102,15 @@ Murray over 2.5 threes'></textarea>
     function handleLiveUpdateData(data){
       const previous=latestResultPayload;
       const overallState=overallTone[data.parlay_result]||'review';
-      const overallIcon=overallState==='win'?'✅':(overallState==='loss'?'❌':'⚠️');
+      const overallIcon=overallState==='win'?'✅':(overallState==='loss'?'❌':(overallState==='live'?'🟡':'⚠️'));
       overall.className=overallState;
       overall.textContent=`${overallIcon} ${(overallLabel[data.parlay_result]||'NEEDS REVIEW')}`;
       renderResultSummary(data);
+      (data.legs||[]).forEach((item,idx)=>{
+        const legId=String(item.leg_id??idx);
+        if(item.selected_event_id){selectedGameByLegId={...selectedGameByLegId,[legId]:item.selected_event_id};}
+        if(item.selected_player_id){selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:item.selected_player_id};}
+      });
       renderRows(data.legs||[],{optimize:true,previousLegs:(previous&&previous.legs)||[]});
       renderLiveWidgets(data,previous);
       if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){
@@ -2221,11 +2232,11 @@ Murray over 2.5 threes'></textarea>
       const counts=countLegResults(payload.legs||[]);
       const firstLoss=(payload.legs||[]).find((item)=>item.result==='loss');
       resultSummary.innerHTML=`
-        <span class='result-chip'>${counts.won} ✅ Win</span>
-        <span class='result-chip'>${counts.lost} ❌ Loss</span>
-        <span class='result-chip'>${counts.live} ⏳ Live</span>
-        <span class='result-chip'>${counts.review} ⚠️ Review</span>
-        <span class='result-chip'>${counts.void} ⭕ Void</span>
+        <span class='result-chip win'>${counts.won} ✅ Win</span>
+        <span class='result-chip loss'>${counts.lost} ❌ Loss</span>
+        <span class='result-chip live'>${counts.live} 🟡 Live</span>
+        <span class='result-chip review'>${counts.review} ⚠️ Review</span>
+        <span class='result-chip void'>${counts.void} ⭕ Void</span>
       `;
       resultSummary.hidden=false;
 
@@ -2666,7 +2677,7 @@ Murray over 2.5 threes'></textarea>
         msg.textContent=data.message||'Done.';
         resetRenderedSlipResult();
         const overallState=overallTone[data.parlay_result]||'review';
-        const overallIcon=overallState==='win'?'✅':(overallState==='loss'?'❌':'⚠️');
+        const overallIcon=overallState==='win'?'✅':(overallState==='loss'?'❌':(overallState==='live'?'🟡':'⚠️'));
         overall.className=overallState;
         overall.textContent=`${overallIcon} ${(overallLabel[data.parlay_result]||'NEEDS REVIEW')}`;
         renderResultSummary(data);
@@ -2677,6 +2688,11 @@ Murray over 2.5 threes'></textarea>
         }else{
           payoutOut.textContent='';
         }
+        (data.legs||[]).forEach((item,idx)=>{
+          const legId=String(item.leg_id??idx);
+          if(item.selected_event_id){selectedGameByLegId={...selectedGameByLegId,[legId]:item.selected_event_id};}
+          if(item.selected_player_id){selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:item.selected_player_id};}
+        });
         renderRows(data.legs||[]);
         renderLiveWidgets(data,null);
         const extracted=(data.extracted_text||'').trim();
@@ -2952,7 +2968,7 @@ _REVIEW_REASON_TEXT_BY_CODE: dict[str, str] = {
     'PLAYER_UNRESOLVED': "We couldn't confidently confirm this player from the slip text.",
     'INVALID_SELECTED_PLAYER_ID': 'Selected player could not be applied; please choose again.',
     'INVALID_SELECTED_EVENT_ID': 'Selected game could not be applied; choose a listed game for this leg.',
-    'PLAYER_NOT_ON_EVENT_ROSTER': "We matched the game, but couldn't fully confirm the player for this leg.",
+    'PLAYER_NOT_ON_EVENT_ROSTER': 'Matched game does not contain the resolved player on the roster.',
     'EVENT_NOT_FOUND': 'No matching game was found for the resolved team/date.',
     'MULTIPLE_GAMES_MATCHED': 'Multiple possible games were found for this player. Select the correct one.',
     'NEARBY_DATE_CANDIDATES_ONLY': 'Only nearby-date games were found; confirm the correct date.',

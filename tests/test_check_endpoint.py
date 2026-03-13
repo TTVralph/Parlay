@@ -1041,3 +1041,82 @@ def test_check_slip_adds_display_order_priority(monkeypatch):
     body = client.post('/check-slip', json={'text': 'LeBron James over 20.5 points'}).json()
     priorities = {leg['result']: leg['display_order_priority'] for leg in body['legs']}
     assert priorities == {'loss': 0, 'live': 1, 'review': 2, 'pending': 3, 'win': 4, 'push': 5}
+
+
+def test_manual_event_selection_recomputes_aggregate_and_clears_review(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    calls = []
+
+    def _grade(_text, provider=None, posted_at=None, **kwargs):
+        calls.append(kwargs)
+        selected_event = (kwargs.get('selected_event_by_leg_id') or {}).get('0')
+        ambiguous_leg = Leg(raw_text='Wendell Carter Jr. over 7.5 rebounds', sport='NBA', market_type='player_rebounds', player='Wendell Carter Jr.', confidence=0.95)
+        settled_leg = Leg(raw_text='Paolo Banchero over 19.5 points', sport='NBA', market_type='player_points', player='Paolo Banchero', confidence=0.95)
+        if selected_event == 'evt-was-orl':
+            graded_ambiguous = GradedLeg(
+                leg=ambiguous_leg.model_copy(update={
+                    'event_id': 'evt-was-orl',
+                    'event_label': 'Washington Wizards @ Orlando Magic',
+                    'matched_event_id': 'evt-was-orl',
+                    'matched_event_label': 'Washington Wizards @ Orlando Magic',
+                    'matched_event_date': '2026-03-12',
+                    'selected_event_id': 'evt-was-orl',
+                    'selected_event_label': 'Washington Wizards @ Orlando Magic',
+                    'event_selection_applied': True,
+                    'override_used_for_grading': True,
+                }),
+                settlement='win',
+                reason='Over hit',
+                actual_value=11,
+                line=7.5,
+                selected_event_id='evt-was-orl',
+                selected_event_label='Washington Wizards @ Orlando Magic',
+                event_selection_applied=True,
+                override_used_for_grading=True,
+            )
+            return GradeResponse(overall='lost', legs=[
+                graded_ambiguous,
+                GradedLeg(leg=settled_leg, settlement='loss', reason='Under target', actual_value=17, line=19.5),
+            ])
+
+        ambiguous_leg = ambiguous_leg.model_copy(update={
+            'event_candidates': [
+                {'event_id': 'evt-was-orl', 'event_label': 'Washington Wizards @ Orlando Magic', 'event_date': '2026-03-12'},
+                {'event_id': 'evt-mia-orl', 'event_label': 'Miami Heat @ Orlando Magic', 'event_date': '2026-03-10'},
+            ],
+            'event_review_reason_code': 'multiple_plausible_events',
+            'event_review_reason_text': 'Multiple plausible games were found for this player/date.',
+        })
+        return GradeResponse(overall='needs_review', legs=[
+            GradedLeg(leg=ambiguous_leg, settlement='unmatched', reason='needs event selection', review_reason='multiple games found for resolved team on date'),
+            GradedLeg(leg=settled_leg, settlement='loss', reason='Under target', actual_value=17, line=19.5),
+        ])
+
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    monkeypatch.setattr('app.main.grade_text', _grade)
+
+    first = client.post('/check-slip', json={'text': 'Wendell Carter Jr over 7.5 rebounds\nPaolo Banchero over 19.5 points'}).json()
+    assert first['parlay_result'] == 'needs_review'
+    assert first['legs'][0]['result'] == 'review'
+
+    second = client.post('/check-slip', json={
+        'text': 'Wendell Carter Jr over 7.5 rebounds\nPaolo Banchero over 19.5 points',
+        'selected_event_by_leg_id': {'0': 'evt-was-orl'},
+    }).json()
+
+    assert second['parlay_result'] == 'lost'
+    assert second['legs'][0]['result'] == 'win'
+    assert second['legs'][0]['event_selection_applied'] is True
+    assert second['legs'][0]['selected_event_id'] == 'evt-was-orl'
+    assert second['legs'][0]['review_details'] is None
+    assert any(call.get('selected_event_by_leg_id', {}).get('0') == 'evt-was-orl' for call in calls)
+
+
+def test_check_page_uses_distinct_void_and_loss_visual_semantics() -> None:
+    page = client.get('/check')
+    assert page.status_code == 200
+    text = page.text
+    assert "const resultEmoji={win:'✅',loss:'❌',pending:'🟡',live:'🟡',push:'➖',void:'⭕',review:'⚠️',unmatched:'⚠️'};" in text
+    assert '.result-chip.void,.leg-progress-chip.void' in text
+    assert '.result-chip.loss,.leg-progress-chip.loss' in text
