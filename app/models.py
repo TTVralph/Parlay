@@ -263,6 +263,10 @@ class SoldLegExplanation(BaseModel):
 class GradeResponse(BaseModel):
     overall: Literal["cashed", "lost", "pending", "needs_review"]
     legs: list[GradedLeg]
+    slip_hash: Optional[str] = None
+    leg_count: int = 0
+    sport_set: list[str] = Field(default_factory=list)
+    event_ids: list[str] = Field(default_factory=list)
     grading_diagnostics: dict[str, Any] = Field(default_factory=dict)
     sold_leg_explanations: list[SoldLegExplanation] = Field(default_factory=list)
     parlay_closeness_score: float | None = None
