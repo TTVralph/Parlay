@@ -1010,6 +1010,15 @@ def public_home_page() -> HTMLResponse:
 
 _TRACKER_COOKIE_NAME = 'parlay_tracker_key'
 
+_LEG_DISPLAY_ORDER = {
+    'loss': 0,
+    'live': 1,
+    'review': 2,
+    'pending': 3,
+    'win': 4,
+    'push': 5,
+}
+
 
 def _normalize_tracker_key(value: str | None) -> str | None:
     if not value:
@@ -1044,6 +1053,98 @@ def _slip_status_summary(legs: list[dict]) -> str:
     if voids:
         return f'{wins} of {graded} graded legs hit · {voids} void'
     return f'{wins} of {graded} graded legs hit'
+
+
+def _build_parlay_progress_summary(legs: list[dict[str, object]]) -> dict[str, object]:
+    counts = {
+        'won_legs': 0,
+        'lost_legs': 0,
+        'live_legs': 0,
+        'review_legs': 0,
+        'push_legs': 0,
+        'pending_legs': 0,
+    }
+    for leg in legs:
+        result = str(leg.get('result') or '').lower()
+        if result == 'win':
+            counts['won_legs'] += 1
+        elif result == 'loss':
+            counts['lost_legs'] += 1
+        elif result == 'live':
+            counts['live_legs'] += 1
+        elif result == 'review':
+            counts['review_legs'] += 1
+        elif result == 'push':
+            counts['push_legs'] += 1
+        elif result == 'pending':
+            counts['pending_legs'] += 1
+
+    status_segments = [
+        ('won_legs', 'won'),
+        ('lost_legs', 'lost'),
+        ('live_legs', 'live'),
+        ('review_legs', 'review'),
+        ('push_legs', 'push'),
+        ('pending_legs', 'pending'),
+    ]
+    status_text = ', '.join(f"{counts[key]} {label}" for key, label in status_segments if counts[key] > 0) or 'No legs'
+    return {
+        'total_legs': len(legs),
+        **counts,
+        'parlay_status_text': status_text,
+    }
+
+
+def _build_closest_live_leg_payload(legs: list[dict[str, object]]) -> dict[str, object] | None:
+    closest_leg: dict[str, object] | None = None
+    closest_remaining: float | None = None
+    for leg in legs:
+        if str(leg.get('result') or '').lower() != 'live':
+            continue
+        live_progress = leg.get('live_progress')
+        if not isinstance(live_progress, dict):
+            continue
+        remaining_raw = live_progress.get('remaining_to_hit')
+        if remaining_raw is None:
+            continue
+        try:
+            remaining = float(remaining_raw)
+        except (TypeError, ValueError):
+            continue
+        if closest_remaining is None or remaining < closest_remaining:
+            closest_remaining = remaining
+            closest_leg = leg
+
+    if closest_leg is None or closest_remaining is None:
+        return None
+
+    leg_text = str(closest_leg.get('leg') or 'Live leg')
+    market = str(closest_leg.get('normalized_market') or '').replace('_', ' ')
+    status_text = f"Needs {closest_remaining:g} more"
+    if market:
+        status_text = f"Needs {closest_remaining:g} more {market}"
+    return {
+        'closest_live_leg_id': closest_leg.get('leg_id'),
+        'closest_live_leg_text': leg_text,
+        'closest_live_leg_remaining': round(closest_remaining, 2),
+        'closest_live_leg_status_text': status_text,
+    }
+
+
+def _build_leg_death_card(leg: dict[str, object], sold_explanation: dict[str, object] | None) -> dict[str, object]:
+    if str(leg.get('result') or '').lower() != 'loss':
+        return {'enabled': False}
+    if not isinstance(sold_explanation, dict):
+        return {'enabled': False}
+    return {
+        'enabled': True,
+        'title': 'Parlay died here',
+        'subtitle': str(sold_explanation.get('player_or_team') or leg.get('leg') or 'Losing leg'),
+        'final_value': sold_explanation.get('final_value'),
+        'target_value': sold_explanation.get('target_line'),
+        'short_reason': sold_explanation.get('short_reason') or 'Finalized losing leg',
+        'late_game_reference': sold_explanation.get('last_relevant_play_text') or sold_explanation.get('last_relevant_context'),
+    }
 
 
 @app.get('/check', response_class=HTMLResponse)
@@ -3063,11 +3164,21 @@ def _process_public_check_text(
             'player_resolution_explanation': resolution_details.get('player_resolution_explanation'),
             'player_resolution_confidence': resolution_details.get('player_resolution_confidence'),
             'debug_comparison': item.debug_comparison,
+            'live_progress': item.live_progress,
+            'live_progress_timeline': item.live_progress_timeline,
+            'display_order_priority': _LEG_DISPLAY_ORDER.get(result, 99),
+            'death_card': _build_leg_death_card(
+                {'result': result, 'leg': item.leg.raw_text},
+                item.sold_leg_explanation.model_dump() if item.sold_leg_explanation else None,
+            ),
         })
 
 
     slip_default_date = next((item.leg.slip_default_date for item in graded.legs if item.leg.slip_default_date), None)
     mixed_event_dates_detected = any(bool(item.leg.mixed_event_dates_detected) for item in graded.legs)
+    sold_explanations = [item.model_dump() for item in (graded.sold_leg_explanations or [])]
+    parlay_progress_summary = _build_parlay_progress_summary(legs)
+    closest_live_leg = _build_closest_live_leg_payload(legs)
     parlay_result = 'still_live' if graded.overall == 'pending' else graded.overall
     out = {
         'ok': True,
@@ -3083,10 +3194,12 @@ def _process_public_check_text(
         'checked_at': datetime.utcnow().isoformat(),
         'bet_date': bet_date.isoformat() if bet_date is not None else None,
         'selected_player_by_leg_id': selected_player_by_leg_id or {},
-        'sold_leg_explanations': [item.model_dump() for item in (graded.sold_leg_explanations or [])],
+        'sold_leg_explanations': sold_explanations,
         'parlay_closeness_score': graded.parlay_closeness_score,
         'closest_miss_leg': graded.closest_miss_leg,
         'worst_miss_leg': graded.worst_miss_leg,
+        'parlay_progress_summary': parlay_progress_summary,
+        'closest_live_leg': closest_live_leg,
     }
     if unmatched_count == len(legs):
         out['message'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
