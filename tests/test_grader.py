@@ -137,3 +137,35 @@ def test_grading_includes_matched_boxscore_player_name() -> None:
     assert leg.settlement == 'win'
     assert leg.matched_boxscore_player_name == 'Draymond Green'
     assert leg.player_found_in_boxscore is True
+
+
+class _LivePropProvider:
+    def resolve_player_event(self, player: str, as_of):
+        from app.providers.base import EventInfo
+
+        if 'giddey' in player.lower():
+            return EventInfo(event_id='evt-live', sport='NBA', home_team='Los Angeles Lakers', away_team='Chicago Bulls', start_time=datetime.utcnow())
+        return EventInfo(event_id='evt-final', sport='NBA', home_team='Denver Nuggets', away_team='Boston Celtics', start_time=datetime.utcnow())
+
+    def get_player_result(self, player: str, market_type: str, event_id=None):
+        if event_id == 'evt-live':
+            return 0.0
+        return 10.0
+
+    def get_event_status(self, event_id: str):
+        return 'live' if event_id == 'evt-live' else 'final'
+
+
+def test_live_prop_leg_is_not_graded_before_final() -> None:
+    result = grade_text('Josh Giddey over 8.5 assists', provider=_LivePropProvider())
+    leg = result.legs[0]
+    assert result.overall == 'pending'
+    assert leg.settlement == 'live'
+    assert leg.actual_value == 0.0
+
+
+def test_parlay_can_be_lost_with_final_loss_and_live_legs() -> None:
+    result = grade_text('Josh Giddey over 8.5 assists\nNikola Jokic over 12.5 points', provider=_LivePropProvider())
+    assert result.overall == 'lost'
+    assert result.legs[0].settlement == 'live'
+    assert result.legs[1].settlement == 'loss'

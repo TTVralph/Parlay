@@ -729,7 +729,7 @@ def settle_leg(
         actual_value: float | None = None,
         **kwargs,
     ) -> GradedLeg:
-        if settlement in {'unmatched', 'pending', 'void'} and settlement_diagnostics.get('unmatched_reason_code') is None:
+        if settlement in {'unmatched', 'pending', 'void', 'review'} and settlement_diagnostics.get('unmatched_reason_code') is None:
             settlement_diagnostics['unmatched_reason_code'] = reason_code
         graded = GradedLeg(
             leg=leg,
@@ -953,8 +953,8 @@ def settle_leg(
         team_result = provider.get_team_result(lookup_team, event_id=leg.event_id)
         if not team_result:
             status = _event_status(provider, leg.event_id)
-            if status == 'live':
-                return explained(settlement='pending', reason='Game is in progress', reason_code=reason_codes.EVENT_UNRESOLVED, reason_message='Game is in progress', explanation_reason='event unresolved')
+            if status is not None and not _is_final_event_status(status):
+                return explained(settlement='live', reason='Game is in progress', reason_code=reason_codes.EVENT_NOT_FINAL, reason_message='Game is in progress', explanation_reason='event unresolved')
             return explained(settlement='unmatched', reason='Could not verify team result from trusted data source', reason_code=reason_codes.MISSING_STAT_SOURCE, reason_message='Could not verify team result from trusted data source', explanation_reason='event unresolved')
 
         if leg.market_type == 'moneyline':
@@ -1187,15 +1187,31 @@ def settle_leg(
 
     settlement_diagnostics['stat_source'] = 'snapshot' if used_snapshot else 'provider'
 
+    status = (event_snapshot.event_status if event_snapshot is not None else None) or _event_status(provider, leg.event_id)
+    if status is not None and not _is_final_event_status(status):
+        settlement_diagnostics['settlement_failure_reason'] = 'event not final'
+        settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_NOT_FINAL
+        return explained(
+            settlement='live',
+            reason='Game is in progress',
+            reason_code=reason_codes.EVENT_NOT_FINAL,
+            reason_message='Game is in progress',
+            explanation_reason='event unresolved',
+            actual_value=float(actual_value) if actual_value is not None else None,
+            component_values=component_values_dict,
+            stat_components=stat_components,
+            computed_total=computed_total,
+        )
+
     settlement_diagnostics['stat_lookup_result'] = 'found' if actual_value is not None else 'missing'
     if leg.line is None or leg.direction is None:
         return explained(settlement='unmatched', reason='Missing values required for settlement', reason_code=reason_codes.MISSING_SETTLEMENT_INPUTS, reason_message='Missing values required for settlement', explanation_reason='stat unavailable', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
     if actual_value is None:
         status = _event_status(provider, leg.event_id)
-        if status == 'live':
+        if status is not None and not _is_final_event_status(status):
             settlement_diagnostics['settlement_failure_reason'] = 'event not final'
             settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_NOT_FINAL
-            return explained(settlement='pending', reason='Game is in progress', reason_code=reason_codes.EVENT_UNRESOLVED, reason_message='Game is in progress', explanation_reason='event unresolved', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
+            return explained(settlement='live', reason='Game is in progress', reason_code=reason_codes.EVENT_NOT_FINAL, reason_message='Game is in progress', explanation_reason='event unresolved', actual_value=float(actual_value) if actual_value is not None else None, component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
         appeared = None
         if leg.event_id:
             dnp_confirmed = _player_confirmed_dnp(provider, player_lookup_name, leg.event_id)
@@ -1405,7 +1421,7 @@ def grade_text(
         overall = 'lost'
     elif settlements and all(settlement == 'win' for settlement in settlements):
         overall = 'cashed'
-    elif any(settlement == 'pending' for settlement in settlements) and not any(settlement == 'unmatched' for settlement in settlements):
+    elif any(settlement in {'pending', 'live'} for settlement in settlements) and not any(settlement in {'unmatched', 'review'} for settlement in settlements):
         overall = 'pending'
     else:
         overall = 'needs_review'
