@@ -51,6 +51,19 @@ _NOISE_KEYWORDS = (
     'total payout',
     'responsible gaming',
 )
+
+
+_BET365_PROFILE_INDICATORS = (
+    'same game parlay',
+    'profit boost',
+    'includes:',
+    'sgp',
+    'bet365',
+)
+_BET365_GROUP_SEPARATORS = (
+    'same game parlay',
+    'sgp',
+)
 _MARKET_ALIASES = {
     'pts': 'points',
     'pt': 'points',
@@ -148,6 +161,155 @@ def _is_market_fragment_line(line: str) -> bool:
         or _MARKET_FOLLOWUP_LINE.match(line)
         or _ALT_MARKET_PHRASE.match(line)
     )
+
+
+def detect_sportsbook_profile(raw_text: str) -> str:
+    lowered = (raw_text or '').lower()
+    score = 0
+    for token in _BET365_PROFILE_INDICATORS:
+        if token in lowered:
+            score += 1
+    if re.search(r'\b(?:\d+\s*leg\s+)?same game parlay\+?\b', lowered):
+        score += 1
+    if re.search(r"\b[a-z][a-z .\-'’]+\s*@\s*[a-z][a-z .\-'’]+\b", lowered, re.I):
+        score += 1
+    return 'bet365' if score >= 3 else 'generic'
+
+
+def _is_bet365_separator(line: str) -> bool:
+    lowered = line.lower()
+    return any(token in lowered for token in _BET365_GROUP_SEPARATORS)
+
+
+def _normalize_bet365_slip_lines(cleaned_lines: list[str]) -> tuple[list[str], dict[str, int | bool | str]]:
+    reconstructed_lines: list[str] = []
+    current_player: str | None = None
+    pending_alt_threshold: str | None = None
+    pending_market_only: str | None = None
+    pending_direction: str | None = None
+    pending_line: str | None = None
+    noise_removed = 0
+    props_reconstructed = 0
+
+    for line in cleaned_lines:
+        if _is_noise_line(line):
+            noise_removed += 1
+            continue
+        if _ODDS_ONLY_LINE.match(line):
+            noise_removed += 1
+            continue
+        if _is_bet365_separator(line):
+            current_player = None
+            pending_alt_threshold = None
+            pending_market_only = None
+            pending_direction = None
+            pending_line = None
+            continue
+
+        matchup = _MATCHUP_CONTEXT_LINE.match(line)
+        if matchup:
+            matchup_label = f"{_title_name(matchup.group('away'))} @ {_title_name(matchup.group('home'))}"
+            if not reconstructed_lines or reconstructed_lines[-1] != matchup_label:
+                reconstructed_lines.append(matchup_label)
+            current_player = None
+            pending_alt_threshold = None
+            pending_market_only = None
+            pending_direction = None
+            pending_line = None
+            continue
+
+        if _looks_like_player_name_line(line):
+            current_player = _title_name(line)
+            pending_alt_threshold = None
+            pending_market_only = None
+            pending_direction = None
+            pending_line = None
+            continue
+
+        if current_player:
+            direction_only = _DIRECTION_LINE_ONLY.match(line)
+            if direction_only:
+                if pending_market_only:
+                    reconstructed_lines.append(_format_ou_leg(current_player, direction_only.group('dir'), direction_only.group('line'), pending_market_only))
+                    props_reconstructed += 1
+                    pending_market_only = None
+                    continue
+                pending_direction = direction_only.group('dir')
+                pending_line = direction_only.group('line')
+                continue
+
+            market_only = _MARKET_ONLY_LINE.match(line)
+            if market_only:
+                if pending_alt_threshold:
+                    reconstructed_lines.append(_format_plus_leg(current_player, pending_alt_threshold, market_only.group('market')))
+                    props_reconstructed += 1
+                    pending_alt_threshold = None
+                    continue
+                if pending_direction and pending_line:
+                    reconstructed_lines.append(_format_ou_leg(current_player, pending_direction, pending_line, market_only.group('market')))
+                    props_reconstructed += 1
+                    pending_direction = None
+                    pending_line = None
+                    continue
+                pending_market_only = market_only.group('market')
+                continue
+
+            alt_threshold_only = _ALT_THRESHOLD_ONLY.match(line)
+            if alt_threshold_only:
+                pending_alt_threshold = f"{float(alt_threshold_only.group('line')):g}"
+                continue
+
+            alt_market = _ALT_MARKET_PHRASE.match(line)
+            if alt_market:
+                reconstructed_lines.append(_format_plus_leg(current_player, f"{float(alt_market.group('line')):g}", alt_market.group('market')))
+                props_reconstructed += 1
+                pending_alt_threshold = None
+                pending_market_only = None
+                pending_direction = None
+                pending_line = None
+                continue
+
+            ou_market = _OU_MARKET_LINE.match(line)
+            if ou_market:
+                reconstructed_lines.append(_format_ou_leg(current_player, ou_market.group('dir'), ou_market.group('line'), ou_market.group('market')))
+                props_reconstructed += 1
+                pending_market_only = None
+                pending_direction = None
+                pending_line = None
+                continue
+
+            if re.match(r'^TO\s+(?:SCORE|RECORD)\b$', line, re.I):
+                continue
+
+        inline_alt = _INLINE_ALT_MARKET.match(line)
+        if inline_alt and not re.match(r'^TO\s+(?:SCORE|RECORD)\b', line, re.I):
+            reconstructed_lines.append(_format_plus_leg(inline_alt.group('name'), f"{float(inline_alt.group('line')):g}", inline_alt.group('market')))
+            props_reconstructed += 1
+            current_player = _title_name(inline_alt.group('name'))
+            continue
+
+        inline_ou = _INLINE_OU_SHORTHAND.match(line)
+        if inline_ou:
+            reconstructed_lines.append(_format_ou_leg(inline_ou.group('name'), inline_ou.group('dir'), inline_ou.group('line'), inline_ou.group('market')))
+            props_reconstructed += 1
+            current_player = _title_name(inline_ou.group('name'))
+            continue
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in reconstructed_lines:
+        key = item.lower().strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+
+    return deduped, {
+        'normalization_strategy_used': 'bet365_profile_normalization',
+        'number_of_noise_lines_removed': noise_removed,
+        'number_of_props_reconstructed': props_reconstructed,
+        'grouped_sgp_reconstruction_triggered': bool(props_reconstructed),
+    }
 
 
 def _reconstruct_grouped_sgp_lines(lines: list[str]) -> tuple[list[str], bool]:
@@ -455,13 +617,28 @@ def _title_name(raw_name: str) -> str:
     return re.sub(r'\s+', ' ', raw_name).strip()
 
 
-def _build_screenshot_parse_stages(text: str) -> tuple[str, ScreenshotParseDebug]:
+def _build_screenshot_parse_stages(text: str, *, profile: str | None = None) -> tuple[str, ScreenshotParseDebug]:
+    detected_profile = profile or detect_sportsbook_profile(text)
     raw_lines = text.replace('\r', '\n').split('\n')
     normalized_lines = [_normalize_line_text(line) for line in raw_lines]
     cleaned_lines = [line for line in normalized_lines if line]
-    reconstructed_lines, grouped_triggered = _reconstruct_grouped_sgp_lines(cleaned_lines)
-    filtered_lines = [line for line in reconstructed_lines if line and not _is_noise_line(line)]
-    leg_candidates = _build_leg_candidates(filtered_lines)
+
+    if detected_profile == 'bet365':
+        reconstructed_lines, profile_summary = _normalize_bet365_slip_lines(cleaned_lines)
+        filtered_lines = reconstructed_lines[:]
+        leg_candidates = reconstructed_lines[:]
+        grouped_triggered = bool(profile_summary.get('grouped_sgp_reconstruction_triggered', False))
+    else:
+        reconstructed_lines, grouped_triggered = _reconstruct_grouped_sgp_lines(cleaned_lines)
+        filtered_lines = [line for line in reconstructed_lines if line and not _is_noise_line(line)]
+        leg_candidates = _build_leg_candidates(filtered_lines)
+        profile_summary = {
+            'normalization_strategy_used': 'generic_normalization',
+            'number_of_noise_lines_removed': max(0, len(reconstructed_lines) - len(filtered_lines)),
+            'number_of_props_reconstructed': 0,
+            'grouped_sgp_reconstruction_triggered': grouped_triggered,
+        }
+
     deduped_candidates: list[str] = []
     seen_candidates: set[str] = set()
     for candidate in leg_candidates:
@@ -470,6 +647,7 @@ def _build_screenshot_parse_stages(text: str) -> tuple[str, ScreenshotParseDebug
             continue
         seen_candidates.add(key)
         deduped_candidates.append(candidate)
+
     normalized_text = '\n'.join(deduped_candidates).strip()
     non_empty_raw_lines = [line for line in raw_lines if line.strip()]
     return normalized_text, ScreenshotParseDebug(
@@ -480,6 +658,10 @@ def _build_screenshot_parse_stages(text: str) -> tuple[str, ScreenshotParseDebug
         filtered_lines=filtered_lines,
         leg_candidates=deduped_candidates,
         grouped_sgp_reconstruction_triggered=grouped_triggered,
+        detected_profile=detected_profile,
+        normalization_strategy_used=str(profile_summary.get('normalization_strategy_used')),
+        number_of_noise_lines_removed=int(profile_summary.get('number_of_noise_lines_removed', 0)),
+        number_of_props_reconstructed=int(profile_summary.get('number_of_props_reconstructed', 0)),
         summary={
             'raw_line_count': len(non_empty_raw_lines),
             'normalized_line_count': len(cleaned_lines),
@@ -487,6 +669,10 @@ def _build_screenshot_parse_stages(text: str) -> tuple[str, ScreenshotParseDebug
             'filtered_line_count': len(filtered_lines),
             'leg_candidate_count': len(deduped_candidates),
             'grouped_sgp_reconstruction_triggered': grouped_triggered,
+            'detected_profile': detected_profile,
+            'normalization_strategy_used': str(profile_summary.get('normalization_strategy_used')),
+            'number_of_noise_lines_removed': int(profile_summary.get('number_of_noise_lines_removed', 0)),
+            'number_of_props_reconstructed': int(profile_summary.get('number_of_props_reconstructed', 0)),
         },
     )
 
@@ -496,8 +682,8 @@ def normalize_sportsbook_ocr_text(text: str) -> str:
     return normalized
 
 
-def normalize_sportsbook_slip_text(raw_text: str) -> list[str]:
-    normalized, _ = _build_screenshot_parse_stages(raw_text)
+def normalize_sportsbook_slip_text(raw_text: str, profile: str | None = None) -> list[str]:
+    normalized, _ = _build_screenshot_parse_stages(raw_text, profile=profile)
     return [line for line in normalized.splitlines() if line.strip()]
 
 

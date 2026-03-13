@@ -487,7 +487,11 @@ class ScreenshotParseDebug(BaseModel):
     filtered_lines: list[str] = Field(default_factory=list)
     leg_candidates: list[str] = Field(default_factory=list)
     grouped_sgp_reconstruction_triggered: bool = False
-    summary: dict[str, int | bool] = Field(default_factory=dict)
+    detected_profile: Optional[str] = None
+    normalization_strategy_used: Optional[str] = None
+    number_of_noise_lines_removed: int = 0
+    number_of_props_reconstructed: int = 0
+    summary: dict[str, int | bool | str] = Field(default_factory=dict)
 
 
 class ParsedScreenshotResponse(BaseModel):

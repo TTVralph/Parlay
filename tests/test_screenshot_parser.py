@@ -1,4 +1,9 @@
-from app.screenshot_parser import normalize_sportsbook_ocr_text, normalize_sportsbook_slip_text, parse_screenshot_text
+from app.screenshot_parser import (
+    detect_sportsbook_profile,
+    normalize_sportsbook_ocr_text,
+    normalize_sportsbook_slip_text,
+    parse_screenshot_text,
+)
 
 
 def test_parse_screenshot_extracts_multiple_legs_and_date_and_ignores_odds() -> None:
@@ -352,3 +357,99 @@ def test_noisy_multi_sgp_ocr_normalization_keeps_matchups_and_cleans_noise() -> 
     labels = [leg.normalized_label for leg in parsed.parsed_legs]
     assert 'Dyson Daniels Over 9.5 Points' in labels
     assert 'Victor Wembanyama Over 9.5 Rebounds' in labels
+
+
+def test_detect_sportsbook_profile_identifies_bet365_layout() -> None:
+    raw = """
+    8 leg Same Game Parlay+
+    Profit Boost 50%
+    Includes: 2 Same Game Parlay bets
+    Same Game Parlay
+    Brooklyn Nets @ Atlanta Hawks
+    """
+    assert detect_sportsbook_profile(raw) == 'bet365'
+
+
+def test_detect_sportsbook_profile_falls_back_to_generic() -> None:
+    raw = """
+    Bet Slip
+    Jayson Tatum Over 29.5 Points
+    Stephen Curry Under 4.5 Assists
+    """
+    assert detect_sportsbook_profile(raw) == 'generic'
+
+
+def test_bet365_multi_sgp_profile_normalization_scopes_matchups_tightly() -> None:
+    raw = """
+    8 leg Same Game Parlay+
+    Profit Boost 50%
+    Includes: 2 Same Game Parlay bets + 3 selections
+    Same Game Parlay
+    Brooklyn Nets @ Atlanta Hawks
+    Dyson Daniels
+    TO SCORE 10+ POINTS
+    Noah Clowney
+    TO RECORD 4+ REBOUNDS
+    Onyeka Okongwu
+    TO RECORD 8+
+    REBOUNDS
+    +291
+    Same Game Parlay
+    Denver Nuggets @ San Antonio Spurs
+    Victor Wembanyama
+    TO RECORD 10+ REBOUNDS
+    Christian Braun
+    TO RECORD 4+ REBOUNDS
+    Washington Wizards @ Orlando Magic
+    Kevin Porter Jr.
+    TO RECORD 4+ REBOUNDS
+    Milwaukee Bucks @ Miami Heat
+    Josh Giddey
+    TO RECORD 8+ ASSISTS
+    Chicago Bulls @ Los Angeles Lakers
+    """
+    normalized = normalize_sportsbook_slip_text(raw)
+    assert normalized == [
+        'Brooklyn Nets @ Atlanta Hawks',
+        'Dyson Daniels Over 9.5 Points',
+        'Noah Clowney Over 3.5 Rebounds',
+        'Onyeka Okongwu Over 7.5 Rebounds',
+        'Denver Nuggets @ San Antonio Spurs',
+        'Victor Wembanyama Over 9.5 Rebounds',
+        'Christian Braun Over 3.5 Rebounds',
+        'Washington Wizards @ Orlando Magic',
+        'Kevin Porter Jr. Over 3.5 Rebounds',
+        'Milwaukee Bucks @ Miami Heat',
+        'Josh Giddey Over 7.5 Assists',
+        'Chicago Bulls @ Los Angeles Lakers',
+    ]
+
+
+def test_bet365_profile_debug_metadata_is_exposed_when_enabled() -> None:
+    raw = """
+    Same Game Parlay
+    Brooklyn Nets @ Atlanta Hawks
+    Dyson Daniels
+    TO SCORE 10+ POINTS
+    Profit Boost 50%
+    """
+    parsed = parse_screenshot_text(raw, raw, include_debug=True)
+    assert parsed.parse_debug is not None
+    assert parsed.parse_debug.detected_profile == 'bet365'
+    assert parsed.parse_debug.normalization_strategy_used == 'bet365_profile_normalization'
+    assert parsed.parse_debug.number_of_noise_lines_removed >= 1
+    assert parsed.parse_debug.number_of_props_reconstructed >= 1
+
+
+def test_normalize_sportsbook_slip_text_profile_override_generic() -> None:
+    raw = """
+    Same Game Parlay
+    Cleveland Cavaliers @ Boston Celtics
+    Evan Mobley
+    TO RECORD 8+ REBOUNDS
+    """
+    normalized = normalize_sportsbook_slip_text(raw, profile='generic')
+    assert normalized == [
+        'Cleveland Cavaliers @ Boston Celtics',
+        'Evan Mobley Over 7.5 Rebounds',
+    ]
