@@ -1194,6 +1194,9 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     #overall.loss{background:linear-gradient(135deg,#450a0a,#7f1d1d);border:1px solid #ef4444;color:#fff1f2;}
     #overall.review{background:linear-gradient(135deg,#422006,#78350f);border:1px solid #f59e0b;color:#fffbeb;}
     .result-summary,.result-meta,.leg-progress{display:flex;flex-wrap:wrap;gap:8px;}
+    .live-updates-indicator{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid #ef444488;background:#450a0a66;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#fecaca;}
+    .live-updates-indicator .dot{width:8px;height:8px;border-radius:50%;background:#ef4444;box-shadow:0 0 0 0 #ef444488;animation:livePulse 1.6s infinite;}
+    @keyframes livePulse{0%{box-shadow:0 0 0 0 #ef444477;}70%{box-shadow:0 0 0 10px #ef444400;}100%{box-shadow:0 0 0 0 #ef444400;}}
     .result-chip,.meta-chip,.leg-progress-chip{display:inline-flex;align-items:center;border:1px solid var(--border);border-radius:999px;padding:6px 11px;font-size:12px;font-weight:700;background:var(--bg-soft);color:var(--text);}
     .result-chip.win,.leg-progress-chip.win{border-color:#22c55e;color:#15803d;}
     .result-chip.loss,.leg-progress-chip.loss{border-color:#ef4444;color:#b91c1c;}
@@ -1276,6 +1279,16 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     .leg-breakdown-head{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-top:4px;}
     .leg-breakdown-title{font-size:16px;font-weight:900;}
     .leg-breakdown-copy{font-size:12px;color:var(--muted);}
+    .live-progress-shell{display:grid;gap:10px;}
+    .live-widget{border:1px solid var(--border);border-radius:14px;padding:12px;background:var(--surface-elev);}
+    .live-widget h4{margin:0 0 8px;font-size:14px;}
+    .live-leg-row{display:grid;gap:6px;padding:8px 0;border-top:1px solid var(--border);} .live-leg-row:first-child{border-top:none;padding-top:0;}
+    .live-bar-track{height:10px;border-radius:999px;background:var(--bg-soft);overflow:hidden;}
+    .live-bar-fill{height:100%;background:linear-gradient(90deg,#2563eb,#22d3ee);transition:width .45s ease;}
+    .stat-flash{animation:statFlash 1.1s ease;}
+    @keyframes statFlash{0%{background:#16a34a44;}100%{background:transparent;}}
+    .leg-clock{font-size:12px;color:var(--muted);font-weight:700;}
+    .timeline-item{font-size:12px;color:var(--muted);margin-top:4px;}
     table{width:100%;border-collapse:separate;border-spacing:0;} th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;} thead th{font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);} tbody tr{transition:background .18s ease;} tbody tr:hover{background:color-mix(in srgb,var(--surface-elev) 80%,var(--primary) 8%);}
     a{color:var(--primary);} code{background:var(--bg-soft);padding:2px 6px;border-radius:6px;color:var(--primary-2);} .loading-skeleton{display:none;grid-template-columns:1fr;gap:8px;}
     .result-flow [data-reveal]{opacity:0;transform:translateY(8px);transition:opacity .22s ease,transform .22s ease;}
@@ -1363,6 +1376,13 @@ Murray over 2.5 threes'></textarea>
       <div id='saferRewrite' data-reveal='4' hidden></div>
       <div id='resultSummary' class='result-summary' data-reveal='2' hidden></div>
       <div id='legProgressStrip' class='leg-progress' data-reveal='5' hidden></div>
+      <div id='liveIndicator' class='live-updates-indicator' data-reveal='5' hidden><span class='dot'></span>LIVE UPDATES</div>
+      <div id='liveProgressShell' class='live-progress-shell' data-reveal='5' hidden>
+        <div id='parlayProgressSummary' class='live-widget' hidden></div>
+        <div id='closestLiveLegCard' class='live-widget' hidden></div>
+        <div id='liveLegProgressBar' class='live-widget' hidden></div>
+        <div id='legTimeline' class='live-widget' hidden></div>
+      </div>
       <div id='metaSummary' class='result-meta' data-reveal='6' hidden></div>
       <div id='diedHere' data-reveal='5' hidden></div>
       <div id='legBreakdownHeader' data-reveal='7' hidden></div>
@@ -1425,6 +1445,12 @@ Murray over 2.5 threes'></textarea>
     const resultSummary=document.getElementById('resultSummary');
     const metaSummary=document.getElementById('metaSummary');
     const legProgressStrip=document.getElementById('legProgressStrip');
+    const liveIndicator=document.getElementById('liveIndicator');
+    const liveProgressShell=document.getElementById('liveProgressShell');
+    const parlayProgressSummary=document.getElementById('parlayProgressSummary');
+    const closestLiveLegCard=document.getElementById('closestLiveLegCard');
+    const liveLegProgressBar=document.getElementById('liveLegProgressBar');
+    const legTimeline=document.getElementById('legTimeline');
     const payoutOut=document.getElementById('payoutOut');
     const diedHere=document.getElementById('diedHere');
     const legBreakdownHeader=document.getElementById('legBreakdownHeader');
@@ -1448,6 +1474,7 @@ Murray over 2.5 threes'></textarea>
     let legUiStateByLegId={};
     let latestPublicUrl='';
     let latestResultPayload=null;
+    let activeLivePolling=null;
     let screenshotNeedsParse=false;
     let screenshotParseInFlight=false;
     let parsedScreenshotSignature=null;
@@ -1781,10 +1808,20 @@ Murray over 2.5 threes'></textarea>
       return null;
     }
 
-    function renderRows(legs){
-      legsBody.innerHTML='';
+    function renderRows(legs, options={}){
+      const optimize=Boolean(options.optimize);
+      const previousById=new Map((options.previousLegs||[]).map((item,idx)=>[String(item.leg_id??idx),item]));
+      if(!optimize){legsBody.innerHTML='';}
       for(const [index,item] of (legs||[]).entries()){
         const legId=String(item.leg_id ?? index);
+        const previousItem=previousById.get(legId);
+        if(optimize&&previousItem){
+          const prevCurrent=asNumber(previousItem&&previousItem.live_progress&&previousItem.live_progress.current_stat_value);
+          const nextCurrent=asNumber(item&&item.live_progress&&item.live_progress.current_stat_value);
+          const statusChanged=String(previousItem.status||'')!==String(item.status||'');
+          const currentChanged=prevCurrent!==nextCurrent;
+          if(!statusChanged&&!currentChanged){continue;}
+        }
         const existingState=legUiStateByLegId[legId]||{};
         const hasCurrentCandidates=(item.candidate_games||[]).length>0;
         const hasCurrentPlayerCandidates=(item.candidate_players||[]).length>0;
@@ -1803,6 +1840,7 @@ Murray over 2.5 threes'></textarea>
         legUiStateByLegId={...legUiStateByLegId,[legId]:nextState};
 
         const tr=document.createElement('tr');
+        tr.dataset.legId=legId;
         const legCell=document.createElement('td');
         const resultCell=document.createElement('td');
         const eventCell=document.createElement('td');
@@ -1812,6 +1850,14 @@ Murray over 2.5 threes'></textarea>
         legCell.innerHTML=`<div style="font-weight:700;">${resultEmoji[status]||'🧐'} ${escapeHtml(legText)}</div>`;
         if(item.actual_value!==null&&item.actual_value!==undefined){
           legCell.innerHTML+=`<div style="margin-top:4px;font-size:12px;color:#cbd5e1;">Actual: ${escapeHtml(String(item.actual_value))}</div>`;
+        }
+        const previousStat=asNumber(previousItem&&previousItem.live_progress&&previousItem.live_progress.current_stat_value);
+        const currentStat=asNumber(item&&item.live_progress&&item.live_progress.current_stat_value);
+        if(previousStat!==null&&currentStat!==null&&currentStat>previousStat){
+          legCell.innerHTML+=`<div class='stat-flash' style='margin-top:4px;padding:3px 8px;border-radius:8px;font-size:12px;'>${previousStat} → ${currentStat}</div>`;
+        }
+        if(formatLiveClock(item)){
+          legCell.innerHTML+=`<div class='leg-clock' style='margin-top:4px;'>${formatLiveClock(item)}</div>`;
         }
         resultCell.className='leg-result-cell';
 
@@ -1898,7 +1944,12 @@ Murray over 2.5 threes'></textarea>
         tr.appendChild(legCell);
         tr.appendChild(resultCell);
         tr.appendChild(eventCell);
-        legsBody.appendChild(tr);
+        if(optimize){
+          const existingRow=legsBody.querySelector(`tr[data-leg-id="${legId}"]`);
+          if(existingRow){legsBody.replaceChild(tr,existingRow);}else{legsBody.appendChild(tr);}
+        }else{
+          legsBody.appendChild(tr);
+        }
       }
     }
 
@@ -1951,6 +2002,119 @@ Murray over 2.5 threes'></textarea>
       });
       legProgressStrip.innerHTML=chips.join('');
       legProgressStrip.hidden=!chips.length;
+    }
+
+    function formatLiveClock(leg){
+      if(!leg||!leg.period||!leg.clock){return '';}
+      return `${escapeHtml(String(leg.period))} • ${escapeHtml(String(leg.clock))}`;
+    }
+
+    function renderParlayProgressSummaryCard(payload){
+      const summary=payload&&payload.parlay_progress_summary;
+      if(!summary){parlayProgressSummary.hidden=true;return;}
+      parlayProgressSummary.innerHTML=`<h4>ParlayProgressSummary</h4><div>${escapeHtml(String(summary.summary_text||'Live progress available.'))}</div>`;
+      parlayProgressSummary.hidden=false;
+    }
+
+    function renderClosestLiveLeg(payload){
+      const closest=payload&&payload.closest_live_leg;
+      if(!closest){closestLiveLegCard.hidden=true;return;}
+      closestLiveLegCard.innerHTML=`<h4>ClosestLiveLegCard</h4><div><strong>${escapeHtml(String(closest.closest_live_leg_text||'Live leg'))}</strong></div><div style='margin-top:4px;'>${escapeHtml(String(closest.closest_live_leg_status_text||''))}</div>`;
+      closestLiveLegCard.hidden=false;
+    }
+
+    function renderLiveProgressBars(payload, previousPayload){
+      const legs=((payload&&payload.legs)||[]).filter((leg)=>String(leg.status||'').toLowerCase()==='live'&&leg.live_progress);
+      if(!legs.length){liveLegProgressBar.hidden=true;return;}
+      const previousById=new Map(((previousPayload&&previousPayload.legs)||[]).map((item,idx)=>[String(item.leg_id??idx),item]));
+      liveLegProgressBar.innerHTML=`<h4>LiveLegProgressBar</h4>${legs.map((leg,idx)=>{
+        const legId=String(leg.leg_id??idx);
+        const progress=leg.live_progress||{};
+        const current=asNumber(progress.current_stat_value)??0;
+        const target=asNumber(progress.target_value)??0;
+        const ratio=target>0?Math.max(0,Math.min(1,current/target)):0;
+        const prevLeg=previousById.get(legId);
+        const prevCurrent=asNumber(prevLeg&&prevLeg.live_progress&&prevLeg.live_progress.current_stat_value);
+        const increased=prevCurrent!==null&&current>prevCurrent;
+        const valueLabel=increased?`<span class='stat-flash' style='padding:2px 6px;border-radius:8px;'>${prevCurrent} → ${current}</span>`:`${current}`;
+        return `<div class='live-leg-row'><div><strong>${escapeHtml(String(leg.leg||'Live leg'))}</strong></div><div>${valueLabel} / ${target||'—'}</div><div class='live-bar-track'><div class='live-bar-fill' style='width:${Math.round(ratio*100)}%'></div></div>${formatLiveClock(leg)?`<div class='leg-clock'>${formatLiveClock(leg)}</div>`:''}</div>`;
+      }).join('')}`;
+      liveLegProgressBar.hidden=false;
+    }
+
+    function renderLegTimelineCard(payload){
+      const legs=((payload&&payload.legs)||[]).filter((leg)=>String(leg.status||'').toLowerCase()==='live'&&Array.isArray(leg.live_progress_timeline)&&leg.live_progress_timeline.length);
+      if(!legs.length){legTimeline.hidden=true;return;}
+      legTimeline.innerHTML=`<h4>LegTimeline</h4>${legs.map((leg)=>`<div class='live-leg-row'><div><strong>${escapeHtml(String(leg.leg||'Live leg'))}</strong></div>${leg.live_progress_timeline.slice(-3).map((entry)=>`<div class='timeline-item'>${escapeHtml(String(entry.label||entry.period||''))}${entry.clock?` • ${escapeHtml(String(entry.clock))}`:''}${entry.value!==undefined?` • ${escapeHtml(String(entry.value))}`:''}</div>`).join('')}</div>`).join('')}`;
+      legTimeline.hidden=false;
+    }
+
+    function renderLiveWidgets(payload, previousPayload){
+      renderParlayProgressSummaryCard(payload);
+      renderClosestLiveLeg(payload);
+      renderLiveProgressBars(payload, previousPayload);
+      renderLegTimelineCard(payload);
+      liveProgressShell.hidden=parlayProgressSummary.hidden&&closestLiveLegCard.hidden&&liveLegProgressBar.hidden&&legTimeline.hidden;
+    }
+
+    function hasLiveLegs(payload){
+      return Boolean((payload&&payload.legs||[]).some((leg)=>String(leg.status||'').toLowerCase()==='live'));
+    }
+
+    function buildCheckPayloadFromInputs(){
+      const text=slip.value.trim();
+      const stakeRaw=(stakeAmount.value||'').trim();
+      const payload={text};
+      if(stakeRaw){payload.stake_amount=stakeRaw;}
+      if(slipDate.value){payload.bet_date=slipDate.value; payload.date_of_slip=slipDate.value;}
+      if(searchHistorical.checked){payload.search_historical=true;}
+      if(Object.keys(selectedGameByLegId).length){payload.selected_event_by_leg_id=selectedGameByLegId;}
+      if(Object.keys(selectedPlayerByLegId).length){payload.selected_player_by_leg_id=selectedPlayerByLegId;}
+      return payload;
+    }
+
+    function useLiveSlipUpdates(getPayload,onData){
+      let intervalId=null;
+      const stop=()=>{if(intervalId){clearInterval(intervalId);intervalId=null;}liveIndicator.hidden=true;};
+      const tick=async()=>{
+        try{
+          const res=await fetch('/check-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(getPayload())});
+          if(!res.ok){return;}
+          const data=await res.json();
+          onData(data);
+          if(!hasLiveLegs(data)){stop();}
+        }catch(_err){}
+      };
+      const start=()=>{
+        if(intervalId){return;}
+        liveIndicator.hidden=false;
+        intervalId=setInterval(tick,30000);
+      };
+      return {start,stop,isActive:()=>Boolean(intervalId)};
+    }
+
+    function handleLiveUpdateData(data){
+      const previous=latestResultPayload;
+      const overallState=overallTone[data.parlay_result]||'review';
+      const overallIcon=overallState==='win'?'✅':(overallState==='loss'?'❌':'⚠️');
+      overall.className=overallState;
+      overall.textContent=`${overallIcon} ${(overallLabel[data.parlay_result]||'NEEDS REVIEW')}`;
+      renderResultSummary(data);
+      renderRows(data.legs||[],{optimize:true,previousLegs:(previous&&previous.legs)||[]});
+      renderLiveWidgets(data,previous);
+      if(data.estimated_payout!==undefined&&data.estimated_profit!==undefined){
+        payoutOut.textContent=`Estimated payout: $${Number(data.estimated_payout).toFixed(2)} (profit: $${Number(data.estimated_profit).toFixed(2)})`;
+      }else if(data.payout_message){
+        payoutOut.textContent=data.payout_message;
+      }
+      summaryOut.value=buildSummary(data);
+      latestResultPayload=data;
+    }
+
+    function syncLivePolling(payload){
+      if(!activeLivePolling){activeLivePolling=useLiveSlipUpdates(buildCheckPayloadFromInputs,handleLiveUpdateData);}
+      if(hasLiveLegs(payload)){activeLivePolling.start();}
+      else{activeLivePolling.stop();}
     }
 
     function asNumber(value){
@@ -2401,6 +2565,12 @@ Murray over 2.5 threes'></textarea>
       resultSummary.hidden=true;
       legProgressStrip.hidden=true;
       legProgressStrip.innerHTML='';
+      liveIndicator.hidden=true;
+      liveProgressShell.hidden=true;
+      parlayProgressSummary.hidden=true;
+      closestLiveLegCard.hidden=true;
+      liveLegProgressBar.hidden=true;
+      legTimeline.hidden=true;
       metaSummary.innerHTML='';
       metaSummary.hidden=true;
       diedHere.hidden=true;
@@ -2412,6 +2582,7 @@ Murray over 2.5 threes'></textarea>
       downloadCardBtn.disabled=true;
       latestPublicUrl='';
       latestResultPayload=null;
+      if(activeLivePolling){activeLivePolling.stop();}
       clearActionStatus();
       overall.className='review';
       overall.textContent='⚠️ NEEDS REVIEW';
@@ -2486,13 +2657,7 @@ Murray over 2.5 threes'></textarea>
           clearScreenshotSelection({keepMessage:true});
           latestPlayerSuggestions=[];
           renderNameSuggestions();
-          const stakeRaw=(stakeAmount.value||'').trim();
-          const payload={text};
-          if(stakeRaw){payload.stake_amount=stakeRaw;}
-          if(slipDate.value){payload.bet_date=slipDate.value; payload.date_of_slip=slipDate.value;}
-          if(searchHistorical.checked){payload.search_historical=true;}
-          if(Object.keys(selectedGameByLegId).length){payload.selected_event_by_leg_id=selectedGameByLegId;}
-          if(Object.keys(selectedPlayerByLegId).length){payload.selected_player_by_leg_id=selectedPlayerByLegId;}
+          const payload=buildCheckPayloadFromInputs();
           res=await fetch('/check-slip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
           data=await res.json();
         }
@@ -2513,6 +2678,7 @@ Murray over 2.5 threes'></textarea>
           payoutOut.textContent='';
         }
         renderRows(data.legs||[]);
+        renderLiveWidgets(data,null);
         const extracted=(data.extracted_text||'').trim();
         const parsedLegs=(data.parsed_legs||[]).filter(Boolean);
         const parseWarning=data.parse_warning?`<div><strong>Parsing:</strong> ${data.parse_warning}</div>`:'';
@@ -2527,6 +2693,7 @@ Murray over 2.5 threes'></textarea>
         summaryOut.value=buildSummary(data);
         latestPublicUrl=data.public_url||'';
         latestResultPayload=data;
+        syncLivePolling(data);
         copyBtn.disabled=false;
         copyLinkBtn.disabled=!latestPublicUrl;
         openLinkBtn.disabled=!latestPublicUrl;
@@ -2557,6 +2724,7 @@ Murray over 2.5 threes'></textarea>
       console.error('Check page runtime error:', event.error||event.message||event);
       msg.textContent='Something went wrong in the page. Please refresh and try again.';
     });
+    window.addEventListener('beforeunload',()=>{if(activeLivePolling){activeLivePolling.stop();}});
 
 
     function drawShareCard(payload){
