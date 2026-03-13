@@ -3,13 +3,54 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.grader import grade_text
+from app.grader import build_slip_groups, grade_text
 from app.providers.base import EventInfo, TeamResult
 from app.providers.espn_provider import ESPNNBAResultsProvider
 from app.services.event_snapshot import EventSnapshot, EventSnapshotService
 from app.services.play_by_play_provider import PlayByPlayEvent
 from app.services.request_cache import RequestCache
 from app.services.snapshot_store import SnapshotStore
+
+from app.models import Leg
+
+
+def test_build_slip_groups_single_game_multi_leg() -> None:
+    legs = [
+        Leg(raw_text='Shai Gilgeous-Alexander over 6.5 assists', sport='NBA', market_type='player_assists', event_id='evt-okc-den'),
+        Leg(raw_text='Chet Holmgren over 8.5 rebounds', sport='NBA', market_type='player_rebounds', event_id='evt-okc-den'),
+        Leg(raw_text='OKC Thunder moneyline', sport='NBA', market_type='moneyline', event_id='evt-okc-den'),
+    ]
+
+    groups = build_slip_groups(legs)
+
+    assert len(groups) == 1
+    assert groups[0].event_id == 'evt-okc-den'
+    assert len(groups[0].legs) == 3
+    assert all(leg.is_same_game_parlay is True for leg in legs)
+    assert len({leg.group_id for leg in legs}) == 1
+
+
+def test_build_slip_groups_multi_game_and_mixed_sports() -> None:
+    legs = [
+        Leg(raw_text='Jokic over 29.5 points', sport='NBA', market_type='player_points', event_id='evt-nba-1'),
+        Leg(raw_text='Murray over 6.5 assists', sport='NBA', market_type='player_assists', event_id='evt-nba-1'),
+        Leg(raw_text='Mahomes over 249.5 passing yards', sport='NFL', market_type='player_passing_yards', event_id='evt-nfl-1'),
+        Leg(raw_text='Kelce over 69.5 receiving yards', sport='NFL', market_type='player_receiving_yards', event_id='evt-nfl-1'),
+        Leg(raw_text='Yankees moneyline', sport='MLB', market_type='moneyline', event_id='evt-mlb-1'),
+    ]
+
+    groups = build_slip_groups(legs)
+
+    assert len(groups) == 3
+    by_event = {group.event_id: group for group in groups}
+    assert len(by_event['evt-nba-1'].legs) == 2
+    assert len(by_event['evt-nfl-1'].legs) == 2
+    assert len(by_event['evt-mlb-1'].legs) == 1
+
+    mlb_leg = next(leg for leg in legs if leg.event_id == 'evt-mlb-1')
+    assert mlb_leg.is_same_game_parlay is False
+    assert mlb_leg.group_id is not None
+
 
 
 class _FakeScoreboardProvider:
@@ -287,6 +328,11 @@ def test_grading_groups_legs_by_event_and_builds_snapshot_once(monkeypatch) -> N
 
     assert len(result.legs) == 2
     assert calls == ['evt-1']
+    assert all(leg.leg.group_id for leg in result.legs)
+    assert all(leg.leg.is_same_game_parlay is True for leg in result.legs)
+    sgp_diag = (result.grading_diagnostics.get('sgp') or {})
+    assert sgp_diag.get('sgp_group_count') == 1
+    assert list((sgp_diag.get('legs_per_group') or {}).values()) == [2]
 
 
 
