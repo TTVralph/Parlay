@@ -2251,6 +2251,12 @@ Murray over 2.5 threes'></textarea>
       if(hasStake){chips.push(`<span class='meta-chip'>Stake: $${Number(payload.stake_amount).toFixed(2)}</span>`);}
       if(payload.estimated_payout!==undefined&&payload.estimated_payout!==null){chips.push(`<span class='meta-chip'>Est. payout: $${Number(payload.estimated_payout).toFixed(2)}</span>`);}
       if(hasStake&&payload.payout_message){chips.push(`<span class='meta-chip'>${payload.payout_message}</span>`);}
+      const slipConfidence=asNumber(payload.slip_confidence);
+      if(slipConfidence!==null){
+        const tier=String(payload.confidence_tier||'medium').toLowerCase();
+        const tierLabel=tier==='high'?'High confidence':(tier==='low'?'Low confidence':'Medium confidence');
+        chips.push(`<span class='meta-chip'>Confidence: ${Math.round(slipConfidence*100)}% (${tierLabel})</span>`);
+      }
       const graded=counts.won+counts.lost;
       let secondary='';
       if(counts.lost>0&&counts.review>0){
@@ -2438,6 +2444,9 @@ Murray over 2.5 threes'></textarea>
           grading_confidence:item.settlement_explanation?.grading_confidence||null,
         })),
         parlay_result:(body.result?.overall==='pending'?'still_live':(body.result?.overall||'needs_review')),
+        slip_confidence:body.result?.slip_confidence??null,
+        confidence_tier:body.result?.confidence_tier??null,
+        confidence_recommendation:body.result?.confidence_recommendation??null,
       };
     }
 
@@ -3337,6 +3346,12 @@ def _process_public_check_text(
             'settlement_reason_text': item.settlement_explanation.settlement_reason_text if item.settlement_explanation else None,
             'settlement_reason': item.settlement_explanation.settlement_reason if item.settlement_explanation else None,
             'grading_confidence': item.settlement_explanation.grading_confidence if item.settlement_explanation else None,
+            'confidence_score': item.confidence_score,
+            'confidence_breakdown': item.confidence_breakdown,
+            'player_match_score': item.player_match_score,
+            'event_match_score': item.event_match_score,
+            'stat_parse_score': item.stat_parse_score,
+            'ocr_quality_score': item.ocr_quality_score,
             'settlement_diagnostics': item.settlement_diagnostics,
             'unmatched_reason_code': (item.settlement_diagnostics or {}).get('unmatched_reason_code'),
             'review_reason_text': effective_review_text or item.review_reason_text,
@@ -3384,6 +3399,9 @@ def _process_public_check_text(
         'worst_miss_leg': graded.worst_miss_leg,
         'parlay_progress_summary': parlay_progress_summary,
         'closest_live_leg': closest_live_leg,
+        'slip_confidence': graded.slip_confidence,
+        'confidence_tier': graded.confidence_tier,
+        'confidence_recommendation': graded.confidence_recommendation,
     }
     if unmatched_count == len(legs):
         out['message'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'
@@ -3394,6 +3412,12 @@ def _process_public_check_text(
 
     if ambiguous_count > 0:
         out['grading_warning'] = 'This leg matches multiple possible games. Add opponent/date or upload the full slip.'
+
+    if graded.confidence_recommendation == 'verify_recommended' and not out.get('grading_warning'):
+        out['grading_warning'] = 'Confidence is medium; verify recommended before finalizing this slip.'
+    elif graded.confidence_recommendation == 'needs_review':
+        out['message'] = 'Slip confidence is low and needs review.'
+        out['grading_warning'] = 'Slip confidence is low and needs review.'
 
     if stake_amount is not None:
         financials = extract_financials(normalized)

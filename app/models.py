@@ -193,6 +193,12 @@ class GradedLeg(BaseModel):
     override_used_for_grading: bool = False
     live_progress: Optional[dict[str, Any]] = None
     live_progress_timeline: list[dict[str, Any]] = Field(default_factory=list)
+    confidence_score: Optional[float] = None
+    confidence_breakdown: dict[str, float] = Field(default_factory=dict)
+    player_match_score: Optional[float] = None
+    event_match_score: Optional[float] = None
+    stat_parse_score: Optional[float] = None
+    ocr_quality_score: Optional[float] = None
 
 
 class SettlementExplanation(BaseModel):
@@ -251,6 +257,9 @@ class GradeResponse(BaseModel):
     parlay_closeness_score: float | None = None
     closest_miss_leg: dict[str, Any] | None = None
     worst_miss_leg: dict[str, Any] | None = None
+    slip_confidence: Optional[float] = None
+    confidence_tier: Optional[Literal['high', 'medium', 'low']] = None
+    confidence_recommendation: Optional[Literal['auto_grade', 'verify_recommended', 'needs_review']] = None
 
 
 class AllSportsGame(BaseModel):
