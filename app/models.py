@@ -189,6 +189,8 @@ class GradedLeg(BaseModel):
     event_selection_source: Optional[Literal['auto', 'user_selected']] = None
     event_selection_explanation: Optional[str] = None
     override_used_for_grading: bool = False
+    live_progress: Optional[dict[str, Any]] = None
+    live_progress_timeline: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SettlementExplanation(BaseModel):

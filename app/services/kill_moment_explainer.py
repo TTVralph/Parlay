@@ -146,16 +146,16 @@ def _build_player_summary(*, leg: Leg, final_value: float | None, stat_label: st
         clock = last_event.clock or 'unknown clock'
         period = _period_label(last_event) or 'game'
         if stat_label == 'REB':
-            return f"{player}'s final rebound came with {clock} left in {period}. He finished with {_fmt_num(final_value)} rebounds."
+            return f"{player}'s closest late-game rebound came with {clock} left in {period}. Final stat: {_fmt_num(final_value)} rebounds vs line {_fmt_num(leg.line)}."
         if stat_label == 'AST':
-            return f"{player}'s final assist came with {clock} left in {period}. He finished with {_fmt_num(final_value)} assists."
+            return f"{player}'s closest late-game assist came with {clock} left in {period}. Final stat: {_fmt_num(final_value)} assists vs line {_fmt_num(leg.line)}."
         if stat_label == '3PM':
-            return f"{player}'s final made three came with {clock} left in {period}. He finished with {_fmt_num(final_value)} threes."
-        return f"{player}'s last PTS play came with {clock} left in {period}. He finished with {_fmt_num(final_value)} PTS and did not add more."
+            return f"{player}'s closest late-game made three came with {clock} left in {period}. Final stat: {_fmt_num(final_value)} threes vs line {_fmt_num(leg.line)}."
+        return f"{player}'s closest late-game scoring play came with {clock} left in {period}. Final stat: {_fmt_num(final_value)} PTS vs line {_fmt_num(leg.line)}."
 
     if stat_label == 'AST' and (final_value or 0.0) <= 0:
         return f"{player}'s last recorded assist opportunity never materialized; he finished with 0 assists."
-    return f'{player} finished with {_fmt_num(final_value)} {stat_label}. No play-by-play kill moment was available.'
+    return f'{player} finished with {_fmt_num(final_value)} {stat_label} vs line {_fmt_num(leg.line)}. No play-by-play kill moment was available.'
 
 
 def _build_combo_summary(
@@ -169,7 +169,7 @@ def _build_combo_summary(
     player = _player_label(leg)
     comp_order = _COMBO_COMPONENTS.get(leg.market_type, ())
     comp_text = ', '.join(f"{_fmt_num(component_values.get(key))} {key}" for key in comp_order)
-    base = f'{player} finished at {_fmt_num(final_value)} {leg.market_type.replace("player_", "").upper()} ({comp_text}).'
+    base = f'{player} finished at {_fmt_num(final_value)} {leg.market_type.replace("player_", "").upper()} ({comp_text}) vs line {_fmt_num(leg.line)}.'
     if last_event is None or component_changed is None:
         return f'{base} No play-by-play kill moment was available.'
     clock = last_event.clock or 'unknown clock'
