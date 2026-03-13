@@ -7,6 +7,7 @@ from .models import GradeResponse, GradedLeg, Leg
 from .services import grade_reason_codes as reason_codes
 from .services.settlement_explainer import build_settlement_explanation, with_explanation
 from .services.leg_explainer import explain_sold_legs
+from .services.confidence_scoring import confidence_recommendation, score_leg_confidence, score_slip_confidence
 from .services.market_registry import MARKET_REGISTRY, player_market_to_canonical
 from .services.play_by_play_provider import ESPNPlayByPlayProvider, PlayByPlayEvent
 from .services.provider_router import ProviderRouter
@@ -790,6 +791,12 @@ def _build_debug_comparison(leg: Leg, *, graded: GradedLeg, reason_code: str, re
         'settlement_reason_code': reason_code,
         'grading_confidence': graded.resolution_confidence,
         'review_downgrade_reason': review_reason,
+        'confidence_score': graded.confidence_score,
+        'confidence_breakdown': graded.confidence_breakdown,
+        'player_match_score': graded.player_match_score,
+        'event_match_score': graded.event_match_score,
+        'stat_parse_score': graded.stat_parse_score,
+        'ocr_quality_score': graded.ocr_quality_score,
     }
 
 
@@ -806,6 +813,13 @@ def settle_leg(
     base_kwargs['validation_warnings'] = []
     settlement_diagnostics = _default_settlement_diagnostics(leg)
     settlement_diagnostics['source_equivalence_policy'] = 'source-neutral; confidence-driven only'
+    leg_confidence = score_leg_confidence(leg, input_source_path=input_source_path)
+    settlement_diagnostics['confidence_score'] = leg_confidence.confidence_score
+    settlement_diagnostics['confidence_breakdown'] = leg_confidence.as_dict()
+    settlement_diagnostics['player_match_score'] = leg_confidence.player_match_score
+    settlement_diagnostics['event_match_score'] = leg_confidence.event_match_score
+    settlement_diagnostics['stat_parse_score'] = leg_confidence.stat_parse_score
+    settlement_diagnostics['ocr_quality_score'] = leg_confidence.ocr_quality_score
     base_kwargs['settlement_diagnostics'] = settlement_diagnostics
 
     def explained(
@@ -826,6 +840,12 @@ def settle_leg(
             reason=reason,
             actual_value=actual_value,
             review_reason=review_reason,
+            confidence_score=leg_confidence.confidence_score,
+            confidence_breakdown=leg_confidence.as_dict(),
+            player_match_score=leg_confidence.player_match_score,
+            event_match_score=leg_confidence.event_match_score,
+            stat_parse_score=leg_confidence.stat_parse_score,
+            ocr_quality_score=leg_confidence.ocr_quality_score,
             **base_kwargs,
             **kwargs,
         )
@@ -1538,7 +1558,21 @@ def grade_text(
     else:
         overall = 'needs_review'
 
-    response = GradeResponse(overall=overall, legs=graded, grading_diagnostics={'snapshot': run_snapshot_diagnostics})
+    leg_confidence_scores = [float(item.confidence_score) for item in graded if item.confidence_score is not None]
+    slip_confidence = score_slip_confidence(leg_confidence_scores)
+    confidence_tier, confidence_action = confidence_recommendation(slip_confidence)
+
+    if confidence_action == 'needs_review':
+        overall = 'needs_review'
+
+    response = GradeResponse(
+        overall=overall,
+        legs=graded,
+        grading_diagnostics={'snapshot': run_snapshot_diagnostics},
+        slip_confidence=slip_confidence,
+        confidence_tier=confidence_tier,
+        confidence_recommendation=confidence_action,
+    )
     closeness_score, closest_miss_leg, worst_miss_leg = _compute_parlay_closeness(graded)
     response.parlay_closeness_score = closeness_score
     response.closest_miss_leg = closest_miss_leg
