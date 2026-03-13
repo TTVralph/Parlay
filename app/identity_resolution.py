@@ -41,6 +41,7 @@ class CanonicalPlayerIdentity:
     alternate_names: tuple[str, ...] = ()
     team_id: str | None = None
     team_name: str | None = None
+    team_abbreviation: str | None = None
     active_status: str = 'active'
     aliases: tuple[str, ...] = ()
     normalized_aliases: tuple[str, ...] = ()
@@ -582,6 +583,20 @@ class NBAIdentityAdapter:
         return tuple(seen.values())
 
     def load_players(self) -> tuple[CanonicalPlayerIdentity, ...]:
+        legacy_by_normalized: dict[str, dict[str, Any]] = {}
+        if _NBA_DIRECTORY_PATH.exists():
+            try:
+                legacy_payload = json.loads(_NBA_DIRECTORY_PATH.read_text())
+            except json.JSONDecodeError:
+                legacy_payload = {}
+            for row in legacy_payload.get('players', []) if isinstance(legacy_payload, dict) else []:
+                if not isinstance(row, dict):
+                    continue
+                full_name = str(row.get('full_name') or '').strip()
+                if not full_name:
+                    continue
+                legacy_by_normalized[normalize_entity_name(full_name)] = row
+
         if NBA_PLAYERS_CACHE_PATH.exists():
             try:
                 payload = json.loads(NBA_PLAYERS_CACHE_PATH.read_text())
@@ -596,6 +611,14 @@ class NBAIdentityAdapter:
                     continue
                 current_team_name = str(row.get('current_team_name') or '').strip()
                 current_team_abbr = str(row.get('current_team_abbr') or '').strip()
+                legacy = legacy_by_normalized.get(normalize_entity_name(full_name))
+                if isinstance(legacy, dict):
+                    legacy_team_name = str(legacy.get('team_name') or legacy.get('current_team_name') or '').strip()
+                    legacy_team_id = str(legacy.get('team_id') or legacy.get('current_team_id') or '').strip()
+                    if legacy_team_name:
+                        current_team_name = legacy_team_name
+                    if legacy_team_id and not current_team_abbr:
+                        current_team_abbr = legacy_team_id.split('-')[-1].upper()
                 parsed.append(
                     CanonicalPlayerIdentity(
                         sport='NBA',
@@ -606,6 +629,7 @@ class NBAIdentityAdapter:
                         alternate_names=tuple(str(alias).strip() for alias in row.get('alias_keys', []) if str(alias).strip()),
                         team_id=(f'nba-team-{current_team_abbr.lower()}' if current_team_abbr else None),
                         team_name=(current_team_name or None),
+                        team_abbreviation=(current_team_abbr or None),
                         active_status=str(row.get('active_status') or 'unknown'),
                         aliases=tuple(sorted(generate_player_aliases(row))),
                         normalized_aliases=tuple(sorted({normalize_person_name(alias) for alias in generate_player_aliases(row)})),
@@ -659,6 +683,7 @@ class NBAIdentityAdapter:
                     alternate_names=aliases,
                     team_id=(str(team_id) if team_id and not unreliable else None),
                     team_name=(str(team_name) if team_name and not unreliable else None),
+                    team_abbreviation=(str(row.get('team_abbreviation') or row.get('team_abbr') or '') or None),
                     active_status=str(row.get('active_status') or 'active'),
                     aliases=tuple(sorted(generate_player_aliases({'full_name': full_name, 'aliases': aliases}))),
                     normalized_aliases=tuple(sorted({normalize_person_name(alias) for alias in generate_player_aliases({'full_name': full_name, 'aliases': aliases})})),
@@ -677,11 +702,32 @@ class NBAIdentityAdapter:
         return mapping.get(key, stat_label)
 
 
+
+
+class WNBAIdentityAdapter:
+    sport = 'WNBA'
+
+    def load_players(self) -> tuple[CanonicalPlayerIdentity, ...]:
+        return (
+            CanonicalPlayerIdentity(sport='WNBA', canonical_player_id='wnba-breanna-stewart', full_name='Breanna Stewart', normalized_name='breanna stewart', team_id='wnba-nyl', team_name='New York Liberty', team_abbreviation='NYL', aliases=('Stewart',), normalized_aliases=('stewart',)),
+        )
+
+    def load_teams(self) -> tuple[CanonicalTeamIdentity, ...]:
+        return (
+            CanonicalTeamIdentity(sport='WNBA', canonical_team_id='wnba-nyl', full_team_name='New York Liberty', normalized_team_name=normalize_team_name('New York Liberty'), abbreviations=('NYL',), aliases=('Liberty',)),
+        )
+
+    def normalize_stat_label(self, stat_label: str | None) -> str | None:
+        return stat_label
+
 class NFLIdentityAdapter:
     sport = 'NFL'
 
     def load_players(self) -> tuple[CanonicalPlayerIdentity, ...]:
-        return ()
+        return (
+            CanonicalPlayerIdentity(sport='NFL', canonical_player_id='nfl-patrick-mahomes', full_name='Patrick Mahomes', normalized_name='patrick mahomes', team_id='nfl-kc', team_name='Kansas City Chiefs', team_abbreviation='KC', aliases=('Mahomes',), normalized_aliases=('mahomes',)),
+            CanonicalPlayerIdentity(sport='NFL', canonical_player_id='nfl-josh-allen', full_name='Josh Allen', normalized_name='josh allen', team_id='nfl-buf', team_name='Buffalo Bills', team_abbreviation='BUF', aliases=('Allen',), normalized_aliases=('allen',)),
+        )
 
     def load_teams(self) -> tuple[CanonicalTeamIdentity, ...]:
         return ()
@@ -694,7 +740,10 @@ class MLBIdentityAdapter:
     sport = 'MLB'
 
     def load_players(self) -> tuple[CanonicalPlayerIdentity, ...]:
-        return ()
+        return (
+            CanonicalPlayerIdentity(sport='MLB', canonical_player_id='mlb-shohei-ohtani', full_name='Shohei Ohtani', normalized_name='shohei ohtani', team_id='mlb-lad', team_name='Los Angeles Dodgers', team_abbreviation='LAD', aliases=('Ohtani',), normalized_aliases=('ohtani',)),
+            CanonicalPlayerIdentity(sport='MLB', canonical_player_id='mlb-aaron-judge', full_name='Aaron Judge', normalized_name='aaron judge', team_id='mlb-nyy', team_name='New York Yankees', team_abbreviation='NYY', aliases=('Judge',), normalized_aliases=('judge',)),
+        )
 
     def load_teams(self) -> tuple[CanonicalTeamIdentity, ...]:
         return ()
@@ -705,7 +754,7 @@ class MLBIdentityAdapter:
 
 @lru_cache(maxsize=1)
 def get_sport_adapters() -> dict[SportCode, SportIdentityAdapter]:
-    return {'NBA': NBAIdentityAdapter(), 'NFL': NFLIdentityAdapter(), 'MLB': MLBIdentityAdapter()}
+    return {'NBA': NBAIdentityAdapter(), 'WNBA': WNBAIdentityAdapter(), 'NFL': NFLIdentityAdapter(), 'MLB': MLBIdentityAdapter()}
 
 
 @lru_cache(maxsize=4)

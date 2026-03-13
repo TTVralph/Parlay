@@ -10,7 +10,7 @@ from .providers.base import EventInfo, ResultsProvider
 from .services.nba_game_resolver import resolve_player_game
 from .services.daily_event_manifest import DailyEventManifestService
 from .services.scoreboard_provider import ESPNScoreboardProvider
-from .services.sport_resolver_hooks import apply_sport_resolver_hook
+from .services.sport_resolver_hooks import apply_sport_resolver_hook, get_sport_resolver_policy
 
 AMBIGUOUS_EVENT_WARNING = 'multiple games found for resolved team on date'
 PLAYER_TEAM_UNRESOLVED_WARNING = 'team could not be resolved from player identity'
@@ -19,6 +19,7 @@ MULTIPLE_POSSIBLE_GAMES_WARNING = 'Multiple possible games. Add bet date to narr
 NO_TEAM_GAME_ON_SELECTED_DATE_WARNING = 'no game found for resolved team on date'
 MULTIPLE_TEAM_GAMES_WARNING = 'multiple games found for resolved team on date'
 TEAM_EVENT_MISMATCH_WARNING = 'Matched event does not include player team'
+PLAYER_TEAM_MISMATCH_REVIEW_WARNING = 'player/team mismatch requires manual review'
 
 logger = logging.getLogger(__name__)
 
@@ -427,6 +428,7 @@ def resolve_leg_events(
         selection_source: str | None = None
         selection_explanation: str | None = None
         canonical_player_name: str | None = None
+        player_team_mismatch_detected = False
         directory_loaded = bool(resolve_player_identity('Nikola Jokic', sport=leg.sport).resolved_player_id) if leg.sport == 'NBA' else True
         normalized_lookup_key = normalize_entity_name(leg.player) if leg.player else None
 
@@ -435,6 +437,8 @@ def resolve_leg_events(
 
         leg_id = str(leg.leg_id) if leg.leg_id is not None else str(index)
         updates['leg_id'] = leg_id
+
+        sport_policy = get_sport_resolver_policy(leg.sport)
 
         if leg.player:
             selected_player_id = (selected_player_by_leg_id or {}).get(leg_id)
@@ -533,7 +537,11 @@ def resolve_leg_events(
                 if pre_team_filter_count > 0 and not candidates:
                     if TEAM_EVENT_MISMATCH_WARNING not in notes:
                         notes.append(TEAM_EVENT_MISMATCH_WARNING)
+                    if PLAYER_TEAM_MISMATCH_REVIEW_WARNING not in notes:
+                        notes.append(PLAYER_TEAM_MISMATCH_REVIEW_WARNING)
                     updates['resolution_confidence'] = min(float(updates.get('resolution_confidence') or leg.resolution_confidence or 1.0), 0.3)
+                    player_team_mismatch_detected = True
+                    resolution_warnings.append('player_team_mismatch')
                 context_date = _context_date_for_leg(slip_filter_value)
                 if context_date is not None:
                     team_day_links = resolved_team_date_event_ids.get((_norm(player_team), context_date), set())
@@ -597,6 +605,17 @@ def resolve_leg_events(
                 notes.append(f'diagnostic: scoreboard_narrowed_candidates={len(candidates)}')
 
         candidates = apply_sport_resolver_hook(leg, candidates, slip_filter_value)
+        if player_team and sport_policy.team_filter_required:
+            before_policy_team_filter = len(candidates)
+            candidates = [event for event in candidates if _event_contains_team(event, player_team)]
+            if before_policy_team_filter > 0 and not candidates:
+                player_team_mismatch_detected = True
+                resolution_warnings.append('player_team_mismatch')
+                updates['resolution_confidence'] = min(float(updates.get('resolution_confidence') or leg.resolution_confidence or 1.0), 0.3)
+                if TEAM_EVENT_MISMATCH_WARNING not in notes:
+                    notes.append(TEAM_EVENT_MISMATCH_WARNING)
+                if PLAYER_TEAM_MISMATCH_REVIEW_WARNING not in notes:
+                    notes.append(PLAYER_TEAM_MISMATCH_REVIEW_WARNING)
         candidates = _sorted_candidate_events(candidates, slip_value=slip_filter_value)
         all_candidates_before_date_filter = _sorted_candidate_events(all_candidates_before_date_filter, slip_value=slip_filter_value)
 
@@ -685,6 +704,7 @@ def resolve_leg_events(
         updates['resolution_ambiguity_reason'] = updates.get('resolution_ambiguity_reason')
         updates['candidate_players'] = list(updates.get('candidate_players', []))
         updates['candidate_player_details'] = list(updates.get('candidate_player_details', []))
+        updates['player_team_mismatch_detected'] = bool(player_team_mismatch_detected)
         updates['notes'] = notes
 
         if updates.get('selection_error_code') == 'INVALID_SELECTED_EVENT_ID':
@@ -719,8 +739,8 @@ def resolve_leg_events(
             updates['matched_team'] = player_team or leg.team
             updates['event_resolution_status'] = 'resolved'
             updates['event_resolution_method'] = updates.get('matched_by') or 'event_lookup'
-            updates['event_review_reason_code'] = None
-            updates['event_review_reason_text'] = None
+            updates['event_review_reason_code'] = 'player_team_mismatch' if player_team_mismatch_detected else None
+            updates['event_review_reason_text'] = 'Matched player identity conflicts with event team context.' if player_team_mismatch_detected else None
             updates['event_date_match_quality'] = _event_date_match_quality(event, slip_filter_value)
             updates['roster_validation_result'] = 'unknown'
             updates['event_resolution_warnings'] = list(dict.fromkeys(resolution_warnings))

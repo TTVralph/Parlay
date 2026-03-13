@@ -47,3 +47,13 @@ PLAYER_ALIASES = _merge('PLAYER_ALIASES')
 MARKET_ALIASES = _merge('MARKET_ALIASES')
 TEAM_SPORTS = _merge('TEAM_SPORTS')
 PLAYER_SPORTS = _merge('PLAYER_SPORTS')
+
+
+def get_team_context_lookup(sport: str | None = None) -> dict[str, str]:
+    aliases = get_team_aliases(sport)
+    return {str(alias).lower(): team for alias, team in aliases.items()}
+
+
+def get_player_context_lookup(sport: str | None = None) -> dict[str, str]:
+    aliases = get_player_aliases(sport)
+    return {str(alias).lower(): player for alias, player in aliases.items()}

@@ -60,7 +60,7 @@ def _event_match_score(leg: Leg) -> float:
     if len(leg.event_candidates or []) > 1:
         base -= 0.15
     if leg.event_review_reason_code:
-        base -= 0.2
+        base -= 0.25
     return _clamp(base)
 
 
@@ -86,11 +86,14 @@ def score_leg_confidence(leg: Leg, *, input_source_path: str) -> LegConfidenceBr
     ocr_quality = _ocr_quality_score(leg, input_source_path=input_source_path)
 
     confidence = (
-        0.35 * player_match
-        + 0.35 * event_match
+        0.40 * player_match
+        + 0.30 * event_match
         + 0.20 * stat_parse
         + 0.10 * ocr_quality
     )
+
+    if leg.player_team_mismatch_detected:
+        confidence *= 0.35
     return LegConfidenceBreakdown(
         confidence_score=round(_clamp(confidence), 4),
         player_match_score=round(player_match, 4),
