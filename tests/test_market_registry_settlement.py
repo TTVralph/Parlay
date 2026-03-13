@@ -416,3 +416,37 @@ def test_settle_leg_snapshot_direct_id_match_keeps_existing_behavior() -> None:
     snapshot_diag = graded.settlement_diagnostics.get('snapshot_stat_diagnostics') or {}
     assert snapshot_diag.get('used_snapshot') is True
     assert snapshot_diag.get('player_match_result') == 'direct_match'
+
+
+def test_settle_leg_pra_uses_box_score_component_sum_for_win() -> None:
+    provider = RegistryProvider()
+    leg = Leg(
+        raw_text='Nikola Jokic Over 39.5 PRA',
+        sport='NBA',
+        market_type='player_pra',
+        player='Nikola Jokic',
+        direction='over',
+        line=39.5,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Boston Celtics @ Denver Nuggets',
+        resolved_team='Denver Nuggets',
+    )
+    snapshot = EventSnapshot(
+        event_id='evt-1',
+        home_team={'name': 'Denver Nuggets'},
+        away_team={'name': 'Boston Celtics'},
+        normalized_player_stats={
+            'nikolajokic': {
+                'player_id': '15',
+                'display_name': 'Nikola Jokic',
+                'stats': {'PTS': 28.0, 'REB': 11.0, 'AST': 9.0},
+            }
+        },
+    )
+
+    graded = settle_leg(leg, provider, event_snapshot=snapshot)
+
+    assert graded.actual_value == 48.0
+    assert graded.settlement == 'win'
+    assert graded.leg.market_type == 'player_pra'
