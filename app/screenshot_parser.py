@@ -43,6 +43,8 @@ _NOISE_KEYWORDS = (
     'hide legs',
     'same game parlay',
     'sgp stack',
+    'sgp',
+    'includes:',
     'edit bet',
     'bet id',
     'total wager',
@@ -74,7 +76,14 @@ _MARKET_ALIASES = {
     'rebs + ast': 'rebounds + assists',
     'rebounds + assists': 'rebounds + assists',
     'pra': 'points + rebounds + assists',
+    'pr': 'points + rebounds',
+    'pa': 'points + assists',
+    'ra': 'rebounds + assists',
     'points + rebounds + assists': 'points + rebounds + assists',
+    'steals': 'steals',
+    'stl': 'steals',
+    'blocks': 'blocks',
+    'blk': 'blocks',
 }
 _PLAYER_ONLY_LINE = re.compile(r"^[A-Z][A-Za-z\-'’\.]+(?:\s+[A-Z][A-Za-z\-'’\.]+){1,3}$")
 _OU_MARKET_LINE = re.compile(
@@ -96,6 +105,7 @@ _MATCHUP_TIME_LINE = re.compile(
     r'^(?:[A-Z]{2,4}\s+){1,3}(?:today|tomorrow|\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}/\d{1,2}).*$',
     re.I,
 )
+_MATCHUP_CONTEXT_LINE = re.compile(r"^(?P<away>[A-Za-z][A-Za-z .\-'’]+?)\s*(?:@|vs\.?|versus|at)\s*(?P<home>[A-Za-z][A-Za-z .\-'’]+?)$", re.I)
 _LEG_WITH_DIRECTION = re.compile(
     r"^(?P<name>[A-Za-z\-'’\. ]+?)\s+(?P<dir>Over|Under)\s+(?P<line>\d+(?:\.\d+)?)\s+(?P<market>[A-Za-z0-9+ ]+)$",
     re.I,
@@ -103,15 +113,16 @@ _LEG_WITH_DIRECTION = re.compile(
 _MARKET_FOLLOWUP_LINE = re.compile(r'^(?P<market>Triple\s*-?\s*Double|Double\s*-?\s*Double)$', re.I)
 _YES_NO_ONLY = re.compile(r'^(Yes|No)$', re.I)
 _DIRECTION_LINE_ONLY = re.compile(r'^(?P<dir>O|U|Over|Under)\s*(?P<line>\d+(?:\.\d+)?)$', re.I)
-_MARKET_ONLY_LINE = re.compile(r'^(?P<market>Pts|Points|Reb|Rebs|Rebounds|Ast|Asts|Assists|PRA|Pts\s*\+\s*Ast|Pts\s*\+\s*Reb|Reb\s*\+\s*Ast|Rebounds\s*\+\s*Assists|Points\s*\+\s*Assists|Points\s*\+\s*Rebounds|Points\s*\+\s*Rebounds\s*\+\s*Assists|3PM|3PT|Threes|Three\s+Pointers(?:\s+Made)?|Three\s*[- ]\s*Point\s+Field\s+Goals\s+Made)$', re.I)
+_MARKET_ONLY_LINE = re.compile(r'^(?P<market>Pts|Points|Reb|Rebs|Rebounds|Ast|Asts|Assists|Stl|Steals|Blk|Blocks|PRA|PR|PA|RA|Pts\s*\+\s*Ast|Pts\s*\+\s*Reb|Reb\s*\+\s*Ast|Rebounds\s*\+\s*Assists|Points\s*\+\s*Assists|Points\s*\+\s*Rebounds|Points\s*\+\s*Rebounds\s*\+\s*Assists|3PM|3PT|Threes|Three\s+Pointers(?:\s+Made)?|Three\s*[- ]\s*Point\s+Field\s+Goals\s+Made)$', re.I)
 _ALT_MARKET_PHRASE = re.compile(
-    r'^(?:TO\s+(?:SCORE|RECORD)\s+)?(?P<line>\d+(?:\.\d+)?)\s*\+\s*(?P<market>POINTS|REBOUNDS|ASSISTS|PRA)\b',
+    r'^(?:TO\s+(?:SCORE|RECORD)\s+)?(?P<line>\d+(?:\.\d+)?)\s*\+\s*(?P<market>POINTS|REBOUNDS|ASSISTS|STEALS|BLOCKS|PRA|PR|PA|RA)\b',
     re.I,
 )
 _INLINE_ALT_MARKET = re.compile(
-    r"^(?!TO\b)(?P<name>[A-Za-z\-'’\. ]+?)\s+(?:TO\s+(?:SCORE|RECORD)\s+)?(?P<line>\d+(?:\.\d+)?)\s*\+\s*(?P<market>POINTS|REBOUNDS|ASSISTS|PRA)\b",
+    r"^(?!TO\b)(?P<name>[A-Za-z\-'’\. ]+?)\s+(?:TO\s+(?:SCORE|RECORD)\s+)?(?P<line>\d+(?:\.\d+)?)\s*\+\s*(?P<market>POINTS|REBOUNDS|ASSISTS|STEALS|BLOCKS|PRA|PR|PA|RA)\b",
     re.I,
 )
+_ALT_THRESHOLD_ONLY = re.compile(r'^TO\s+(?:SCORE|RECORD)\s+(?P<line>\d+(?:\.\d+)?)\s*\+$', re.I)
 _THRESHOLD_FIRST_SLASH = re.compile(
     r'^(?P<line>\d+(?:\.\d+)?)\s*\+\s*/\s*(?P<name>[A-Za-z\-\'’\. ]+?)\s+(?P<market>[A-Za-z0-9+\- ]+)$',
     re.I,
@@ -172,7 +183,7 @@ def _reconstruct_grouped_sgp_lines(lines: list[str]) -> tuple[list[str], bool]:
 def _is_noise_line(line: str) -> bool:
     lowered = line.lower()
     if any(noise in lowered for noise in _NOISE_KEYWORDS):
-        if 'same game parlay' in lowered and any(token in lowered for token in ('over', 'under', '+', 'yes', 'no')):
+        if 'same game parlay' in lowered and any(token in lowered for token in ('over', 'under', 'yes', 'no')):
             return False
         return True
     if _ODDS_ONLY_LINE.match(line):
@@ -183,8 +194,11 @@ def _is_noise_line(line: str) -> bool:
         return True
     if lowered in {'draftkings', 'fanduel', 'bet365', 'betmgm', 'bet slip'}:
         return True
-    if '@' in line and all(part.strip() for part in line.split('@', 1)):
+
+    if re.match(r'^\d{1,2}:\d{2}\s*(?:am|pm)\s*(?:et|ct|mt|pt)?$', lowered, re.I):
         return True
+    if _MATCHUP_CONTEXT_LINE.match(line):
+        return False
     return bool(_MATCHUP_TIME_LINE.match(line))
 
 
@@ -222,7 +236,8 @@ def _format_ou_leg(name: str, direction: str, line: str, market: str) -> str:
 def _format_plus_leg(name: str, line: str, market: str) -> str:
     clean_name = _title_name(name)
     clean_market = _normalize_market_label(market).title()
-    return f'{clean_name} {line}+ {clean_market}'
+    threshold = float(line)
+    return f'{clean_name} Over {threshold - 0.5:g} {clean_market}'
 
 
 def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
@@ -234,8 +249,18 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
     pending_market_only: str | None = None
     pending_direction: str | None = None
     pending_line: str | None = None
+    pending_alt_threshold: str | None = None
 
     for line in cleaned_lines:
+        matchup = _MATCHUP_CONTEXT_LINE.match(line)
+        if matchup:
+            normalized.append(f"{_title_name(matchup.group('away'))} @ {_title_name(matchup.group('home'))}")
+            current_player = None
+            pending_market_only = None
+            pending_direction = None
+            pending_line = None
+            pending_alt_threshold = None
+            continue
         inline_yes_no = _INLINE_YES_NO_LINE.match(line)
         if inline_yes_no:
             name = _title_name(inline_yes_no.group('name'))
@@ -286,6 +311,10 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
 
         market_only = _MARKET_ONLY_LINE.match(line)
         if market_only and current_player:
+            if pending_alt_threshold:
+                normalized.append(_format_plus_leg(current_player, pending_alt_threshold, market_only.group('market')))
+                pending_alt_threshold = None
+                continue
             if pending_direction and pending_line:
                 normalized.append(_format_ou_leg(current_player, pending_direction, pending_line, market_only.group('market')))
                 pending_direction = None
@@ -329,6 +358,11 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
             pending_market_only = None
             continue
 
+        alt_threshold_only = _ALT_THRESHOLD_ONLY.match(line)
+        if alt_threshold_only and current_player:
+            pending_alt_threshold = f"{float(alt_threshold_only.group('line')):g}"
+            continue
+
         if _looks_like_player_name_line(line) and not _MARKET_FOLLOWUP_LINE.match(line):
             current_player = _title_name(line)
             pending_yes_no_name = current_player
@@ -337,6 +371,7 @@ def _build_leg_candidates(cleaned_lines: list[str]) -> list[str]:
             pending_market_only = None
             pending_direction = None
             pending_line = None
+            pending_alt_threshold = None
             continue
 
         alt_market = _ALT_MARKET_PHRASE.match(line)
@@ -427,7 +462,15 @@ def _build_screenshot_parse_stages(text: str) -> tuple[str, ScreenshotParseDebug
     reconstructed_lines, grouped_triggered = _reconstruct_grouped_sgp_lines(cleaned_lines)
     filtered_lines = [line for line in reconstructed_lines if line and not _is_noise_line(line)]
     leg_candidates = _build_leg_candidates(filtered_lines)
-    normalized_text = '\n'.join(line for line in leg_candidates if line).strip()
+    deduped_candidates: list[str] = []
+    seen_candidates: set[str] = set()
+    for candidate in leg_candidates:
+        key = candidate.lower().strip()
+        if not key or key in seen_candidates:
+            continue
+        seen_candidates.add(key)
+        deduped_candidates.append(candidate)
+    normalized_text = '\n'.join(deduped_candidates).strip()
     non_empty_raw_lines = [line for line in raw_lines if line.strip()]
     return normalized_text, ScreenshotParseDebug(
         raw_ocr_text=text,
@@ -435,14 +478,14 @@ def _build_screenshot_parse_stages(text: str) -> tuple[str, ScreenshotParseDebug
         normalized_lines=cleaned_lines,
         reconstructed_lines=reconstructed_lines,
         filtered_lines=filtered_lines,
-        leg_candidates=leg_candidates,
+        leg_candidates=deduped_candidates,
         grouped_sgp_reconstruction_triggered=grouped_triggered,
         summary={
             'raw_line_count': len(non_empty_raw_lines),
             'normalized_line_count': len(cleaned_lines),
             'reconstructed_line_count': len(reconstructed_lines),
             'filtered_line_count': len(filtered_lines),
-            'leg_candidate_count': len(leg_candidates),
+            'leg_candidate_count': len(deduped_candidates),
             'grouped_sgp_reconstruction_triggered': grouped_triggered,
         },
     )
@@ -451,6 +494,11 @@ def _build_screenshot_parse_stages(text: str) -> tuple[str, ScreenshotParseDebug
 def normalize_sportsbook_ocr_text(text: str) -> str:
     normalized, _ = _build_screenshot_parse_stages(text)
     return normalized
+
+
+def normalize_sportsbook_slip_text(raw_text: str) -> list[str]:
+    normalized, _ = _build_screenshot_parse_stages(raw_text)
+    return [line for line in normalized.splitlines() if line.strip()]
 
 
 def _detect_bet_date(text: str) -> str | None:
