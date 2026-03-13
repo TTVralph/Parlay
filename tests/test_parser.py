@@ -200,3 +200,29 @@ def test_parse_first_half_team_markets_remain_unmatched_until_registry_support()
     legs = parse_text('First Half Over 110.5\nLakers 1H -3.5')
     assert len(legs) == 2
     assert all(leg.market_type not in {'first_half_total', 'first_half_spread'} for leg in legs)
+
+
+def test_parse_combo_stat_variants_normalize_stat_type_tokens() -> None:
+    cases = [
+        ('Nikola Jokic Over 39.5 PRA', 'player_pra', 'PRA'),
+        ('Nikola Jokic Over 24.5 PR', 'player_pr', 'PR'),
+        ('Nikola Jokic Over 30.5 PA', 'player_pa', 'PA'),
+        ('Nikola Jokic Over 19.5 RA', 'player_ra', 'RA'),
+        ('Nikola Jokic Over PRA 39.5', 'player_pra', 'PRA'),
+        ('Nikola Jokic over 39.5 pra', 'player_pra', 'PRA'),
+        ('Nikola Jokic Over 39.5 P + R + A', 'player_pra', 'PRA'),
+        ('Nikola Jokic Over 39.5 Pts + Reb + Ast', 'player_pra', 'PRA'),
+    ]
+    for text, market_type, normalized_stat_type in cases:
+        legs = parse_text(text)
+        assert len(legs) == 1
+        leg = legs[0]
+        assert leg.market_type == market_type
+        assert leg.normalized_stat_type == normalized_stat_type
+
+
+def test_parse_unsupported_stat_falls_back_with_parse_warning() -> None:
+    legs = parse_text('Nikola Jokic Over 5.5 Fouls')
+    assert len(legs) == 1
+    assert legs[0].confidence == 0.0
+    assert 'Unmatched leg' in legs[0].notes
