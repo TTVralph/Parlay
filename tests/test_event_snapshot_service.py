@@ -857,3 +857,36 @@ def test_multiple_grade_calls_share_cached_snapshot(monkeypatch) -> None:
     assert _CountingSnapshotService.calls == 1
     snapshot_diag = second.grading_diagnostics.get('snapshot') or {}
     assert snapshot_diag.get('snapshot_cache_hits', 0) >= 1
+
+
+def test_wnba_espn_stat_key_aliases_normalize_threes_and_combo_fields() -> None:
+    service = EventSnapshotService()
+    summary = {
+        'boxscore': {
+            'players': [
+                {
+                    'team': {'displayName': 'New York Liberty'},
+                    'statistics': [
+                        {
+                            'labels': ['PTS', 'REB', 'AST', '3PT'],
+                            'athletes': [
+                                {
+                                    'athlete': {'id': 'wnba-1', 'displayName': 'Breanna Stewart'},
+                                    'stats': ['27', '10', '6', '4-9'],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+
+    players = service._player_stats_from_summary(summary)
+    stats = players['breannastewart']['stats']
+
+    assert stats['3PT'] == '4-9'
+    assert stats['PR'] == 37.0
+    assert stats['PA'] == 33.0
+    assert stats['RA'] == 16.0
+    assert stats['PRA'] == 43.0

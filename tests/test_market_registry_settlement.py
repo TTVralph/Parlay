@@ -450,3 +450,92 @@ def test_settle_leg_pra_uses_box_score_component_sum_for_win() -> None:
     assert graded.actual_value == 48.0
     assert graded.settlement == 'win'
     assert graded.leg.market_type == 'player_pra'
+
+
+def test_wnba_points_over_under_and_final_settlement_with_snapshot() -> None:
+    provider = RegistryProvider()
+    leg_over = Leg(
+        raw_text='Breanna Stewart over 24.5 points',
+        sport='WNBA',
+        market_type='player_points',
+        player='Breanna Stewart',
+        direction='over',
+        line=24.5,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Las Vegas Aces @ New York Liberty',
+        resolved_team='New York Liberty',
+    )
+    leg_under = Leg(
+        raw_text='Breanna Stewart under 25.5 points',
+        sport='WNBA',
+        market_type='player_points',
+        player='Breanna Stewart',
+        direction='under',
+        line=25.5,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Las Vegas Aces @ New York Liberty',
+        resolved_team='New York Liberty',
+    )
+    snapshot = EventSnapshot(
+        event_id='evt-1',
+        sport='WNBA',
+        event_status='final',
+        home_team={'name': 'New York Liberty'},
+        away_team={'name': 'Las Vegas Aces'},
+        normalized_player_stats={
+            'breannastewart': {
+                'player_id': 'p1',
+                'display_name': 'Breanna Stewart',
+                'stats': {'PTS': 25.0},
+            }
+        },
+    )
+
+    graded_over = settle_leg(leg_over, provider, event_snapshot=snapshot)
+    graded_under = settle_leg(leg_under, provider, event_snapshot=snapshot)
+
+    assert graded_over.settlement == 'win'
+    assert graded_under.settlement == 'win'
+    assert graded_over.actual_value == 25.0
+    assert graded_over.settlement_diagnostics.get('stat_source') == 'snapshot'
+
+
+def test_wnba_combo_and_live_progress_from_rule_engine() -> None:
+    from app.grader import _build_live_progress_payload
+
+    provider = RegistryProvider()
+    leg = Leg(
+        raw_text='Aja Wilson over 33.5 pra',
+        sport='WNBA',
+        market_type='player_pra',
+        player='Aja Wilson',
+        direction='over',
+        line=33.5,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Las Vegas Aces @ New York Liberty',
+        resolved_team='Las Vegas Aces',
+    )
+    snapshot = EventSnapshot(
+        event_id='evt-1',
+        sport='WNBA',
+        event_status='live',
+        normalized_player_stats={
+            'ajawilson': {
+                'player_id': 'p2',
+                'display_name': 'Aja Wilson',
+                'stats': {'PTS': 20.0, 'REB': 9.0, 'AST': 5.0},
+            }
+        },
+    )
+
+    graded = settle_leg(leg, provider, event_snapshot=snapshot)
+    payload = _build_live_progress_payload(leg, actual_value=34.0, line=33.5, component_values={'PTS': 20.0, 'REB': 9.0, 'AST': 5.0})
+
+    assert graded.actual_value == 34.0
+    assert graded.settlement == 'live'
+    assert payload is not None
+    assert payload['live_status_text'] == 'Line hit'
+    assert payload['component_breakdown'] == {'PTS': 20.0, 'REB': 9.0, 'AST': 5.0}

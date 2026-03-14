@@ -379,7 +379,18 @@ class EventSnapshotService:
                 text = str(raw).strip()
                 if not text or text == '--':
                     continue
-                if '-' in text and key.lower() in {'3pt made', '3pt field goals made', 'threes made'}:
+                normalized_key = str(key or '').strip().lower()
+                if '-' in text and normalized_key in {
+                    '3pt',
+                    '3pt made',
+                    '3pt field goals made',
+                    'threes made',
+                    '3 pointers made',
+                    '3-pointers made',
+                    'three pointers made',
+                    'three-point field goals made',
+                    'three point field goals made',
+                }:
                     text = text.split('-', 1)[0]
                 try:
                     values[key] = float(text)

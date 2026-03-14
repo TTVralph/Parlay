@@ -16,10 +16,16 @@ This file summarizes stat-rule engine coverage by sport.
 - Future common markets: alternate lines, quarter/team derivatives, double-double/triple-double timelines.
 
 ## WNBA
-- player_points
-- player_rebounds
-- player_assists
-- Future common markets: threes, PRA combos, team spreads/totals.
+- player_points (live ✅, kill-moment ✅)
+- player_rebounds (live ✅, kill-moment ✅)
+- player_assists (live ✅, kill-moment ✅)
+- player_threes
+- player_pr (live ✅, kill-moment ✅)
+- player_pa (live ✅, kill-moment ✅)
+- player_ra (live ✅, kill-moment ✅)
+- player_pra (live ✅, kill-moment ✅)
+- ESPN stat-key mapping includes WNBA-compatible aliases (e.g. `3PT` → `3PM`) for snapshot extraction parity.
+- Future common markets: team spreads/totals.
 
 ## MLB
 - player_hits
