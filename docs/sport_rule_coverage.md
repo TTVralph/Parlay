@@ -30,8 +30,11 @@ This file summarizes stat-rule engine coverage by sport.
 ## MLB
 - player_hits
 - player_strikeouts
-- player_total_bases (supports computed formula fallback)
-- Future common markets: RBI, runs, hits+runs+rbi, pitcher outs.
+- player_total_bases (supports computed formula fallback: 1B + 2*2B + 3*3B + 4*HR)
+- player_runs
+- player_rbis
+- player_home_runs
+- Future common markets: hits+runs+rbi, pitcher outs.
 
 ## NFL
 - player_passing_yards

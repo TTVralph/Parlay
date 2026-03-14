@@ -19,7 +19,7 @@ MARKET_PATTERN = (
     r"points rebounds assists|pts reb ast|points rebounds|points assists|rebounds assists|"
     r"3s|3pm|3 ptm|3pt made|3ptm|threes|three pointers|three-pointers|threes made|"
     r"3 pointers made|3-pointers made|three pointers made|three-point field goals made|three point field goals made|"
-    r"pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits|triple\s*double|double\s*double|first basket|first bucket|first scorer|to score first|first rebound|to get first rebound|first assist|to record first assist|first three|first 3 pointer|first 3pt made|first three-pointer made|last basket|last bucket|to score last|first steal|first block"
+    r"pass yds|passing yards|rush yds|rushing yards|rec yds|receiving yards|hits|hit|strikeouts|strikeout|ks|k|total\s*bases|tb|runs|rbi|rbis|home\s*runs|home\s*run|hr|triple\s*double|double\s*double|first basket|first bucket|first scorer|to score first|first rebound|to get first rebound|first assist|to record first assist|first three|first 3 pointer|first 3pt made|first three-pointer made|last basket|last bucket|to score last|first steal|first block"
 )
 
 NUMBER_FIRST_PATTERN = re.compile(

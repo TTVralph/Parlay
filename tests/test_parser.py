@@ -226,3 +226,12 @@ def test_parse_unsupported_stat_falls_back_with_parse_warning() -> None:
     assert len(legs) == 1
     assert legs[0].confidence == 0.0
     assert 'Unmatched leg' in legs[0].notes
+
+
+def test_parse_mlb_player_prop_variants() -> None:
+    legs = parse_text('MLB: Aaron Judge Over 1.5 Hits\nMLB: Gerrit Cole Over 5.5 Strikeouts\nMLB: Shohei Ohtani Over 1.5 Total Bases')
+    assert len(legs) == 3
+    assert legs[0].sport == 'MLB'
+    assert legs[0].market_type == 'player_hits'
+    assert legs[1].market_type == 'player_strikeouts'
+    assert legs[2].market_type == 'player_total_bases'

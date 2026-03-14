@@ -41,3 +41,18 @@ def test_unsupported_sport_features_fail_gracefully() -> None:
 def test_resolver_hooks_dispatch_without_breaking_candidates() -> None:
     leg = Leg(raw_text='Nikola Jokic over 24.5 points', market_type='player_points', line=24.5, selection='over', sport='NBA')
     assert apply_sport_resolver_hook(leg, [], None) == []
+
+
+def test_mlb_market_registry_normalizes_core_player_props() -> None:
+    assert normalize_market('Over 1.5 Hits', sport='MLB') == 'hits'
+    assert normalize_market('Over 5.5 Strikeouts', sport='MLB') == 'strikeouts'
+    assert normalize_market('Over 1.5 Total Bases', sport='MLB') == 'total_bases'
+
+    assert player_market_to_canonical('player_hits', sport='MLB') == 'hits'
+    assert player_market_to_canonical('player_strikeouts', sport='MLB') == 'strikeouts'
+    assert player_market_to_canonical('player_total_bases', sport='MLB') == 'total_bases'
+
+
+def test_mlb_market_registry_does_not_cross_dispatch_to_nba_or_wnba() -> None:
+    assert normalize_market('Over 1.5 Hits', sport='NBA') is None
+    assert normalize_market('Over 1.5 Total Bases', sport='WNBA') is None
