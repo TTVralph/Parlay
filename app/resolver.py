@@ -429,6 +429,7 @@ def resolve_leg_events(
         selection_explanation: str | None = None
         canonical_player_name: str | None = None
         player_team_mismatch_detected = False
+        player_team_filter_pruned_candidates = False
         directory_loaded = bool(resolve_player_identity('Nikola Jokic', sport=leg.sport).resolved_player_id) if leg.sport == 'NBA' else True
         normalized_lookup_key = normalize_entity_name(leg.player) if leg.player else None
 
@@ -534,6 +535,8 @@ def resolve_leg_events(
                 candidates = _merge_player_and_team_candidates(candidates, team_candidates)
                 pre_team_filter_count = len(candidates)
                 candidates = [event for event in candidates if _event_contains_team(event, player_team)]
+                if pre_team_filter_count > len(candidates):
+                    player_team_filter_pruned_candidates = True
                 if pre_team_filter_count > 0 and not candidates:
                     if TEAM_EVENT_MISMATCH_WARNING not in notes:
                         notes.append(TEAM_EVENT_MISMATCH_WARNING)
@@ -718,6 +721,51 @@ def resolve_leg_events(
 
         if len(candidates) == 1:
             event = candidates[0]
+            selected_event_local_date = _event_local_date(event)
+            event_start_epoch = (event.start_time.replace(tzinfo=timezone.utc) if event.start_time.tzinfo is None else event.start_time.astimezone(timezone.utc)).timestamp()
+            midnight_boundary_risk = any(
+                candidate.event_id != event.event_id
+                and abs(((candidate.start_time.replace(tzinfo=timezone.utc) if candidate.start_time.tzinfo is None else candidate.start_time.astimezone(timezone.utc)).timestamp() - event_start_epoch)) <= 6 * 60 * 60
+                and _event_local_date(candidate) != selected_event_local_date
+                for candidate in all_candidates_before_date_filter
+            )
+            date_filter_collapsed_candidates = (
+                len(all_candidates_before_date_filter) > 1
+                and explicit_slip_date is None
+                and not updates.get('event_selection_applied')
+                and midnight_boundary_risk
+            )
+            stale_team_hint_risk = (
+                player_team_filter_pruned_candidates
+                and slip_filter_value is None
+                and not updates.get('event_selection_applied')
+            )
+            if date_filter_collapsed_candidates or stale_team_hint_risk or player_team_mismatch_detected:
+                review_reason = 'single candidate remained after midnight/date-boundary narrowing; manual confirmation required'
+                if stale_team_hint_risk:
+                    review_reason = 'team hint removed other candidates without date context; manual confirmation required'
+                updates['event_candidates'] = _build_candidate_events(
+                    all_candidates_before_date_filter or candidates,
+                    slip_value=slip_filter_value,
+                    reason=review_reason,
+                )
+                resolution_warnings.extend(['multiple_candidate_events', 'ambiguous_event_match'])
+                if date_filter_collapsed_candidates:
+                    resolution_warnings.append('single_candidate_after_date_filter')
+                if stale_team_hint_risk:
+                    resolution_warnings.append('stale_team_hint_risk')
+                updates['matched_by'] = None
+                updates['event_resolution_status'] = 'review'
+                updates['event_resolution_method'] = 'single_candidate_review'
+                updates['event_review_reason_code'] = 'single_candidate_after_narrowing'
+                updates['event_review_reason_text'] = 'Resolver narrowed to one game from multiple candidates; confirm selection before grading.'
+                updates['event_date_match_quality'] = _event_date_match_quality(event, slip_filter_value)
+                updates['roster_validation_result'] = 'unknown'
+                updates['event_resolution_warnings'] = list(dict.fromkeys(resolution_warnings))
+                updates['event_resolution_confidence'] = 'low'
+                resolved.append(leg.model_copy(update=updates))
+                continue
+
             resolved_event_ids.add(event.event_id)
             if leg.team:
                 resolved_team_event_ids.setdefault(_norm(leg.team), set()).add(event.event_id)
