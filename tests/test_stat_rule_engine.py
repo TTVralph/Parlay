@@ -80,3 +80,40 @@ def test_live_progress_uses_rule_metadata() -> None:
     payload = _build_live_progress_payload(leg, actual_value=35, line=40.5, component_values={'PTS': 20, 'REB': 10, 'AST': 5})
     assert payload is not None
     assert payload['remaining_to_hit'] == 5.5
+
+
+def test_mlb_hits_over_under_and_total_bases_formula() -> None:
+    snap = _snapshot({'H': 2, 'SO': 6, '1B': 1, '2B': 1, '3B': 0, 'HR': 1})
+
+    hits_rule = get_stat_rule('MLB', 'player_hits')
+    strikeouts_rule = get_stat_rule('MLB', 'player_strikeouts')
+    total_bases_rule = get_stat_rule('MLB', 'player_total_bases')
+
+    assert hits_rule is not None
+    assert strikeouts_rule is not None
+    assert total_bases_rule is not None
+
+    hits_actual = hits_rule.compute_actual_value(snap, 'p1', 'Test Player')
+    assert hits_actual == 2
+    assert hits_rule.compare(hits_actual, 1.5, 'over') == 'win'
+    assert hits_rule.compare(hits_actual, 2.5, 'under') == 'win'
+
+    assert strikeouts_rule.compute_actual_value(snap, 'p1', 'Test Player') == 6
+    assert total_bases_rule.compute_actual_value(snap, 'p1', 'Test Player') == 7
+
+
+def test_mlb_total_bases_and_missing_stats_fallback() -> None:
+    rule = get_stat_rule('MLB', 'player_total_bases')
+    assert rule is not None
+
+    explicit_tb_snapshot = _snapshot({'TB': 5, '1B': 0, '2B': 0, '3B': 0, 'HR': 0})
+    formula_missing_snapshot = _snapshot({'1B': 1, '2B': 1, 'HR': 1})
+
+    assert rule.compute_actual_value(explicit_tb_snapshot, 'p1', 'Test Player') == 5
+    assert rule.compute_actual_value(formula_missing_snapshot, 'p1', 'Test Player') is None
+
+
+def test_mlb_rule_dispatch_is_sport_scoped() -> None:
+    assert get_stat_rule('MLB', 'player_strikeouts') is not None
+    assert get_stat_rule('NBA', 'player_strikeouts') is None
+    assert get_stat_rule('WNBA', 'player_total_bases') is None
