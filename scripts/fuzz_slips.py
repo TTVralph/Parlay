@@ -4,16 +4,19 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import requests
+from requests.exceptions import ReadTimeout, RequestException
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tests.fuzzing.slip_fuzzer import FuzzCase, FuzzRunner, persist_failure_cases, write_report
+from tests.fuzzing.slip_fuzzer import FuzzIssue
 
 DEFAULT_URL = 'http://127.0.0.1:8000/check-slip'
 
@@ -54,7 +57,78 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--fail-fast', action='store_true')
     parser.add_argument('--replay', default='')
     parser.add_argument('--determinism-checks', type=int, default=1)
+    parser.add_argument('--timeout', type=int, default=20)
     return parser.parse_args()
+
+
+def _request_exception_issue(seed: int, case: FuzzCase, exc: RequestException) -> FuzzIssue:
+    return FuzzIssue(
+        seed=seed,
+        case_id=case.case_id,
+        mode=case.mode,
+        input_text=case.text,
+        bet_date=case.bet_date,
+        issue_type='request_exception',
+        details={
+            'exception_class': exc.__class__.__name__,
+            'exception_message': str(exc),
+        },
+        response_snapshot=None,
+    )
+
+
+def _check_determinism_safe(
+    *,
+    runner: FuzzRunner,
+    case: FuzzCase,
+    submitter: Any,
+    runs: int,
+    seed: int,
+) -> tuple[list[FuzzIssue], list[FuzzIssue], int, int]:
+    observed: list[tuple[int, str, tuple[tuple[str, str], ...]]] = []
+    request_failures: list[FuzzIssue] = []
+    request_exception_count = 0
+    timeout_exception_count = 0
+
+    for _ in range(runs):
+        try:
+            status, body = submitter(case)
+        except RequestException as exc:
+            issue = _request_exception_issue(seed, case, exc)
+            request_failures.append(issue)
+            request_exception_count += 1
+            if isinstance(exc, ReadTimeout):
+                timeout_exception_count += 1
+            continue
+
+        if not isinstance(body, dict):
+            continue
+        parlay = str(body.get('parlay_result'))
+        parse_conf = str(body.get('parse_confidence'))
+        legs: list[tuple[str, str]] = []
+        for item in body.get('legs', []):
+            if isinstance(item, dict):
+                legs.append((str(item.get('result')), str(item.get('matched_event'))))
+        observed.append((status, f'{parlay}:{parse_conf}', tuple(legs)))
+
+    nondeterminism: list[FuzzIssue] = []
+    if observed:
+        first = observed[0]
+        if any(sample != first for sample in observed[1:]):
+            nondeterminism.append(
+                FuzzIssue(
+                    seed=runner.seed,
+                    case_id=case.case_id,
+                    mode=case.mode,
+                    input_text=case.text,
+                    bet_date=case.bet_date,
+                    issue_type='nondeterministic_response',
+                    details={'observed_runs': len(observed)},
+                    response_snapshot={'observed': observed},
+                )
+            )
+
+    return nondeterminism, request_failures, request_exception_count, timeout_exception_count
 
 
 def main() -> int:
@@ -66,17 +140,34 @@ def main() -> int:
     runner = FuzzRunner(seed=args.seed, mode=args.mode, min_legs=args.min_legs, max_legs=args.max_legs)
 
     def submitter(case: FuzzCase) -> tuple[int, dict[str, Any] | None]:
-        return _post_case(args.url, case)
+        return _post_case(args.url, case, timeout=args.timeout)
 
     outcomes: list = []
     suspicious: list = []
     hard_failures: list = []
+    request_exception_count = 0
+    timeout_exception_count = 0
 
     for idx in range(args.count):
         case = runner.generate_case(idx)
         if args.case and args.case not in case.case_id:
             continue
-        status_code, response = submitter(case)
+        try:
+            status_code, response = submitter(case)
+        except RequestException as exc:
+            issue = _request_exception_issue(args.seed, case, exc)
+            from tests.fuzzing.slip_fuzzer import FuzzOutcome  # local import keeps script startup tiny
+
+            outcome = FuzzOutcome(case=case, status_code=0, response=None, hard_failure=True, issues=[issue])
+            outcomes.append(outcome)
+            hard_failures.append(issue)
+            request_exception_count += 1
+            if isinstance(exc, ReadTimeout):
+                timeout_exception_count += 1
+            if args.fail_fast:
+                break
+            continue
+
         case_issues = runner.checker.evaluate(seed=args.seed, case=case, status_code=status_code, response=response)
 
         from tests.fuzzing.slip_fuzzer import FuzzOutcome  # local import keeps script startup tiny
@@ -88,7 +179,17 @@ def main() -> int:
             hard_failures.extend(case_issues)
         else:
             suspicious.extend(case_issues)
-            hard_failures.extend(runner._check_determinism(case, submitter, runs=args.determinism_checks + 1))
+            nondeterminism, determinism_request_failures, det_req_count, det_timeout_count = _check_determinism_safe(
+                runner=runner,
+                case=case,
+                submitter=submitter,
+                runs=args.determinism_checks + 1,
+                seed=args.seed,
+            )
+            hard_failures.extend(nondeterminism)
+            hard_failures.extend(determinism_request_failures)
+            request_exception_count += det_req_count
+            timeout_exception_count += det_timeout_count
 
         if args.fail_fast and (case_issues or status_code != 200):
             break
@@ -103,6 +204,13 @@ def main() -> int:
     print(f'Passed invariants: {len(outcomes) - len(suspicious) - len(hard_failures)}')
     print(f'Flagged suspicious: {len(suspicious)}')
     print(f'Hard failures: {len(hard_failures)}')
+    print(f'Request exceptions: {request_exception_count}')
+    print(f'Timeout exceptions: {timeout_exception_count}')
+    if hard_failures:
+        top = Counter(issue.issue_type for issue in hard_failures)
+        print('Top hard-failure types:')
+        for issue_type, count in top.most_common(5):
+            print(f'  - {issue_type}: {count}')
 
     return 0 if not hard_failures else 1
 
