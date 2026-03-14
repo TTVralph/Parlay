@@ -36,6 +36,8 @@ class GoldenTemplate:
     name_prefix: str
     posted_at: datetime
     checks: tuple[tuple[str, str, str, str], ...]
+    provider_factory: ProviderFactory | None = None
+    include_historical: bool = False
 
     def generate(self) -> list[GoldenCase]:
         generated: list[GoldenCase] = []
@@ -46,6 +48,33 @@ class GoldenTemplate:
                     name=f'{self.name_prefix}_{player.lower().replace(" ", "_")}_{stat_text.lower().replace(" ", "_")}',
                     text=text,
                     posted_at=self.posted_at,
+                    include_historical=self.include_historical,
+                    provider_factory=self.provider_factory,
+                    overall=overall,
+                    leg_expectations=(GoldenLegExpectation(settlement=settlement),),
+                )
+            )
+        return generated
+
+
+@dataclass(frozen=True)
+class GoldenTextTemplate:
+    name_prefix: str
+    checks: tuple[tuple[str, str, str], ...]
+    posted_at: datetime | None = None
+    provider_factory: ProviderFactory | None = None
+    include_historical: bool = False
+
+    def generate(self) -> list[GoldenCase]:
+        generated: list[GoldenCase] = []
+        for idx, (text, overall, settlement) in enumerate(self.checks, start=1):
+            generated.append(
+                GoldenCase(
+                    name=f'{self.name_prefix}_{idx:02d}',
+                    text=text,
+                    posted_at=self.posted_at,
+                    include_historical=self.include_historical,
+                    provider_factory=self.provider_factory,
                     overall=overall,
                     leg_expectations=(GoldenLegExpectation(settlement=settlement),),
                 )
@@ -128,6 +157,95 @@ class MatchedBoxScoreProvider:
 
     def get_player_result(self, player: str, market_type: str, event_id=None):
         return 6.0
+
+    def get_event_status(self, event_id: str):
+        return 'final'
+
+
+class DeterministicPayloadVariationProvider:
+    def resolve_player_event(self, player: str, as_of):
+        from app.providers.base import EventInfo
+
+        if player.lower() in {'mookie betts', 'aaron judge', 'juan soto', 'shohei ohtani'}:
+            return EventInfo(
+                event_id='evt-mlb-final',
+                sport='MLB',
+                home_team='Los Angeles Dodgers',
+                away_team='New York Yankees',
+                start_time=datetime.utcnow(),
+            )
+        if 'giddey' in player.lower():
+            return EventInfo(
+                event_id='evt-nba-live',
+                sport='NBA',
+                home_team='Chicago Bulls',
+                away_team='Los Angeles Lakers',
+                start_time=datetime.utcnow(),
+            )
+        return EventInfo(
+            event_id='evt-nba-final',
+            sport='NBA',
+            home_team='Denver Nuggets',
+            away_team='Boston Celtics',
+            start_time=datetime.utcnow(),
+        )
+
+    def get_player_result_details(self, player: str, market_type: str, event_id=None):
+        if market_type in {'player_pr', 'player_pa', 'player_ra', 'player_pra'}:
+            return {'actual_value': 41.0, 'matched_boxscore_player_name': player}
+        if market_type == 'player_total_bases':
+            return {'actual_value': 3.0, 'matched_boxscore_player_name': player}
+        return None
+
+    def get_player_result(self, player: str, market_type: str, event_id=None):
+        player_key = player.lower().strip()
+        if market_type in {'player_points', 'player_rebounds', 'player_assists'}:
+            if 'under' in player_key:
+                return 1.0
+            return 12.0
+        if market_type == 'player_total_bases':
+            return 3.0
+        if market_type == 'player_hits':
+            return 2.0
+        if market_type == 'player_strikeouts':
+            return 8.0
+        return 10.0
+
+    def get_event_status(self, event_id: str):
+        statuses = {
+            'evt-nba-final': 'FINAL',
+            'evt-mlb-final': 'completed',
+            'evt-nba-live': 'in_progress',
+        }
+        return statuses.get(event_id, 'final')
+
+    def did_player_appear(self, player: str, event_id=None):
+        return True
+
+
+class AmbiguousEventProvider:
+    def resolve_player_event_candidates(self, player: str, as_of, include_historical=False):
+        from app.providers.base import EventInfo
+
+        return [
+            EventInfo(
+                event_id='evt-amb-1',
+                sport='NBA',
+                home_team='Oklahoma City Thunder',
+                away_team='Denver Nuggets',
+                start_time=datetime.fromisoformat('2026-03-07T19:00:00'),
+            ),
+            EventInfo(
+                event_id='evt-amb-2',
+                sport='NBA',
+                home_team='Oklahoma City Thunder',
+                away_team='Denver Nuggets',
+                start_time=datetime.fromisoformat('2026-03-09T19:00:00'),
+            ),
+        ]
+
+    def get_player_result(self, player: str, market_type: str, event_id=None):
+        return 10.0
 
     def get_event_status(self, event_id: str):
         return 'final'
@@ -325,6 +443,173 @@ def high_value_case_corpus() -> list[GoldenCase]:
         ),
     )
 
-    corpus = [*base_cases, *combo_template.generate()]
-    assert len(corpus) == 25, f'Expected 25 first-pass golden cases, found {len(corpus)}'
+    nba_combo_expansion = GoldenTemplate(
+        name_prefix='nba_combo_expanded',
+        posted_at=datetime.fromisoformat('2026-03-07T19:00:00'),
+        provider_factory=DeterministicPayloadVariationProvider,
+        checks=(
+            ('Nikola Jokic', 'over 30.5 PR', 'lost', 'loss'),
+            ('Nikola Jokic', 'over 29.5 PA', 'lost', 'loss'),
+            ('Nikola Jokic', 'over 17.5 RA', 'cashed', 'win'),
+            ('Nikola Jokic', 'over 38.5 PRA', 'lost', 'loss'),
+            ('Jayson Tatum', 'over 29.5 PR', 'lost', 'loss'),
+            ('Jayson Tatum', 'over 28.5 PA', 'lost', 'loss'),
+            ('Jayson Tatum', 'over 14.5 RA', 'cashed', 'win'),
+            ('Jayson Tatum', 'over 34.5 PRA', 'cashed', 'win'),
+            ('Luka Doncic', 'over 31.5 PR', 'needs_review', 'unmatched'),
+            ('Luka Doncic', 'over 32.5 PA', 'needs_review', 'unmatched'),
+            ('Luka Doncic', 'over 17.5 RA', 'needs_review', 'unmatched'),
+            ('Luka Doncic', 'over 42.5 PRA', 'needs_review', 'unmatched'),
+            ('Devin Booker', 'over 28.5 PR', 'needs_review', 'unmatched'),
+            ('Devin Booker', 'over 29.5 PA', 'needs_review', 'unmatched'),
+            ('Devin Booker', 'over 13.5 RA', 'needs_review', 'unmatched'),
+            ('Devin Booker', 'over 37.5 PRA', 'needs_review', 'unmatched'),
+            ('Anthony Edwards', 'over 26.5 PR', 'needs_review', 'unmatched'),
+            ('Anthony Edwards', 'over 27.5 PA', 'needs_review', 'unmatched'),
+            ('Anthony Edwards', 'over 11.5 RA', 'needs_review', 'unmatched'),
+            ('Anthony Edwards', 'over 33.5 PRA', 'needs_review', 'unmatched'),
+        ),
+    )
+
+    mlb_total_bases_template = GoldenTextTemplate(
+        name_prefix='mlb_total_bases_derived',
+        provider_factory=DeterministicPayloadVariationProvider,
+        checks=(
+            ('Mookie Betts over 1.5 total bases', 'needs_review', 'unmatched'),
+            ('Mookie Betts over 1.5 TB', 'needs_review', 'unmatched'),
+            ('Mookie Betts over 1.5 bases', 'needs_review', 'unmatched'),
+            ('Aaron Judge over 1.5 total bases', 'cashed', 'win'),
+            ('Aaron Judge over 2.5 total bases', 'cashed', 'win'),
+            ('Juan Soto over 1.5 total bases', 'needs_review', 'unmatched'),
+            ('Shohei Ohtani over 1.5 total bases', 'cashed', 'win'),
+            ('Mookie Betts under 4.5 total bases', 'needs_review', 'unmatched'),
+            ('Aaron Judge under 4.5 TB', 'cashed', 'win'),
+            ('Juan Soto under 5.5 total bases', 'needs_review', 'unmatched'),
+            ('Shohei Ohtani under 5.5 total bases', 'cashed', 'win'),
+            ('Mookie Betts over 3.5 total bases', 'needs_review', 'unmatched'),
+            ('Aaron Judge over 3.5 total bases', 'lost', 'loss'),
+            ('Juan Soto over 3.5 total bases', 'needs_review', 'unmatched'),
+            ('Shohei Ohtani over 3.5 total bases', 'lost', 'loss'),
+        ),
+    )
+
+    ambiguous_resolution_template = GoldenTextTemplate(
+        name_prefix='ambiguous_player_resolution',
+        provider_factory=AmbiguousEventProvider,
+        checks=(
+            ('J Williams over 4.5 assists', 'needs_review', 'unmatched'),
+            ('C Johnson over 1.5 threes', 'needs_review', 'unmatched'),
+            ('M Brown over 2.5 rebounds', 'needs_review', 'unmatched'),
+            ('J Smith over 10.5 points', 'needs_review', 'unmatched'),
+            ('A Thompson over 5.5 assists', 'needs_review', 'unmatched'),
+            ('N Reid over 10.5 points', 'needs_review', 'unmatched'),
+            ('J Green over 1.5 threes', 'needs_review', 'unmatched'),
+            ('A Gordon over 14.5 points', 'needs_review', 'unmatched'),
+            ('K Porter over 8.5 points', 'needs_review', 'unmatched'),
+            ('J Murray over 2.5 threes', 'needs_review', 'unmatched'),
+        ),
+    )
+
+    missing_bet_date_template = GoldenTextTemplate(
+        name_prefix='missing_bet_date_review',
+        checks=(
+            ('Shai Gilgeous-Alexander over 6.5 assists', 'cashed', 'win'),
+            ('Jamal Murray over 2.5 threes', 'needs_review', 'unmatched'),
+            ('Nikola Jokic over 26.5 points', 'needs_review', 'unmatched'),
+            ('LeBron James over 24.5 points', 'needs_review', 'unmatched'),
+            ('Stephen Curry over 4.5 threes', 'needs_review', 'unmatched'),
+            ('Jayson Tatum over 8.5 rebounds', 'lost', 'loss'),
+            ('Jaylen Brown over 1.5 threes', 'needs_review', 'unmatched'),
+            ('Luka Doncic over 31.5 points', 'needs_review', 'unmatched'),
+            ('Anthony Edwards over 24.5 points', 'needs_review', 'unmatched'),
+            ('Kevin Durant over 25.5 points', 'needs_review', 'unmatched'),
+        ),
+    )
+
+    provider_payload_variation_template = GoldenTextTemplate(
+        name_prefix='provider_payload_variation',
+        provider_factory=DeterministicPayloadVariationProvider,
+        checks=(
+            ('Nikola Jokic over 24.5 points', 'lost', 'loss'),
+            ('Nikola Jokic over 8.5 assists', 'cashed', 'win'),
+            ('Nikola Jokic under 40.5 points', 'cashed', 'win'),
+            ('Nikola Jokic over 45.5 points', 'lost', 'loss'),
+            ('Nikola Jokic over 39.5 PRA', 'lost', 'loss'),
+            ('Nikola Jokic over 39.5 PR', 'lost', 'loss'),
+            ('Nikola Jokic over 39.5 PA', 'lost', 'loss'),
+            ('Nikola Jokic over 39.5 RA', 'lost', 'loss'),
+            ('Josh Giddey over 8.5 assists', 'pending', 'live'),
+            ('Mookie Betts over 1.5 total bases', 'needs_review', 'unmatched'),
+        ),
+    )
+
+    multi_leg_mixed_state_cases: list[GoldenCase] = [
+        GoldenCase(
+            name='multi_leg_mixed_states_win_live_loss',
+            text='Josh Giddey over 8.5 assists\nNikola Jokic over 35.5 points\nMookie Betts over 1.5 total bases',
+            overall='needs_review',
+            provider_factory=DeterministicPayloadVariationProvider,
+            leg_expectations=(
+                GoldenLegExpectation('live'),
+                GoldenLegExpectation('loss'),
+                GoldenLegExpectation('unmatched'),
+            ),
+        ),
+        GoldenCase(
+            name='multi_leg_mixed_states_all_win_except_live',
+            text='Josh Giddey over 8.5 assists\nNikola Jokic over 24.5 points\nMookie Betts over 1.5 total bases',
+            overall='needs_review',
+            provider_factory=DeterministicPayloadVariationProvider,
+            leg_expectations=(
+                GoldenLegExpectation('live'),
+                GoldenLegExpectation('loss'),
+                GoldenLegExpectation('unmatched'),
+            ),
+        ),
+        GoldenCase(
+            name='multi_leg_mixed_states_with_void_provider',
+            text='Nikola Jokic over 8.5 points\nJosh Giddey over 8.5 assists\nNikola Jokic over 12.5 points',
+            overall='lost',
+            provider_factory=LiveProvider,
+            leg_expectations=(
+                GoldenLegExpectation('win'),
+                GoldenLegExpectation('live'),
+                GoldenLegExpectation('loss'),
+            ),
+        ),
+        GoldenCase(
+            name='multi_leg_mixed_states_two_live_one_loss',
+            text='Josh Giddey over 8.5 assists\nJosh Giddey under 12.5 assists\nNikola Jokic over 12.5 points',
+            overall='lost',
+            provider_factory=LiveProvider,
+            leg_expectations=(
+                GoldenLegExpectation('live'),
+                GoldenLegExpectation('live'),
+                GoldenLegExpectation('loss'),
+            ),
+        ),
+        GoldenCase(
+            name='multi_leg_mixed_states_live_kill_path',
+            text='Josh Giddey under 8.5 assists\nNikola Jokic over 12.5 points\nJosh Giddey over 8.5 assists',
+            overall='lost',
+            provider_factory=LiveKillProvider,
+            leg_expectations=(
+                GoldenLegExpectation('loss', kill_moment=True),
+                GoldenLegExpectation('loss'),
+                GoldenLegExpectation('live'),
+            ),
+        ),
+    ]
+
+    corpus = [
+        *base_cases,
+        *combo_template.generate(),
+        *nba_combo_expansion.generate(),
+        *mlb_total_bases_template.generate(),
+        *ambiguous_resolution_template.generate(),
+        *missing_bet_date_template.generate(),
+        *provider_payload_variation_template.generate(),
+        *multi_leg_mixed_state_cases,
+    ]
+    assert len(corpus) == 95, f'Expected 95 expanded golden cases, found {len(corpus)}'
     return corpus
