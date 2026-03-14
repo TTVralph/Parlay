@@ -85,13 +85,18 @@ class ValidationResult:
     confidence: str = 'HIGH'
 
 
-def _compute_leg_progress(*, actual_value: float | None, line: float | None) -> float | None:
+def _compute_leg_progress(*, actual_value: float | None, line: float | None, direction: str | None = None) -> float | None:
     if actual_value is None or line is None:
         return None
     target = float(line)
     if target == 0.0:
         return None
-    progress = float(actual_value) / target
+
+    side = str(direction or 'over').lower()
+    if side == 'under':
+        progress = target / float(actual_value) if float(actual_value) > 0 else 1.0
+    else:
+        progress = float(actual_value) / target
     return round(max(0.0, progress), 2)
 
 
@@ -1305,7 +1310,7 @@ def settle_leg(
                 reason_message=f'Kill moment triggered: {kill_reason}',
                 explanation_reason='event resolved',
                 actual_value=float(actual_value),
-                progress=_compute_leg_progress(actual_value=float(actual_value), line=leg.line),
+                progress=_compute_leg_progress(actual_value=float(actual_value), line=leg.line, direction=leg.direction),
                 component_values=component_values_dict,
                 stat_components=stat_components,
                 computed_total=computed_total,
@@ -1329,7 +1334,7 @@ def settle_leg(
             reason_message='Game is in progress',
             explanation_reason='event unresolved',
             actual_value=float(actual_value) if actual_value is not None else None,
-            progress=_compute_leg_progress(actual_value=float(actual_value) if actual_value is not None else None, line=leg.line),
+            progress=_compute_leg_progress(actual_value=float(actual_value) if actual_value is not None else None, line=leg.line, direction=leg.direction),
             component_values=component_values_dict,
             stat_components=stat_components,
             computed_total=computed_total,
@@ -1349,7 +1354,7 @@ def settle_leg(
                 settlement_diagnostics['live_progress'] = live_progress
             if live_timeline:
                 settlement_diagnostics['live_progress_timeline'] = live_timeline
-            return explained(settlement='live', reason='Game is in progress', reason_code=reason_codes.EVENT_NOT_FINAL, reason_message='Game is in progress', explanation_reason='event unresolved', actual_value=float(actual_value) if actual_value is not None else None, progress=_compute_leg_progress(actual_value=float(actual_value) if actual_value is not None else None, line=leg.line), component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, live_progress=live_progress, live_progress_timeline=live_timeline)
+            return explained(settlement='live', reason='Game is in progress', reason_code=reason_codes.EVENT_NOT_FINAL, reason_message='Game is in progress', explanation_reason='event unresolved', actual_value=float(actual_value) if actual_value is not None else None, progress=_compute_leg_progress(actual_value=float(actual_value) if actual_value is not None else None, line=leg.line, direction=leg.direction), component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total, live_progress=live_progress, live_progress_timeline=live_timeline)
         appeared = None
         if leg.event_id:
             dnp_confirmed = _player_confirmed_dnp(provider, player_lookup_name, leg.event_id)
@@ -1381,7 +1386,7 @@ def settle_leg(
         return explained(
             settlement='win' if won else 'loss',
             actual_value=float(actual_value),
-            progress=_compute_leg_progress(actual_value=float(actual_value), line=leg.line),
+            progress=_compute_leg_progress(actual_value=float(actual_value), line=leg.line, direction=leg.direction),
             reason=f'{player_lookup_name} in {leg.event_label}: {readable}',
             reason_code=reason_code,
             reason_message=readable,
@@ -1396,14 +1401,14 @@ def settle_leg(
     if leg.direction == 'over':
         won = actual_value > leg.line
         if actual_value == leg.line:
-            return explained(settlement='push', actual_value=float(actual_value), progress=_compute_leg_progress(actual_value=float(actual_value), line=leg.line), reason='Landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{actual_value} landed exactly on {leg.line}', explanation_reason='event resolved', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
+            return explained(settlement='push', actual_value=float(actual_value), progress=_compute_leg_progress(actual_value=float(actual_value), line=leg.line, direction=leg.direction), reason='Landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{actual_value} landed exactly on {leg.line}', explanation_reason='event resolved', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
         reason_code = reason_codes.ACTUAL_STAT_ABOVE_LINE if won else reason_codes.ACTUAL_STAT_BELOW_LINE
         comparison = 'above' if won else 'below'
         readable = f'{actual_value} is {comparison} {leg.line}'
     else:
         won = actual_value < leg.line
         if actual_value == leg.line:
-            return explained(settlement='push', actual_value=float(actual_value), progress=_compute_leg_progress(actual_value=float(actual_value), line=leg.line), reason='Landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{actual_value} landed exactly on {leg.line}', explanation_reason='event resolved', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
+            return explained(settlement='push', actual_value=float(actual_value), progress=_compute_leg_progress(actual_value=float(actual_value), line=leg.line, direction=leg.direction), reason='Landed exactly on line', reason_code=reason_codes.ACTUAL_STAT_EQUAL_PUSH, reason_message=f'{actual_value} landed exactly on {leg.line}', explanation_reason='event resolved', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
         reason_code = reason_codes.ACTUAL_STAT_BELOW_LINE if won else reason_codes.ACTUAL_STAT_ABOVE_LINE
         comparison = 'below' if won else 'above'
         readable = f'{actual_value} is {comparison} {leg.line}'
@@ -1416,7 +1421,7 @@ def settle_leg(
     return explained(
         settlement='win' if won else 'loss',
         actual_value=float(actual_value),
-        progress=_compute_leg_progress(actual_value=float(actual_value), line=leg.line),
+        progress=_compute_leg_progress(actual_value=float(actual_value), line=leg.line, direction=leg.direction),
         reason=f'{player_lookup_name} in {leg.event_label}: actual {actual_value} vs line {leg.line}',
         reason_code=reason_code,
         reason_message=readable,
