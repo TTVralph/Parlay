@@ -2,6 +2,7 @@ import json
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.slip_fingerprint import reset_slip_hash_index
 
 
 client = TestClient(app)
@@ -38,6 +39,24 @@ def test_check_grading_error_message(monkeypatch):
     assert body['ok'] is False
     assert body['message'] == 'Could not grade this slip right now.'
     assert body['grading_warning'] == 'Parsed legs were detected, but grading did not complete.'
+
+
+def test_check_slip_popularity_tracks_duplicate_slips(monkeypatch):
+    monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
+    reset_slip_hash_index()
+
+    first = client.post('/check-slip', json={'text': 'Denver ML\nJokic over 24.5 points'})
+    second = client.post('/check-slip', json={'text': 'Jokic over 24.5 points\nDenver ML'})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    first_body = first.json()
+    second_body = second.json()
+
+    assert first_body['slip_hash'] == second_body['slip_hash']
+    assert first_body['slip_popularity'] == 1
+    assert second_body['slip_popularity'] == 2
 
 
 def test_check_with_stake_returns_estimated_payout_and_profit():

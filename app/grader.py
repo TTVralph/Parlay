@@ -1633,12 +1633,13 @@ def grade_text(
         overall = 'needs_review'
 
     slip_hash = generate_slip_hash(resolved_legs)
-    _, duplicate_slip_count, unique_slip_count = register_slip_hash(slip_hash)
+    slip_popularity, duplicate_slip_count, unique_slip_count = register_slip_hash(slip_hash)
     response = GradeResponse(
         overall=overall,
         legs=graded,
         slip_progress=_compute_slip_progress(graded),
         slip_hash=slip_hash,
+        slip_popularity=slip_popularity,
         leg_count=len(resolved_legs),
         sport_set=sorted({str(leg.sport) for leg in resolved_legs if leg.sport}),
         event_ids=sorted({str(leg.event_id or leg.matched_event_id) for leg in resolved_legs if (leg.event_id or leg.matched_event_id)}),

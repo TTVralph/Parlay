@@ -3400,6 +3400,8 @@ def _process_public_check_text(
         'worst_miss_leg': graded.worst_miss_leg,
         'parlay_progress_summary': parlay_progress_summary,
         'closest_live_leg': closest_live_leg,
+        'slip_hash': graded.slip_hash,
+        'slip_popularity': graded.slip_popularity,
         'slip_confidence': graded.slip_confidence,
         'confidence_tier': graded.confidence_tier,
         'confidence_recommendation': graded.confidence_recommendation,
