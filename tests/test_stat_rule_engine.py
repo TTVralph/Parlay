@@ -44,6 +44,23 @@ def test_starter_multi_sport_rules_compute() -> None:
     assert nfl.compute_actual_value(snap_nfl, 'p1', 'Test Player') == 286
 
 
+def test_wnba_rule_coverage_matches_nba_player_props() -> None:
+    snap_wnba = _snapshot({'PTS': 22, 'REB': 8, 'AST': 6, '3PT': 4})
+
+    assert get_stat_rule('WNBA', 'player_points').compute_actual_value(snap_wnba, 'p1', 'Test Player') == 22
+    assert get_stat_rule('WNBA', 'player_rebounds').compute_actual_value(snap_wnba, 'p1', 'Test Player') == 8
+    assert get_stat_rule('WNBA', 'player_assists').compute_actual_value(snap_wnba, 'p1', 'Test Player') == 6
+    assert get_stat_rule('WNBA', 'player_threes').compute_actual_value(snap_wnba, 'p1', 'Test Player') == 4
+    assert get_stat_rule('WNBA', 'player_pr').compute_actual_value(snap_wnba, 'p1', 'Test Player') == 30
+    assert get_stat_rule('WNBA', 'player_pa').compute_actual_value(snap_wnba, 'p1', 'Test Player') == 28
+    assert get_stat_rule('WNBA', 'player_ra').compute_actual_value(snap_wnba, 'p1', 'Test Player') == 14
+    assert get_stat_rule('WNBA', 'player_pra').compute_actual_value(snap_wnba, 'p1', 'Test Player') == 36
+
+
+def test_nba_rules_do_not_dispatch_for_wnba_sport() -> None:
+    assert get_stat_rule('WNBA', 'player_steals') is None
+
+
 def test_unsupported_or_missing_stat_fails_gracefully() -> None:
     rule = get_stat_rule('SOCCER', 'player_shots_on_target')
     assert rule is not None

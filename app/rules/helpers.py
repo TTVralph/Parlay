@@ -10,7 +10,7 @@ STAT_ALIASES: dict[str, set[str]] = {
     'PTS': {'PTS', 'points'},
     'REB': {'REB', 'rebounds'},
     'AST': {'AST', 'assists'},
-    '3PM': {'3PM', '3PTM', '3PT FG', '3PT made', '3PT Made', 'threes', 'threes made'},
+    '3PM': {'3PM', '3PT', '3PTM', '3PT FG', '3PT made', '3PT Made', 'threes', 'threes made'},
     'STL': {'STL', 'steals'},
     'BLK': {'BLK', 'blocks'},
     'TOV': {'TOV', 'TO', 'turnovers'},

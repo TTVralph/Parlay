@@ -26,6 +26,13 @@ def test_generic_market_dispatch_by_sport() -> None:
     assert player_market_to_canonical('player_points', sport='MLB') is None
 
 
+def test_wnba_registry_resolves_combo_and_threes_markets() -> None:
+    assert normalize_market('3PTM', sport='WNBA') == 'three_pointers_made'
+    assert normalize_market('PRA', sport='WNBA') == 'points_rebounds_assists'
+    assert player_market_to_canonical('player_threes', sport='WNBA') == 'three_pointers_made'
+    assert player_market_to_canonical('player_pra', sport='WNBA') == 'points_rebounds_assists'
+
+
 def test_unsupported_sport_features_fail_gracefully() -> None:
     assert normalize_market('passing yards', sport='NBA') is None
     assert normalize_market('points', sport='CRICKET') is None
