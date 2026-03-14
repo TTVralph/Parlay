@@ -1,0 +1,9 @@
+{
+  "seed": null,
+  "mode": "mixed",
+  "cases_run": 0,
+  "passed_invariants": 0,
+  "flagged_suspicious": 0,
+  "hard_failures": 0,
+  "issues": []
+}
