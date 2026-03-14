@@ -142,3 +142,55 @@ def test_mlb_kill_condition_support_for_supported_markets() -> None:
 def test_kill_condition_does_not_cross_sport_dispatch() -> None:
     assert get_stat_rule('NBA', 'player_hits') is None
     assert get_stat_rule('WNBA', 'player_total_bases') is None
+
+
+def test_progress_ratio_helper_clamps_and_rounds() -> None:
+    from app.grader import _compute_leg_progress
+
+    assert _compute_leg_progress(actual_value=18.0, line=28.5) == 0.63
+    assert _compute_leg_progress(actual_value=-2.0, line=28.5) == 0.0
+    assert _compute_leg_progress(actual_value=40.0, line=28.5) == 1.4
+
+
+def test_progress_is_exposed_on_combo_stat_graded_leg() -> None:
+    from datetime import datetime, timezone
+
+    from app.grader import settle_leg
+    from app.providers.base import EventInfo
+
+    class ComboProvider:
+        def __init__(self) -> None:
+            self._event = EventInfo(
+                event_id='evt-1',
+                sport='NBA',
+                home_team='Denver Nuggets',
+                away_team='Boston Celtics',
+                start_time=datetime.now(timezone.utc),
+            )
+
+        def get_event_status(self, event_id: str):
+            return 'final' if event_id == self._event.event_id else None
+
+        def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+            if event_id != self._event.event_id or player != 'Nikola Jokic':
+                return None
+            if market_type == 'player_pra':
+                return 18.0
+            return None
+
+    leg = Leg(
+        raw_text='Nikola Jokic over 28.5 pra',
+        sport='NBA',
+        market_type='player_pra',
+        player='Nikola Jokic',
+        direction='over',
+        line=28.5,
+        confidence=0.95,
+        event_id='evt-1',
+        event_label='Boston Celtics @ Denver Nuggets',
+    )
+
+    graded = settle_leg(leg, ComboProvider())
+
+    assert graded.actual_value == 18.0
+    assert graded.progress == 0.63
