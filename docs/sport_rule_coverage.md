@@ -12,6 +12,28 @@ A **kill moment** is the first point where a leg becomes mathematically impossib
 
 The rule engine evaluates this in each `StatRule` via `kill_condition(actual_value, line, bet_type, event_status)` and writes kill metadata to graded leg output.
 
+
+## Graded leg progress metadata
+
+Stat-rule graded legs now include `progress` metadata for ParlayBot live displays.
+
+- Formula: `progress = actual_value / line`
+- Output is clamped at a floor of `0.0` (negative ratios become `0.0`).
+- Ratios above `1.0` are preserved to show overshooting the target.
+- Value is rounded to 2 decimal places.
+- Applies to combo stat markets too (for example `player_pra`, `player_pr`, `player_pa`, `player_ra`, and MLB `player_total_bases`).
+
+Example:
+
+```json
+{
+  "text": "Over 28.5 Points",
+  "actual_value": 18,
+  "line": 28.5,
+  "progress": 0.63
+}
+```
+
 ## NBA
 - player_points (live ✅, kill-moment ✅)
 - player_rebounds (live ✅, kill-moment ✅)

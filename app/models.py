@@ -147,6 +147,7 @@ class GradedLeg(BaseModel):
     leg: Leg
     settlement: Settlement
     actual_value: Optional[float] = None
+    progress: Optional[float] = None
     reason: str
     matched_event: Optional[str] = None
     line: Optional[float] = None
