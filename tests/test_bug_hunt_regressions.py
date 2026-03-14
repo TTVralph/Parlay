@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from app.grader import _compute_leg_progress, _compute_slip_progress
+from app.grader import _aggregate_overall_settlement, _compute_leg_progress, _compute_slip_progress, grade_text
 from app.models import GradedLeg, Leg
 from app.parser import parse_text
 from app.player_identity import resolve_player_resolution
@@ -51,6 +51,42 @@ class _AmbiguousPlayerProvider:
 
     def did_player_appear(self, player: str, event_id: str | None = None):
         return None
+
+
+class _StatusAwareProvider:
+    def __init__(self, *, status: str, points: float | str | None):
+        self._status = status
+        self._points = points
+        self._event = EventInfo(
+            event_id='evt-1',
+            sport='NBA',
+            away_team='Denver Nuggets',
+            home_team='Oklahoma City Thunder',
+            start_time=datetime(2026, 3, 7, 1, 0, tzinfo=timezone.utc),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return self._event
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return self._event
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return [self._event]
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return 'Denver Nuggets'
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        if market_type == 'player_points' and player == 'Nikola Jokic':
+            return self._points
+        return None
+
+    def get_event_status(self, event_id: str):
+        return self._status
+
+    def did_player_appear(self, player: str, event_id: str | None = None):
+        return True
 
 
 def test_parser_handles_shorthand_hyphen_and_suffix_names() -> None:
@@ -172,3 +208,27 @@ def test_total_bases_derives_from_component_hits_when_tb_missing() -> None:
     rule = get_stat_rule('MLB', 'player_total_bases')
     assert rule is not None
     assert rule.compute_actual_value(snapshot, 'p1', 'Mookie Betts') == 7.0
+
+
+def test_postponed_games_do_not_settle_as_live() -> None:
+    provider = _StatusAwareProvider(status='postponed', points=18)
+
+    result = grade_text('Nikola Jokic over 28.5 points', provider=provider)
+
+    assert result.legs[0].settlement == 'unmatched'
+    assert result.overall == 'needs_review'
+
+
+def test_mixed_state_slip_with_loss_and_review_prefers_review_over_lost() -> None:
+    settlements = ['loss', 'live', 'unmatched']
+
+    assert _aggregate_overall_settlement(settlements) == 'needs_review'
+
+
+def test_nan_provider_values_do_not_confidently_settle() -> None:
+    provider = _StatusAwareProvider(status='final', points='NaN')
+
+    result = grade_text('Nikola Jokic over 28.5 points', provider=provider)
+
+    assert result.legs[0].settlement == 'unmatched'
+    assert result.overall == 'needs_review'

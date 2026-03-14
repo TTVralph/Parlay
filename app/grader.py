@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+import math
 
 from .models import GradeResponse, GradedLeg, Leg, SlipGroup
 from .services import grade_reason_codes as reason_codes
@@ -105,6 +106,18 @@ def _compute_slip_progress(graded_legs: list[GradedLeg]) -> float | None:
     if not graded_progress:
         return None
     return round(sum(graded_progress) / len(graded_progress), 2)
+
+
+def _aggregate_overall_settlement(settlements: list[str]) -> str:
+    if any(settlement in {'unmatched', 'review'} for settlement in settlements):
+        return 'needs_review'
+    if any(settlement == 'loss' for settlement in settlements):
+        return 'lost'
+    if settlements and all(settlement == 'win' for settlement in settlements):
+        return 'cashed'
+    if any(settlement in {'pending', 'live'} for settlement in settlements):
+        return 'pending'
+    return 'needs_review'
 
 
 def _name_matches(target_player: str, candidate: str | None) -> bool:
@@ -474,6 +487,11 @@ def _event_status(provider: ResultsProvider, event_id: str | None) -> str | None
 
 def _is_final_event_status(status: str | None) -> bool:
     return str(status or '').strip().lower() in {'final', 'complete', 'completed', 'closed', 'settled', 'post'}
+
+
+def _is_postponed_or_suspended_status(status: str | None) -> bool:
+    normalized = str(status or '').strip().lower()
+    return normalized in {'postponed', 'suspended', 'delayed', 'ppd'}
 
 
 def _to_int_score(value: object) -> int | None:
@@ -1301,6 +1319,24 @@ def settle_leg(
         kill_reason = stat_rule.kill_condition(float(actual_value), float(leg.line), leg.direction, normalized_status)
 
     if status is not None and not is_final_status:
+        if _is_postponed_or_suspended_status(status):
+            settlement_diagnostics['settlement_failure_reason'] = 'event postponed_or_suspended'
+            settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_UNRESOLVED
+            return explained(
+                settlement='unmatched',
+                reason='Game status requires review before grading',
+                reason_code=reason_codes.EVENT_UNRESOLVED,
+                reason_message='Game is postponed/suspended/delayed',
+                review_reason='Game is postponed/suspended/delayed',
+                explanation_reason='event unresolved',
+                actual_value=float(actual_value) if actual_value is not None else None,
+                progress=_compute_leg_progress(actual_value=float(actual_value) if actual_value is not None else None, line=leg.line, direction=leg.direction),
+                component_values=component_values_dict,
+                stat_components=stat_components,
+                computed_total=computed_total,
+                live_progress=live_progress,
+                live_progress_timeline=live_timeline,
+            )
         if kill_reason is not None:
             settlement_diagnostics['stat_extraction_worked'] = True
             return explained(
@@ -1342,6 +1378,12 @@ def settle_leg(
             live_progress_timeline=live_timeline,
         )
 
+    if actual_value is not None:
+        try:
+            coerced_actual = float(actual_value)
+            actual_value = coerced_actual if math.isfinite(coerced_actual) else None
+        except (TypeError, ValueError):
+            actual_value = None
     settlement_diagnostics['stat_lookup_result'] = 'found' if actual_value is not None else 'missing'
     if leg.line is None or leg.direction is None:
         return explained(settlement='unmatched', reason='Missing values required for settlement', reason_code=reason_codes.MISSING_SETTLEMENT_INPUTS, reason_message='Missing values required for settlement', explanation_reason='stat unavailable', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
@@ -1621,14 +1663,7 @@ def grade_text(
         print(f"snapshot diagnostics: {run_snapshot_diagnostics}")
 
     settlements = [item.settlement for item in graded]
-    if any(settlement == 'loss' for settlement in settlements):
-        overall = 'lost'
-    elif settlements and all(settlement == 'win' for settlement in settlements):
-        overall = 'cashed'
-    elif any(settlement in {'pending', 'live'} for settlement in settlements) and not any(settlement in {'unmatched', 'review'} for settlement in settlements):
-        overall = 'pending'
-    else:
-        overall = 'needs_review'
+    overall = _aggregate_overall_settlement(settlements)
 
     leg_confidence_scores = [float(item.confidence_score) for item in graded if item.confidence_score is not None]
     slip_confidence = score_slip_confidence(leg_confidence_scores)
