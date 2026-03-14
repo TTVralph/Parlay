@@ -1811,6 +1811,42 @@ Murray over 2.5 threes'></textarea>
       return null;
     }
 
+    function formatLocalGameTime(utcTimestamp,timeZoneOverride){
+      const browserTimeZone=Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if(!utcTimestamp){return null;}
+      const date=new Date(utcTimestamp);
+      if(Number.isNaN(date.getTime())){return null;}
+      const parts=new Intl.DateTimeFormat(undefined,{
+        weekday:'short',
+        month:'short',
+        day:'numeric',
+        hour:'numeric',
+        minute:'2-digit',
+        timeZoneName:'short',
+        timeZone:timeZoneOverride||browserTimeZone,
+      }).formatToParts(date);
+      const lookup=(type)=>parts.find((part)=>part.type===type)?.value||'';
+      const weekday=lookup('weekday');
+      const month=lookup('month');
+      const day=lookup('day');
+      const hour=lookup('hour');
+      const minute=lookup('minute');
+      const dayPeriod=lookup('dayPeriod');
+      const timeZoneName=lookup('timeZoneName');
+      const time=[hour,minute].filter(Boolean).join(':');
+      const clock=[time,dayPeriod].filter(Boolean).join(' ');
+      const dateLabel=[weekday,[month,day].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+      return [dateLabel,clock,timeZoneName].filter(Boolean).join(' • ');
+    }
+
+    function eventStartTimeUtcForLeg(item){
+      return item.event_start_time_utc
+        || item.leg?.event_start_time_utc
+        || item.event_start_time
+        || item.leg?.event_start_time
+        || null;
+    }
+
     function renderRows(legs, options={}){
       const optimize=Boolean(options.optimize);
       const previousById=new Map((options.previousLegs||[]).map((item,idx)=>[String(item.leg_id??idx),item]));
@@ -1864,8 +1900,11 @@ Murray over 2.5 threes'></textarea>
         }
         resultCell.className='leg-result-cell';
 
+        const eventStartTimeUtc=eventStartTimeUtcForLeg(item);
+        const localEventTimeLabel=formatLocalGameTime(eventStartTimeUtc);
         if(item.matched_event){
-          legCell.innerHTML+=`<div style="margin-top:4px;font-size:12px;color:#cbd5e1;">Game: ${escapeHtml(item.matched_event)}</div>`;
+          const localTimeSuffix=localEventTimeLabel?` • ${escapeHtml(localEventTimeLabel)}`:'';
+          legCell.innerHTML+=`<div style="margin-top:4px;font-size:12px;color:#cbd5e1;">Game: ${escapeHtml(item.matched_event)}${localTimeSuffix}</div>`;
         }
 
         const normalizedStatus=status==='unmatched'?'review':status;
@@ -1895,7 +1934,10 @@ Murray over 2.5 threes'></textarea>
             pickBtn.type='button';
             pickBtn.className='secondary candidate-btn';
             const datePart=game.event_date?` — ${game.event_date}`:'';
-            pickBtn.textContent=`${game.event_label||game.event_id}${datePart}`;
+            const candidateUtc=game.event_start_time_utc||game.event_start_time||null;
+            const localCandidateTime=formatLocalGameTime(candidateUtc);
+            const localTimePart=localCandidateTime?` • ${localCandidateTime}`:'';
+            pickBtn.textContent=`${game.event_label||game.event_id}${datePart}${localTimePart}`;
             if(selectedGameId&&selectedGameId===game.event_id){pickBtn.classList.add('selected');}
             pickBtn.addEventListener('click',()=>{
               if(!game.event_id){return;}
@@ -3289,6 +3331,7 @@ def _process_public_check_text(
             'sport': item.leg.sport,
             'result': result,
             'matched_event': item.matched_event or item.leg.event_label,
+            'event_start_time_utc': (item.leg.event_start_time.isoformat() if item.leg.event_start_time else None),
             'candidate_games': item.candidate_games or item.leg.event_candidates,
             'parsed_player_or_team': item.leg.player or item.leg.team,
             'normalized_market': item.normalized_market,
