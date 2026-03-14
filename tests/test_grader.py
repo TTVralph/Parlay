@@ -165,6 +165,19 @@ def test_live_prop_leg_is_not_graded_before_final() -> None:
     assert leg.actual_value == 0.0
 
 
+def test_live_under_leg_marks_kill_moment_when_threshold_exceeded() -> None:
+    class _LiveKillProvider(_LivePropProvider):
+        def get_player_result(self, player: str, market_type: str, event_id=None):
+            return 10.0 if event_id == 'evt-live' else super().get_player_result(player, market_type, event_id=event_id)
+
+    result = grade_text('Josh Giddey under 8.5 assists', provider=_LiveKillProvider())
+    leg = result.legs[0]
+    assert leg.settlement == 'loss'
+    assert leg.actual_value == 10.0
+    assert leg.kill_moment is True
+    assert leg.kill_reason == 'threshold_exceeded'
+
+
 def test_parlay_can_be_lost_with_final_loss_and_live_legs() -> None:
     result = grade_text('Josh Giddey over 8.5 assists\nNikola Jokic over 12.5 points', provider=_LivePropProvider())
     assert result.overall == 'lost'

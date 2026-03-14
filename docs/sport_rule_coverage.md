@@ -2,6 +2,16 @@
 
 This file summarizes stat-rule engine coverage by sport.
 
+## Kill-moment definition
+
+A **kill moment** is the first point where a leg becomes mathematically impossible to win.
+
+- `under` legs are killed as soon as `actual_value > line` (`kill_reason = "threshold_exceeded"`).
+- `over` legs are killed only when the event is final and `actual_value <= line` (`kill_reason = "final_under"`).
+- If neither condition is true, `kill_moment` remains `false` and `kill_reason` remains `null`.
+
+The rule engine evaluates this in each `StatRule` via `kill_condition(actual_value, line, bet_type, event_status)` and writes kill metadata to graded leg output.
+
 ## NBA
 - player_points (live ✅, kill-moment ✅)
 - player_rebounds (live ✅, kill-moment ✅)
@@ -28,12 +38,12 @@ This file summarizes stat-rule engine coverage by sport.
 - Future common markets: team spreads/totals.
 
 ## MLB
-- player_hits
-- player_strikeouts
-- player_total_bases (supports computed formula fallback: 1B + 2*2B + 3*3B + 4*HR)
-- player_runs
-- player_rbis
-- player_home_runs
+- player_hits (kill-moment ✅)
+- player_strikeouts (kill-moment ✅)
+- player_total_bases (kill-moment ✅, supports computed formula fallback: 1B + 2*2B + 3*3B + 4*HR)
+- player_runs (kill-moment ✅)
+- player_rbis (kill-moment ✅)
+- player_home_runs (kill-moment ✅)
 - Future common markets: hits+runs+rbi, pitcher outs.
 
 ## NFL

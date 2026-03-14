@@ -117,3 +117,28 @@ def test_mlb_rule_dispatch_is_sport_scoped() -> None:
     assert get_stat_rule('MLB', 'player_strikeouts') is not None
     assert get_stat_rule('NBA', 'player_strikeouts') is None
     assert get_stat_rule('WNBA', 'player_total_bases') is None
+
+
+def test_kill_condition_under_threshold_exceeded_triggers() -> None:
+    rule = get_stat_rule('NBA', 'player_rebounds')
+    assert rule is not None
+    assert rule.kill_condition(6.0, 5.5, 'under', 'in_progress') == 'threshold_exceeded'
+
+
+def test_kill_condition_over_only_triggers_when_final_under() -> None:
+    rule = get_stat_rule('WNBA', 'player_points')
+    assert rule is not None
+    assert rule.kill_condition(14.0, 25.5, 'over', 'in_progress') is None
+    assert rule.kill_condition(14.0, 25.5, 'over', 'final') == 'final_under'
+
+
+def test_mlb_kill_condition_support_for_supported_markets() -> None:
+    hits_rule = get_stat_rule('MLB', 'player_hits')
+    assert hits_rule is not None
+    assert hits_rule.supports_kill_moment is True
+    assert hits_rule.kill_condition(2.0, 1.5, 'under', 'live') == 'threshold_exceeded'
+
+
+def test_kill_condition_does_not_cross_sport_dispatch() -> None:
+    assert get_stat_rule('NBA', 'player_hits') is None
+    assert get_stat_rule('WNBA', 'player_total_bases') is None

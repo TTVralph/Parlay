@@ -1264,7 +1264,38 @@ def settle_leg(
     )
 
     status = (event_snapshot.event_status if event_snapshot is not None else None) or _event_status(provider, leg.event_id)
-    if status is not None and not _is_final_event_status(status):
+    is_final_status = _is_final_event_status(status) if status is not None else False
+    kill_reason: str | None = None
+    if (
+        stat_rule is not None
+        and stat_rule.supports_kill_moment
+        and actual_value is not None
+        and leg.line is not None
+        and leg.direction is not None
+    ):
+        normalized_status = 'final' if is_final_status else (str(status).lower() if status is not None else None)
+        kill_reason = stat_rule.kill_condition(float(actual_value), float(leg.line), leg.direction, normalized_status)
+
+    if status is not None and not is_final_status:
+        if kill_reason is not None:
+            settlement_diagnostics['stat_extraction_worked'] = True
+            return explained(
+                settlement='loss',
+                reason=f'{player_lookup_name} in {leg.event_label}: actual {actual_value} vs line {leg.line}',
+                reason_code=reason_codes.ACTUAL_STAT_ABOVE_LINE if leg.direction == 'under' else reason_codes.ACTUAL_STAT_BELOW_LINE,
+                reason_message=f'Kill moment triggered: {kill_reason}',
+                explanation_reason='event resolved',
+                actual_value=float(actual_value),
+                component_values=component_values_dict,
+                stat_components=stat_components,
+                computed_total=computed_total,
+                live_progress=live_progress,
+                live_progress_timeline=live_timeline,
+                matched_boxscore_player_name=matched_boxscore_player_name or leg.resolved_player_name or leg.player,
+                player_found_in_boxscore=True,
+                kill_moment=True,
+                kill_reason=kill_reason,
+            )
         settlement_diagnostics['settlement_failure_reason'] = 'event not final'
         settlement_diagnostics['unmatched_reason_code'] = reason_codes.EVENT_NOT_FINAL
         if live_progress is not None:
@@ -1372,6 +1403,8 @@ def settle_leg(
         computed_total=computed_total,
         matched_boxscore_player_name=matched_boxscore_player_name or leg.resolved_player_name or leg.player,
         player_found_in_boxscore=True,
+        kill_moment=kill_reason is not None and not won,
+        kill_reason=kill_reason if not won else None,
     )
 
 

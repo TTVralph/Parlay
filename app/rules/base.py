@@ -8,6 +8,7 @@ from app.services.event_snapshot import EventSnapshot
 
 CompareFn = Callable[[float, float, str], str]
 ComputeFn = Callable[[EventSnapshot, str | None, str | None], float | None]
+KillConditionFn = Callable[[float, float, str, str | None], str | None]
 
 
 def default_compare(actual_value: float, line: float, side: str) -> str:
@@ -21,6 +22,16 @@ def default_compare(actual_value: float, line: float, side: str) -> str:
     return 'unmatched'
 
 
+def default_kill_condition(actual_value: float, line: float, side: str, event_status: str | None) -> str | None:
+    normalized_side = str(side or '').lower()
+    status = str(event_status or '').lower()
+    if normalized_side == 'under' and actual_value > line:
+        return 'threshold_exceeded'
+    if normalized_side == 'over' and status == 'final' and actual_value <= line:
+        return 'final_under'
+    return None
+
+
 @dataclass(frozen=True)
 class StatRule:
     sport: str
@@ -28,6 +39,7 @@ class StatRule:
     stat_dependencies: tuple[str, ...]
     compute_actual_value: ComputeFn
     compare: CompareFn = default_compare
+    kill_condition: KillConditionFn = default_kill_condition
     display_name: str | None = None
     supports_live_progress: bool = False
     supports_kill_moment: bool = False

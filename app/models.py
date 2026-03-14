@@ -215,6 +215,8 @@ class GradedLeg(BaseModel):
     stat_parse_score: Optional[float] = None
     ocr_quality_score: Optional[float] = None
     player_team_mismatch_detected: bool = False
+    kill_moment: bool = False
+    kill_reason: Optional[str] = None
 
 
 class SettlementExplanation(BaseModel):
