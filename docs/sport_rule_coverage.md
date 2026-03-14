@@ -51,6 +51,26 @@ Example:
 }
 ```
 
+
+### Slip fingerprint popularity
+
+Grade/check responses include slip fingerprint metadata for duplicate detection and trend tracking:
+
+- `slip_hash`: stable SHA-256 fingerprint of normalized legs (order-independent).
+- `slip_popularity`: in-memory occurrence count for that `slip_hash`.
+- Count increments every time `/check-slip` grades the same normalized slip.
+- First check returns `slip_popularity: 1`; repeat checks for the same slip return `2`, `3`, etc.
+
+Example:
+
+```json
+{
+  "slip_hash": "d73d...",
+  "slip_popularity": 142
+}
+```
+
+
 ## NBA
 - player_points (live ✅, kill-moment ✅)
 - player_rebounds (live ✅, kill-moment ✅)
