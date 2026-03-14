@@ -11,6 +11,7 @@ def test_grade_sample_parlay() -> None:
     assert result.legs[0].settlement == 'win'
     assert result.legs[1].settlement == 'win'
     assert result.legs[2].settlement == 'loss'
+    assert result.slip_progress == 0.89
 
 
 def test_grade_unverified_slip_is_needs_review() -> None:

@@ -3395,6 +3395,7 @@ def _process_public_check_text(
         'selected_player_by_leg_id': selected_player_by_leg_id or {},
         'sold_leg_explanations': sold_explanations,
         'parlay_closeness_score': graded.parlay_closeness_score,
+        'slip_progress': graded.slip_progress,
         'closest_miss_leg': graded.closest_miss_leg,
         'worst_miss_leg': graded.worst_miss_leg,
         'parlay_progress_summary': parlay_progress_summary,

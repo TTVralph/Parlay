@@ -95,6 +95,13 @@ def _compute_leg_progress(*, actual_value: float | None, line: float | None) -> 
     return round(max(0.0, progress), 2)
 
 
+def _compute_slip_progress(graded_legs: list[GradedLeg]) -> float | None:
+    graded_progress = [float(item.progress) for item in graded_legs if item.progress is not None]
+    if not graded_progress:
+        return None
+    return round(sum(graded_progress) / len(graded_progress), 2)
+
+
 def _name_matches(target_player: str, candidate: str | None) -> bool:
     if not candidate:
         return False
@@ -1630,6 +1637,7 @@ def grade_text(
     response = GradeResponse(
         overall=overall,
         legs=graded,
+        slip_progress=_compute_slip_progress(graded),
         slip_hash=slip_hash,
         leg_count=len(resolved_legs),
         sport_set=sorted({str(leg.sport) for leg in resolved_legs if leg.sport}),

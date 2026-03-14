@@ -271,6 +271,7 @@ class SoldLegExplanation(BaseModel):
 class GradeResponse(BaseModel):
     overall: Literal["cashed", "lost", "pending", "needs_review"]
     legs: list[GradedLeg]
+    slip_progress: Optional[float] = None
     slip_hash: Optional[str] = None
     leg_count: int = 0
     sport_set: list[str] = Field(default_factory=list)
