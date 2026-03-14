@@ -1,4 +1,4 @@
-from app.models import Leg
+from app.models import GradedLeg, Leg
 from app.rules.registry import get_stat_rule
 from app.services.event_snapshot import EventSnapshot
 
@@ -150,6 +150,20 @@ def test_progress_ratio_helper_clamps_and_rounds() -> None:
     assert _compute_leg_progress(actual_value=18.0, line=28.5) == 0.63
     assert _compute_leg_progress(actual_value=-2.0, line=28.5) == 0.0
     assert _compute_leg_progress(actual_value=40.0, line=28.5) == 1.4
+
+
+def test_slip_progress_averages_graded_leg_progress_and_excludes_missing_stats() -> None:
+    from app.grader import _compute_slip_progress
+
+    legs = [
+        GradedLeg(leg=Leg(raw_text='live', sport='NBA', market_type='player_points', player='A', confidence=0.9), settlement='live', reason='x', progress=0.6),
+        GradedLeg(leg=Leg(raw_text='win', sport='NBA', market_type='player_points', player='B', confidence=0.9), settlement='win', reason='x', progress=1.4),
+        GradedLeg(leg=Leg(raw_text='loss', sport='NBA', market_type='player_points', player='C', confidence=0.9), settlement='loss', reason='x', progress=0.7),
+        GradedLeg(leg=Leg(raw_text='push', sport='NBA', market_type='player_points', player='D', confidence=0.9), settlement='push', reason='x', progress=1.0),
+        GradedLeg(leg=Leg(raw_text='missing', sport='NBA', market_type='player_points', player='E', confidence=0.9), settlement='unmatched', reason='x', progress=None),
+    ]
+
+    assert _compute_slip_progress(legs) == 0.93
 
 
 def test_progress_is_exposed_on_combo_stat_graded_leg() -> None:

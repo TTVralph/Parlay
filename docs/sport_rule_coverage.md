@@ -34,6 +34,23 @@ Example:
 }
 ```
 
+### Slip-level progress metadata
+
+Grade responses now include `slip_progress`, computed as the average leg `progress` across all graded legs that have both `actual_value` and `line`.
+
+- Formula: `slip_progress = avg(progress of graded legs with non-null progress)`
+- Legs missing stats (and therefore missing `progress`) are excluded.
+- Works across live, won, lost, and push legs as long as leg progress is present.
+- Returns `null` when no graded legs have progress.
+
+Example:
+
+```json
+{
+  "slip_progress": 0.7
+}
+```
+
 ## NBA
 - player_points (live ✅, kill-moment ✅)
 - player_rebounds (live ✅, kill-moment ✅)

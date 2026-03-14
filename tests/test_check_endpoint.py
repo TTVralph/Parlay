@@ -110,6 +110,7 @@ def test_check_with_stake_without_odds_preserves_full_grading_payload(monkeypatc
     assert body['parsed_legs'] == ['Denver ML']
     assert body['legs']
     assert 'parse_confidence' in body
+    assert 'slip_progress' in body
 
 
 def test_check_same_slip_payload_shape_matches_with_or_without_stake(monkeypatch):
