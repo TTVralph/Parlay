@@ -94,10 +94,10 @@ def test_final_game_losing_leg_sets_overall_lost() -> None:
     assert result.overall == 'lost'
 
 
-def test_live_game_unresolved_leg_stays_pending() -> None:
+def test_live_game_unresolved_leg_stays_live() -> None:
     provider = FakeEspnLikeProvider(points=None, status='live')
     result = grade_text('Jokic over 28.5 points', provider=provider)
-    assert result.legs[0].settlement == 'pending'
+    assert result.legs[0].settlement == 'live'
     assert result.overall == 'pending'
 
 
