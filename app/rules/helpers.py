@@ -18,7 +18,7 @@ STAT_ALIASES: dict[str, set[str]] = {
     'R': {'R', 'runs'},
     'RBI': {'RBI', 'RBIs', 'rbi', 'rbis', 'runs_batted_in'},
     'SO': {'SO', 'K', 'strikeouts'},
-    'TB': {'TB', 'total_bases'},
+    'TB': {'TB', 'total_bases', 'totalBases'},
     '1B': {'1B', 'singles'},
     '2B': {'2B', 'doubles'},
     '3B': {'3B', 'triples'},
