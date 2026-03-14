@@ -1195,6 +1195,14 @@ def public_check_page(tracker_key: str | None = Cookie(default=None, alias=_TRAC
     #overall.review{background:linear-gradient(135deg,#422006,#78350f);border:1px solid #f59e0b;color:#fffbeb;}
     #overall.live{background:linear-gradient(135deg,#422006,#78350f);border:1px solid #facc15;color:#fefce8;}
     .result-summary,.result-meta,.leg-progress{display:flex;flex-wrap:wrap;gap:8px;}
+    .slip-progress-wrap{display:grid;gap:8px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--bg-soft);}
+    .slip-progress-head{display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:700;}
+    .progress-bar{width:100%;height:8px;background:#222;border-radius:4px;overflow:hidden;}
+    .progress-fill{height:100%;background:#4CAF50;transition:width .2s ease;}
+    .progress-fill.complete{background:linear-gradient(90deg,#16a34a,#22c55e);}
+    .progress-fill.killed{background:linear-gradient(90deg,#dc2626,#ef4444);}
+    .leg-progress-meta{margin-top:6px;font-size:12px;color:#cbd5e1;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;}
+    .kill-flag{margin-top:6px;font-size:12px;color:#fecaca;font-weight:700;}
     .live-updates-indicator{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid #ef444488;background:#450a0a66;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#fecaca;}
     .live-updates-indicator .dot{width:8px;height:8px;border-radius:50%;background:#ef4444;box-shadow:0 0 0 0 #ef444488;animation:livePulse 1.6s infinite;}
     @keyframes livePulse{0%{box-shadow:0 0 0 0 #ef444477;}70%{box-shadow:0 0 0 10px #ef444400;}100%{box-shadow:0 0 0 0 #ef444400;}}
@@ -1378,6 +1386,10 @@ Murray over 2.5 threes'></textarea>
       <div id='correlationSummary' data-reveal='4' hidden></div>
       <div id='saferRewrite' data-reveal='4' hidden></div>
       <div id='resultSummary' class='result-summary' data-reveal='2' hidden></div>
+      <div id='slipProgressWrap' class='slip-progress-wrap' data-reveal='5' hidden>
+        <div class='slip-progress-head'><span>Slip Progress</span><span id='slipProgressPercent'>0%</span></div>
+        <div class='progress-bar'><div id='slipProgressFill' class='progress-fill' style='width:0%'></div></div>
+      </div>
       <div id='legProgressStrip' class='leg-progress' data-reveal='5' hidden></div>
       <div id='liveIndicator' class='live-updates-indicator' data-reveal='5' hidden><span class='dot'></span>LIVE UPDATES</div>
       <div id='liveProgressShell' class='live-progress-shell' data-reveal='5' hidden>
@@ -1447,6 +1459,9 @@ Murray over 2.5 threes'></textarea>
     const saferRewrite=document.getElementById('saferRewrite');
     const resultSummary=document.getElementById('resultSummary');
     const metaSummary=document.getElementById('metaSummary');
+    const slipProgressWrap=document.getElementById('slipProgressWrap');
+    const slipProgressPercent=document.getElementById('slipProgressPercent');
+    const slipProgressFill=document.getElementById('slipProgressFill');
     const legProgressStrip=document.getElementById('legProgressStrip');
     const liveIndicator=document.getElementById('liveIndicator');
     const liveProgressShell=document.getElementById('liveProgressShell');
@@ -1890,6 +1905,25 @@ Murray over 2.5 threes'></textarea>
         if(item.actual_value!==null&&item.actual_value!==undefined){
           legCell.innerHTML+=`<div style="margin-top:4px;font-size:12px;color:#cbd5e1;">Actual: ${escapeHtml(String(item.actual_value))}</div>`;
         }
+        const progress=coerceProgress(item);
+        const actualValue=asNumber(item.actual_value);
+        const lineValue=asNumber(item.line);
+        const hasProgress=progress!==null||(actualValue!==null&&lineValue!==null&&lineValue>0);
+        if(hasProgress){
+          const progressRatio=progress===null?0:progress;
+          const isKilled=item.kill_moment===true;
+          const percent=Math.max(0,Math.round(Math.min(progressRatio,1)*100));
+          legCell.innerHTML+=renderProgressBar(progressRatio,{isKilled});
+          if(actualValue!==null&&lineValue!==null&&lineValue>0){
+            legCell.innerHTML+=`<div class='leg-progress-meta'><span>${escapeHtml(String(Number(actualValue.toFixed(2))))} / ${escapeHtml(String(Number(lineValue.toFixed(2))))}</span><span>(${percent}%)</span></div>`;
+          }else{
+            legCell.innerHTML+=`<div class='leg-progress-meta'><span>Progress</span><span>${percent}%</span></div>`;
+          }
+        }
+        if(item.kill_moment===true){
+          const reason=item.kill_reason||item.kill_moment_summary||'Threshold exceeded';
+          legCell.innerHTML+=`<div class='kill-flag'>❌ Killed — ${escapeHtml(String(reason))}</div>`;
+        }
         const previousStat=asNumber(previousItem&&previousItem.live_progress&&previousItem.live_progress.current_stat_value);
         const currentStat=asNumber(item&&item.live_progress&&item.live_progress.current_stat_value);
         if(previousStat!==null&&currentStat!==null&&currentStat>previousStat){
@@ -2175,6 +2209,41 @@ Murray over 2.5 threes'></textarea>
       return Number.isFinite(n)?n:null;
     }
 
+    function coerceProgress(item){
+      const direct=asNumber(item&&item.progress);
+      if(direct!==null){
+        return Math.max(0,direct);
+      }
+      const actual=asNumber(item&&item.actual_value);
+      const line=asNumber(item&&item.line);
+      if(actual===null||line===null||line<=0){
+        return null;
+      }
+      return Math.max(0,actual/line);
+    }
+
+    function renderProgressBar(progress,{isKilled=false}={}){
+      const safeProgress=asNumber(progress);
+      const percent=safeProgress===null?0:Math.max(0,Math.min(100,safeProgress*100));
+      const classes=['progress-fill'];
+      if(safeProgress!==null&&safeProgress>=1){classes.push('complete');}
+      if(isKilled){classes.push('killed');}
+      return `<div class='progress-bar'><div class='${classes.join(' ')}' style='width:${Math.round(percent)}%'></div></div>`;
+    }
+
+    function renderSlipProgress(payload){
+      const slipProgress=asNumber(payload&&payload.slip_progress);
+      if(slipProgress===null){
+        slipProgressWrap.hidden=true;
+        return;
+      }
+      const capped=Math.max(0,Math.min(1,slipProgress));
+      slipProgressPercent.textContent=`${Math.round(capped*100)}%`;
+      slipProgressFill.style.width=`${Math.round(capped*100)}%`;
+      slipProgressFill.className=`progress-fill${capped>=1?' complete':''}`;
+      slipProgressWrap.hidden=false;
+    }
+
     function formatSoldValue(value){
       const number=asNumber(value);
       return number===null?'—':String(Number(number.toFixed(2)));
@@ -2281,6 +2350,7 @@ Murray over 2.5 threes'></textarea>
         <span class='result-chip void'>${counts.void} ⭕ Void</span>
       `;
       resultSummary.hidden=false;
+      renderSlipProgress(payload);
 
       const sportSet=new Set((payload.legs||[]).map((item)=>item.sport).filter(Boolean));
       const sports=[...sportSet];
@@ -2547,6 +2617,7 @@ Murray over 2.5 threes'></textarea>
         <span class='result-chip'>Advisory only — not a guarantee</span>
       `;
       resultSummary.hidden=false;
+      slipProgressWrap.hidden=true;
 
       metaSummary.innerHTML=`
         <span class='meta-chip'>Supported legs: ${Number(payload.supported_leg_count||0)}</span>
@@ -2625,6 +2696,10 @@ Murray over 2.5 threes'></textarea>
       debugOut.innerHTML='';
       resultSummary.innerHTML='';
       resultSummary.hidden=true;
+      slipProgressWrap.hidden=true;
+      slipProgressPercent.textContent='0%';
+      slipProgressFill.style.width='0%';
+      slipProgressFill.className='progress-fill';
       legProgressStrip.hidden=true;
       legProgressStrip.innerHTML='';
       liveIndicator.hidden=true;
