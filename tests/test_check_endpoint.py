@@ -1140,3 +1140,12 @@ def test_check_page_uses_distinct_void_and_loss_visual_semantics() -> None:
     assert "const resultEmoji={win:'✅',loss:'❌',pending:'🟡',live:'🟡',push:'➖',void:'⭕',review:'⚠️',unmatched:'⚠️'};" in text
     assert '.result-chip.void,.leg-progress-chip.void' in text
     assert '.result-chip.loss,.leg-progress-chip.loss' in text
+
+
+
+def test_check_slip_leg_exposes_event_start_time_utc_when_matched():
+    body = client.post('/check-slip', json={'text': 'Denver ML'}).json()
+    first = body['legs'][0]
+    assert 'event_start_time_utc' in first
+    if first['event_start_time_utc'] is not None:
+        assert str(first['event_start_time_utc']).endswith('+00:00') or str(first['event_start_time_utc']).endswith('Z')

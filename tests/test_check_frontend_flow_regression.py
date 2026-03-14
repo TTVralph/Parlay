@@ -124,3 +124,58 @@ def test_manual_player_and_event_candidate_buttons_use_clickable_button_style() 
     assert "pickBtn.className='secondary candidate-btn';" in script
     assert "selectedPlayerByLegId={...selectedPlayerByLegId,[legId]:candidate.player_id};" in script
     assert "selectedGameByLegId={...selectedGameByLegId,[legId]:game.event_id};" in script
+
+
+def test_game_time_localization_helper_uses_browser_timezone_and_utc_field() -> None:
+    script = _check_page_script()
+    assert "function formatLocalGameTime(utcTimestamp,timeZoneOverride){" in script
+    assert "Intl.DateTimeFormat().resolvedOptions().timeZone" in script
+    assert "event_start_time_utc" in script
+
+
+def test_format_local_game_time_timezone_examples_via_node() -> None:
+    import json
+    import subprocess
+
+    js = """
+function formatLocalGameTime(utcTimestamp, timeZoneOverride) {
+  const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  if (!utcTimestamp) return null
+  const date = new Date(utcTimestamp)
+  if (Number.isNaN(date.getTime())) return null
+  const parts = new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+    timeZone: timeZoneOverride || browserTimeZone,
+  }).formatToParts(date)
+  const lookup = (type) => parts.find((part) => part.type === type)?.value || ''
+  const weekday = lookup('weekday')
+  const month = lookup('month')
+  const day = lookup('day')
+  const hour = lookup('hour')
+  const minute = lookup('minute')
+  const dayPeriod = lookup('dayPeriod')
+  const timeZoneName = lookup('timeZoneName')
+  const time = [hour, minute].filter(Boolean).join(':')
+  const clock = [time, dayPeriod].filter(Boolean).join(' ')
+  const dateLabel = [weekday, [month, day].filter(Boolean).join(' ')].filter(Boolean).join(', ')
+  return [dateLabel, clock, timeZoneName].filter(Boolean).join(' • ')
+}
+const ts = '2026-03-11T01:30:00Z'
+const out = {
+  ny: formatLocalGameTime(ts, 'America/New_York'),
+  den: formatLocalGameTime(ts, 'America/Denver'),
+  la: formatLocalGameTime(ts, 'America/Los_Angeles'),
+}
+console.log(JSON.stringify(out))
+"""
+    raw = subprocess.check_output(['node', '-e', js], text=True)
+    data = json.loads(raw.strip())
+
+    assert data['ny'].startswith('Tue, Mar 10 • 9:30 PM ')
+    assert data['den'].startswith('Tue, Mar 10 • 7:30 PM ')
+    assert data['la'].startswith('Tue, Mar 10 • 6:30 PM ')

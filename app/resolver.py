@@ -34,6 +34,7 @@ def _event_candidate_payload(event: EventInfo, *, match_confidence: str | None =
         'event_label': event.label,
         'event_date': _event_local_date(event).isoformat(),
         'event_start_time': event.start_time.isoformat(),
+        'event_start_time_utc': event.start_time.isoformat(),
         'home_team': event.home_team,
         'away_team': event.away_team,
         'match_confidence': match_confidence,
