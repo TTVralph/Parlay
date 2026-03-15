@@ -132,7 +132,7 @@ from .models import (
 )
 from .ocr import get_ocr_provider
 from .ocr.providers import validate_image_upload
-from .parser import filter_valid_legs, is_valid_leg, parse_text
+from .parser import filter_valid_legs, is_valid_leg, normalize_input_lines, parse_text
 from .services.slip_parser import SlipParserService
 from .odds_matcher import match_ticket_odds
 from .providers.allsports_client import AllSportsClient, AllSportsError
@@ -1063,6 +1063,7 @@ def _build_parlay_progress_summary(legs: list[dict[str, object]]) -> dict[str, o
         'review_legs': 0,
         'push_legs': 0,
         'pending_legs': 0,
+        'void_legs': 0,
     }
     for leg in legs:
         result = str(leg.get('result') or '').lower()
@@ -1078,6 +1079,8 @@ def _build_parlay_progress_summary(legs: list[dict[str, object]]) -> dict[str, o
             counts['push_legs'] += 1
         elif result == 'pending':
             counts['pending_legs'] += 1
+        elif result == 'void':
+            counts['void_legs'] += 1
 
     status_segments = [
         ('won_legs', 'won'),
@@ -1085,6 +1088,7 @@ def _build_parlay_progress_summary(legs: list[dict[str, object]]) -> dict[str, o
         ('live_legs', 'live'),
         ('review_legs', 'review'),
         ('push_legs', 'push'),
+        ('void_legs', 'void'),
         ('pending_legs', 'pending'),
     ]
     status_text = ', '.join(f"{counts[key]} {label}" for key, label in status_segments if counts[key] > 0) or 'No legs'
@@ -3350,7 +3354,7 @@ def _process_public_check_text(
     parsed = parse_text(normalized)
     valid_parsed = filter_valid_legs(parsed)
     parsed_legs = [leg.raw_text for leg in valid_parsed]
-    plausible_lines = [line.strip() for line in normalized.splitlines() if _is_plausible_non_empty_leg_line(line)]
+    plausible_lines = [line for line in normalize_input_lines(normalized) if _is_plausible_non_empty_leg_line(line)]
     review_legs_from_parse = [
         {
             'leg_id': f'review-{idx}',
@@ -3535,6 +3539,14 @@ def _process_public_check_text(
     if review_legs_from_parse:
         legs.extend(review_legs_from_parse)
 
+    parse_confidence_value = next((item.get('parse_confidence') for item in legs if item.get('parse_confidence')), 'low')
+    confidence_tier = graded.confidence_tier
+    confidence_recommendation = graded.confidence_recommendation
+    if missing_plausible_leg_count > 0:
+        parse_confidence_value = 'low'
+        confidence_tier = 'low'
+        confidence_recommendation = 'needs_review'
+
     out = {
         'ok': True,
         'message': 'Slip checked.',
@@ -3545,7 +3557,7 @@ def _process_public_check_text(
         'parlay_result': parlay_result,
         'slip_default_date': slip_default_date,
         'mixed_event_dates_detected': mixed_event_dates_detected,
-        'parse_confidence': next((item.get('parse_confidence') for item in legs if item.get('parse_confidence')), 'low'),
+        'parse_confidence': parse_confidence_value,
         'checked_at': datetime.utcnow().isoformat(),
         'bet_date': bet_date.isoformat() if bet_date is not None else None,
         'selected_player_by_leg_id': selected_player_by_leg_id or {},
@@ -3559,8 +3571,8 @@ def _process_public_check_text(
         'slip_hash': graded.slip_hash,
         'slip_popularity': graded.slip_popularity,
         'slip_confidence': graded.slip_confidence,
-        'confidence_tier': graded.confidence_tier,
-        'confidence_recommendation': graded.confidence_recommendation,
+        'confidence_tier': confidence_tier,
+        'confidence_recommendation': confidence_recommendation,
     }
     if unmatched_count == len(legs):
         out['message'] = 'Parsed legs were detected, but ESPN matching could not settle any leg.'

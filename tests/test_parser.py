@@ -82,6 +82,23 @@ def test_parse_shorthand_stat_aliases_are_consistent() -> None:
     assert all(leg.parse_confidence and leg.parse_confidence >= 0.9 for leg in legs)
 
 
+
+
+def test_parse_doubled_spaces_repeated_plus_and_pa_shorthand() -> None:
+    legs = parse_text('Jaylen  Brown  17++  PA\nJalen Williams over21 PTS')
+    assert len(legs) == 2
+
+    first, second = legs
+    assert first.raw_text == 'Jaylen Brown 17+ PA'
+    assert first.market_type == 'player_pa'
+    assert first.display_line == '17+'
+    assert first.line == 16.5
+
+    assert second.raw_text == 'Jalen Williams over21 PTS'
+    assert second.market_type == 'player_points'
+    assert second.direction == 'over'
+    assert second.line == 21.0
+
 def test_parse_rejects_nonsense_as_unmatched() -> None:
     legs = parse_text('hello\nthis is a test\nrandom bet')
     assert len(legs) == 3
