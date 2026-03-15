@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from app.grader import _aggregate_overall_settlement, _compute_leg_progress, _compute_slip_progress, grade_text
+from app.grader import _aggregate_overall_settlement, _compute_leg_progress, _compute_slip_progress, grade_text, settle_leg
 from app.models import GradedLeg, Leg
 from app.parser import parse_text
 from app.player_identity import resolve_player_resolution
@@ -232,3 +232,107 @@ def test_nan_provider_values_do_not_confidently_settle() -> None:
 
     assert result.legs[0].settlement == 'unmatched'
     assert result.overall == 'needs_review'
+
+class _TeamEventMismatchProvider:
+    def __init__(self) -> None:
+        self._event = EventInfo(
+            event_id='evt-cha-sac',
+            sport='NBA',
+            away_team='Charlotte Hornets',
+            home_team='Sacramento Kings',
+            start_time=datetime(2026, 3, 7, 3, 0, tzinfo=timezone.utc),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return self._event
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return [self._event]
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'LeBron James':
+            return 'Los Angeles Lakers'
+        return None
+
+    def get_event_status(self, event_id: str):
+        return 'final'
+
+    def get_player_result_details(self, player: str, market_type: str, event_id: str | None = None):
+        return {'actual_value': 4.0, 'matched_boxscore_player_name': 'Sion James'}
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return 4.0
+
+
+class _NameMismatchProvider:
+    def __init__(self) -> None:
+        self._event = EventInfo(
+            event_id='evt-lal-den',
+            sport='NBA',
+            away_team='Los Angeles Lakers',
+            home_team='Denver Nuggets',
+            start_time=datetime(2026, 3, 7, 3, 0, tzinfo=timezone.utc),
+        )
+
+    def resolve_team_event(self, team: str, as_of: datetime | None, *, include_historical: bool = False):
+        return None
+
+    def resolve_player_event(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return self._event
+
+    def resolve_player_event_candidates(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        return [self._event]
+
+    def resolve_player_team(self, player: str, as_of: datetime | None, *, include_historical: bool = False):
+        if player == 'LeBron James':
+            return 'Los Angeles Lakers'
+        return None
+
+    def get_event_status(self, event_id: str):
+        return 'final'
+
+    def get_player_result_details(self, player: str, market_type: str, event_id: str | None = None):
+        return {'actual_value': 4.0, 'matched_boxscore_player_name': 'Sion James'}
+
+    def get_player_result(self, player: str, market_type: str, event_id: str | None = None):
+        return 4.0
+
+
+def test_aggregate_marks_win_plus_void_as_cashed() -> None:
+    assert _aggregate_overall_settlement(['win', 'void']) == 'cashed'
+
+
+def test_surname_collision_with_exact_identity_downgrades_to_review() -> None:
+    result = grade_text('LeBron James over 2.5 assists', provider=_NameMismatchProvider())
+
+    leg = result.legs[0]
+    assert leg.settlement == 'unmatched'
+    assert result.overall == 'needs_review'
+    assert leg.event_review_reason_code == 'matched_boxscore_identity_mismatch'
+    assert leg.matched_boxscore_player_name == 'Sion James'
+
+
+def test_team_event_mismatch_from_resolved_team_hint_downgrades_to_review() -> None:
+    leg = Leg(
+        raw_text='LeBron James over 2.5 assists',
+        sport='NBA',
+        market_type='player_assists',
+        player='LeBron James',
+        resolved_player_name='LeBron James',
+        canonical_player_name='LeBron James',
+        resolved_team='Charlotte Hornets',
+        resolved_team_hint='Los Angeles Lakers',
+        direction='over',
+        line=2.5,
+        confidence=0.99,
+        event_id='evt-cha-sac',
+        event_label='Charlotte Hornets @ Sacramento Kings',
+    )
+
+    graded = settle_leg(leg, _TeamEventMismatchProvider())
+
+    assert graded.settlement == 'unmatched'
+    assert graded.event_review_reason_text == 'Matched game does not contain the resolved player team.'

@@ -113,8 +113,8 @@ def _aggregate_overall_settlement(settlements: list[str]) -> str:
         return 'needs_review'
     if any(settlement == 'loss' for settlement in settlements):
         return 'lost'
-    if settlements and all(settlement == 'win' for settlement in settlements):
-        return 'cashed'
+    if settlements and all(settlement in {'win', 'push', 'void'} for settlement in settlements):
+        return 'cashed' if any(settlement == 'win' for settlement in settlements) else 'needs_review'
     if any(settlement in {'pending', 'live'} for settlement in settlements):
         return 'pending'
     return 'needs_review'
@@ -128,6 +128,18 @@ def _name_matches(target_player: str, candidate: str | None) -> bool:
     if not target_tokens or not candidate_tokens:
         return False
     return ''.join(target_tokens) == ''.join(candidate_tokens) or target_tokens[-1] == candidate_tokens[-1]
+
+
+def _normalize_person_name(value: str | None) -> str:
+    if not value:
+        return ''
+    return ''.join(ch for ch in value.lower() if ch.isalnum())
+
+
+def _is_exact_person_name_match(expected: str | None, observed: str | None) -> bool:
+    normalized_expected = _normalize_person_name(expected)
+    normalized_observed = _normalize_person_name(observed)
+    return bool(normalized_expected) and normalized_expected == normalized_observed
 
 
 _SNAPSHOT_DERIVED_MARKET_COMPONENTS = {
@@ -354,7 +366,14 @@ def _event_info_for_leg(leg: Leg, provider: ResultsProvider):
     return None
 
 
-def validate_player_event_match(player: str, event: object, resolved_team: str | None, provider: ResultsProvider, event_id: str | None = None) -> ValidationResult:
+def validate_player_event_match(
+    player: str,
+    event: object,
+    resolved_team: str | None,
+    provider: ResultsProvider,
+    event_id: str | None = None,
+    resolved_team_hint: str | None = None,
+) -> ValidationResult:
     warnings: list[str] = []
     home_team = getattr(event, 'home_team', None) if event is not None else None
     away_team = getattr(event, 'away_team', None) if event is not None else None
@@ -362,9 +381,10 @@ def validate_player_event_match(player: str, event: object, resolved_team: str |
         home_team = event.get('home_team')
         away_team = event.get('away_team')
 
-    if resolved_team and home_team and away_team:
+    expected_team = resolved_team_hint or resolved_team
+    if expected_team and home_team and away_team:
         normalized_event_teams = {home_team.lower(), away_team.lower()}
-        if resolved_team.lower() not in normalized_event_teams:
+        if expected_team.lower() not in normalized_event_teams:
             warnings.append('Matched event does not include player team')
 
     roster_fn = getattr(provider, 'is_player_on_event_roster', None)
@@ -1161,7 +1181,14 @@ def settle_leg(
         'away_team': (event_snapshot.away_team or {}).get('name'),
     } if event_snapshot is not None else _event_info_for_leg(leg, provider)
     settlement_diagnostics['final_matched_event'] = leg.event_label
-    validation = validate_player_event_match(player_lookup_name, event_info, leg.resolved_team, provider, event_id=leg.event_id)
+    validation = validate_player_event_match(
+        player_lookup_name,
+        event_info,
+        leg.resolved_team,
+        provider,
+        event_id=leg.event_id,
+        resolved_team_hint=leg.resolved_team_hint,
+    )
     settlement_diagnostics['roster_validation_result'] = 'pass' if validation.is_valid else 'fail'
     base_kwargs['roster_validation_result'] = settlement_diagnostics['roster_validation_result']
     if validation.confidence == 'LOW':
@@ -1384,6 +1411,27 @@ def settle_leg(
             actual_value = coerced_actual if math.isfinite(coerced_actual) else None
         except (TypeError, ValueError):
             actual_value = None
+
+    canonical_player = leg.canonical_player_name or leg.resolved_player_name or leg.player
+    if matched_boxscore_player_name and canonical_player and not _is_exact_person_name_match(canonical_player, matched_boxscore_player_name):
+        settlement_diagnostics['settlement_failure_reason'] = 'matched boxscore player mismatches canonical identity'
+        settlement_diagnostics['unmatched_reason_code'] = reason_codes.IDENTITY_MATCH_AMBIGUOUS
+        base_kwargs['event_review_reason_code'] = 'matched_boxscore_identity_mismatch'
+        base_kwargs['event_review_reason_text'] = 'Matched box score player does not match the resolved player identity.'
+        return explained(
+            settlement='unmatched',
+            reason='Strict player identity guard rejected cross-player box score match',
+            reason_code=reason_codes.IDENTITY_MATCH_AMBIGUOUS,
+            reason_message='Matched box score player does not match canonical resolved player',
+            review_reason='Matched box score player does not match the resolved player identity.',
+            explanation_reason='Leg marked void/review instead of graded',
+            matched_boxscore_player_name=matched_boxscore_player_name,
+            player_found_in_boxscore=False,
+            component_values=component_values_dict,
+            stat_components=stat_components,
+            computed_total=computed_total,
+        )
+
     settlement_diagnostics['stat_lookup_result'] = 'found' if actual_value is not None else 'missing'
     if leg.line is None or leg.direction is None:
         return explained(settlement='unmatched', reason='Missing values required for settlement', reason_code=reason_codes.MISSING_SETTLEMENT_INPUTS, reason_message='Missing values required for settlement', explanation_reason='stat unavailable', component_values=component_values_dict, stat_components=stat_components, computed_total=computed_total)
