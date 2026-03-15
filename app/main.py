@@ -132,7 +132,7 @@ from .models import (
 )
 from .ocr import get_ocr_provider
 from .ocr.providers import validate_image_upload
-from .parser import filter_valid_legs, parse_text
+from .parser import filter_valid_legs, is_valid_leg, parse_text
 from .services.slip_parser import SlipParserService
 from .odds_matcher import match_ticket_odds
 from .providers.allsports_client import AllSportsClient, AllSportsError
@@ -3312,6 +3312,17 @@ def _process_public_check_text(
     selected_event_by_leg_id: dict[str, str] | None = None,
     selected_player_by_leg_id: dict[str, str] | None = None,
 ) -> dict:
+    def _is_plausible_non_empty_leg_line(line: str) -> bool:
+        candidate = line.strip()
+        if not candidate:
+            return False
+        lowered = candidate.lower()
+        if re.match(r'^(odds|american odds|stake|risk|to\s*win|payout|profit)\b', lowered):
+            return False
+        if re.match(r'^[+\-]\d{3,4}$', candidate):
+            return False
+        return True
+
     normalized = text.strip()
     if stake_amount is not None and stake_amount <= 0:
         return {
@@ -3339,13 +3350,28 @@ def _process_public_check_text(
     parsed = parse_text(normalized)
     valid_parsed = filter_valid_legs(parsed)
     parsed_legs = [leg.raw_text for leg in valid_parsed]
+    plausible_lines = [line.strip() for line in normalized.splitlines() if _is_plausible_non_empty_leg_line(line)]
+    review_legs_from_parse = [
+        {
+            'leg_id': f'review-{idx}',
+            'leg': leg.raw_text,
+            'sport': leg.sport,
+            'result': 'review',
+            'parsed_player_or_team': leg.player or leg.team,
+            'line': leg.line,
+            'review_reason': 'Leg could not be fully parsed; manual review required.',
+            'notes': list(leg.notes),
+        }
+        for idx, leg in enumerate(parsed)
+        if not is_valid_leg(leg)
+    ]
     if not parsed_legs:
         return {
             'ok': False,
-            'message': 'No valid betting legs detected.',
-            'legs': [],
+            'message': 'No valid betting legs detected. Added review legs for manual follow-up.',
+            'legs': review_legs_from_parse,
             'parsed_legs': [],
-            'parse_warning': 'No valid betting legs detected.',
+            'parse_warning': 'No valid betting legs detected. Parsed lines were preserved as review legs.',
             'grading_warning': None,
             'parlay_result': 'needs_review',
             'parse_confidence': 'low',
@@ -3497,13 +3523,25 @@ def _process_public_check_text(
     parlay_progress_summary = _build_parlay_progress_summary(legs)
     closest_live_leg = _build_closest_live_leg_payload(legs)
     parlay_result = 'still_live' if graded.overall == 'pending' else graded.overall
+    missing_plausible_leg_count = max(0, len(plausible_lines) - len(parsed_legs))
+    discrepancy_warning = None
+    if missing_plausible_leg_count > 0:
+        parlay_result = 'needs_review'
+        discrepancy_warning = (
+            f'Parsing discrepancy: {missing_plausible_leg_count} plausible non-empty leg line(s) '
+            'were not fully parsed and were preserved for manual review.'
+        )
+
+    if review_legs_from_parse:
+        legs.extend(review_legs_from_parse)
+
     out = {
         'ok': True,
         'message': 'Slip checked.',
         'legs': legs,
         'parsed_legs': parsed_legs,
         'parse_warning': None,
-        'grading_warning': None,
+        'grading_warning': discrepancy_warning,
         'parlay_result': parlay_result,
         'slip_default_date': slip_default_date,
         'mixed_event_dates_detected': mixed_event_dates_detected,
@@ -3533,6 +3571,11 @@ def _process_public_check_text(
 
     if ambiguous_count > 0:
         out['grading_warning'] = 'This leg matches multiple possible games. Add opponent/date or upload the full slip.'
+
+    if discrepancy_warning:
+        out['grading_warning'] = discrepancy_warning
+        out['message'] = discrepancy_warning
+        out['parlay_result'] = 'needs_review'
 
     if graded.confidence_recommendation == 'verify_recommended' and not out.get('grading_warning'):
         out['grading_warning'] = 'Confidence is medium; verify recommended before finalizing this slip.'

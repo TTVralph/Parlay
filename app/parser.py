@@ -68,6 +68,7 @@ MATCHUP_SUFFIX_PATTERN = re.compile(r"\s*\(?(?P<home>[a-z0-9 .\-]+)\s+v(?:s|\.)\
 MATCHUP_LINE_PATTERN = re.compile(r"^(?P<away>[\w .\-'’]+?)\s+(?:@|at|vs\.?|versus)\s+(?P<home>[\w .\-'’]+?)$", re.I)
 AMERICAN_ODDS_TOKEN_PATTERN = re.compile(r'(?<!\w)(?P<odds>[+\-]\d{3,4})(?!\w)')
 NOISE_PUNCTUATION_PATTERN = re.compile(r'[!?.;,]+$')
+REPEATED_PLUS_THRESHOLD_PATTERN = re.compile(r'(?P<value>\d+(?:\.\d+)?)\+{2,}(?!\d)')
 
 _NORMALIZED_STAT_TYPES = {
     'player_pra': 'PRA',
@@ -112,6 +113,7 @@ def _normalize_input_lines(text: str) -> list[str]:
                 continue
             candidate = re.sub(r'\s*:\s*', ' ', candidate)
             candidate = NOISE_PUNCTUATION_PATTERN.sub('', candidate)
+            candidate = REPEATED_PLUS_THRESHOLD_PATTERN.sub(lambda m: f"{m.group('value')}+", candidate)
             candidate = _normalize_whitespace(candidate)
             if candidate:
                 fragments.append(candidate)
