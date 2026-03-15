@@ -100,7 +100,7 @@ def _extract_line_odds(line: str) -> tuple[str, int | None]:
     return clean_line, (odds_tokens[-1] if odds_tokens else None)
 
 
-def _normalize_input_lines(text: str) -> list[str]:
+def normalize_input_lines(text: str) -> list[str]:
     fragments: list[str] = []
     for source_line in text.splitlines():
         if not source_line.strip():
@@ -236,7 +236,7 @@ def _infer_sport(team: str | None = None, player: str | None = None, sport_hint:
 
 
 def parse_text(text: str, sport_hint: Sport | None = None) -> list[Leg]:
-    lines = _normalize_input_lines(text)
+    lines = normalize_input_lines(text)
     normalized_lines: list[tuple[str, int | None]] = []
     for line in lines:
         clean_line, line_odds = _extract_line_odds(line)

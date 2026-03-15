@@ -144,6 +144,46 @@ def test_check_partial_parse_preserves_unparsed_lines_as_review_legs_and_downgra
     assert {leg['leg'] for leg in review_legs} == {'Dyson Daniels 11++ Assists', 'Trae Young 16++ Rebounds'}
 
 
+
+
+def test_check_partial_parse_disables_auto_grade_confidence_recommendation(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _fake_parse(_text):
+        return [
+            Leg(raw_text='Jalen Williams over21 PTS', sport='NBA', market_type='player_points', player='Jalen Williams', direction='over', line=21.0, confidence=1.0, parse_confidence=1.0),
+            Leg(raw_text='Jaylen Brown 17+ PA', sport='NBA', market_type='player_points', confidence=0.0, notes=['Unmatched leg']),
+        ]
+
+    def _fake_grade(_text, provider=None, posted_at=None):
+        leg = Leg(raw_text='Jalen Williams over21 PTS', sport='NBA', market_type='player_points', player='Jalen Williams', direction='over', line=21.0, confidence=1.0, parse_confidence=1.0)
+        return GradeResponse(overall='cashed', legs=[GradedLeg(leg=leg, settlement='win', reason='x')], confidence_tier='high', confidence_recommendation='auto_grade')
+
+    monkeypatch.setattr('app.main.parse_text', _fake_parse)
+    monkeypatch.setattr('app.main.grade_text', _fake_grade)
+
+    res = client.post('/check-slip', json={'text': 'Jalen Williams over21 PTS\nJaylen  Brown  17++  PA'})
+    assert res.status_code == 200
+    body = res.json()
+
+    assert body['parlay_result'] == 'needs_review'
+    assert body['parse_confidence'] == 'low'
+    assert body['confidence_tier'] == 'low'
+    assert body['confidence_recommendation'] == 'needs_review'
+
+
+def test_parlay_progress_summary_counts_void_only_slips() -> None:
+    from app.main import _build_parlay_progress_summary
+
+    summary = _build_parlay_progress_summary([
+        {'result': 'void'},
+        {'result': 'void'},
+    ])
+
+    assert summary['total_legs'] == 2
+    assert summary['void_legs'] == 2
+    assert summary['parlay_status_text'] == '2 void'
+
 def test_check_with_stake_without_odds_preserves_full_grading_payload(monkeypatch):
     monkeypatch.setattr('app.main._enforce_public_check_rate_limit', lambda request, response, key: None)
 
