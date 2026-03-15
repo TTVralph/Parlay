@@ -24,8 +24,8 @@ def test_check_no_legs_parsed_message(monkeypatch):
     assert res.status_code == 200
     body = res.json()
     assert body['ok'] is False
-    assert body['message'] == 'No valid betting legs detected.'
-    assert body['parse_warning'] == 'No valid betting legs detected.'
+    assert body['message'] == 'No valid betting legs detected. Added review legs for manual follow-up.'
+    assert body['parse_warning'] == 'No valid betting legs detected. Parsed lines were preserved as review legs.'
 
 
 def test_check_grading_error_message(monkeypatch):
@@ -109,8 +109,39 @@ def test_check_nonsense_input_is_rejected():
     assert res.status_code == 200
     body = res.json()
     assert body['ok'] is False
-    assert body['message'] == 'No valid betting legs detected.'
-    assert body['legs'] == []
+    assert body['message'] == 'No valid betting legs detected. Added review legs for manual follow-up.'
+    assert len(body['legs']) == 3
+    assert all(leg['result'] == 'review' for leg in body['legs'])
+
+
+def test_check_partial_parse_preserves_unparsed_lines_as_review_legs_and_downgrades_result(monkeypatch):
+    from app.models import GradeResponse, GradedLeg, Leg
+
+    def _fake_parse(_text):
+        return [
+            Leg(raw_text='Josh Giddey - Over 14 PRA', sport='NBA', market_type='player_pra', player='Josh Giddey', direction='over', line=14.0, confidence=1.0),
+            Leg(raw_text='Dyson Daniels 11++ Assists', sport='NBA', market_type='player_points', confidence=0.0, notes=['Unmatched leg']),
+            Leg(raw_text='Trae Young 16++ Rebounds', sport='NBA', market_type='player_points', confidence=0.0, notes=['Unmatched leg']),
+        ]
+
+    def _fake_grade(_text, provider=None, posted_at=None):
+        leg = Leg(raw_text='Josh Giddey - Over 14 PRA', sport='NBA', market_type='player_pra', player='Josh Giddey', direction='over', line=14.0, confidence=1.0)
+        return GradeResponse(overall='cashed', legs=[GradedLeg(leg=leg, settlement='win', reason='x')])
+
+    monkeypatch.setattr('app.main.parse_text', _fake_parse)
+    monkeypatch.setattr('app.main.grade_text', _fake_grade)
+
+    res = client.post('/check-slip', json={'text': 'Dyson Daniels 11++ Assists\nTrae Young 16++ Rebounds\nJosh Giddey - Over 14 PRA'})
+    assert res.status_code == 200
+    body = res.json()
+
+    assert body['ok'] is True
+    assert body['parsed_legs'] == ['Josh Giddey - Over 14 PRA']
+    assert body['parlay_result'] == 'needs_review'
+    assert 'Parsing discrepancy' in (body['grading_warning'] or '')
+    review_legs = [leg for leg in body['legs'] if leg['result'] == 'review']
+    assert len(review_legs) == 2
+    assert {leg['leg'] for leg in review_legs} == {'Dyson Daniels 11++ Assists', 'Trae Young 16++ Rebounds'}
 
 
 def test_check_with_stake_without_odds_preserves_full_grading_payload(monkeypatch):

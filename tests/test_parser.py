@@ -196,6 +196,14 @@ def test_parse_to_record_milestone_rebounds_and_assists_normalizes_line() -> Non
     assert legs[1].line == 7.5
     assert legs[1].display_line == '8+'
 
+
+def test_parse_normalizes_repeated_plus_threshold_typos() -> None:
+    legs = parse_text('Dyson Daniels 11++ Assists\nTrae Young 16+++ Rebounds')
+
+    assert [leg.display_line for leg in legs] == ['11+', '16+']
+    assert [leg.line for leg in legs] == [10.5, 15.5]
+    assert all('Unmatched leg' not in leg.notes for leg in legs)
+
 def test_parse_first_half_team_markets_remain_unmatched_until_registry_support() -> None:
     legs = parse_text('First Half Over 110.5\nLakers 1H -3.5')
     assert len(legs) == 2
