@@ -22,6 +22,8 @@ def test_analyze_slip_response_shape() -> None:
     assert 'same_game_group_count' in body
     assert 'same_game_leg_count' in body
     assert body['correlation_risk_label'] in {'low', 'medium', 'high'}
+    assert 'estimated_hit_rate' in body
+    assert 'fair_odds' in body
     first_leg = body['leg_risk_scores'][0]
     assert 'market_average_line' in first_leg
     assert 'user_line' in first_leg
@@ -29,6 +31,8 @@ def test_analyze_slip_response_shape() -> None:
     assert 'line_value_score' in first_leg
     assert first_leg['line_value_label'] in {'good', 'neutral', 'bad', 'unknown'}
     assert 'line_value_source' in first_leg
+    assert 'line_edge' in first_leg
+    assert 'consensus_available' in first_leg
     assert 'rewritten_slip_text' in body
     assert isinstance(body['rewritten_legs'], list)
     assert 'rewritten_risk_score' in body
