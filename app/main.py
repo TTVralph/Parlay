@@ -1391,7 +1391,7 @@ Murray over 2.5 threes'></textarea>
       <div id='saferRewrite' data-reveal='4' hidden></div>
       <div id='resultSummary' class='result-summary' data-reveal='2' hidden></div>
       <div id='slipProgressWrap' class='slip-progress-wrap' data-reveal='5' hidden>
-        <div class='slip-progress-head'><span>Slip Progress</span><span id='slipProgressPercent'>0%</span></div>
+        <div class='slip-progress-head'><span id='slipProgressTitle'>Slip Progress</span><span id='slipProgressPercent'>0%</span></div>
         <div class='progress-bar'><div id='slipProgressFill' class='progress-fill' style='width:0%'></div></div>
       </div>
       <div id='legProgressStrip' class='leg-progress' data-reveal='5' hidden></div>
@@ -1464,6 +1464,7 @@ Murray over 2.5 threes'></textarea>
     const resultSummary=document.getElementById('resultSummary');
     const metaSummary=document.getElementById('metaSummary');
     const slipProgressWrap=document.getElementById('slipProgressWrap');
+    const slipProgressTitle=document.getElementById('slipProgressTitle');
     const slipProgressPercent=document.getElementById('slipProgressPercent');
     const slipProgressFill=document.getElementById('slipProgressFill');
     const legProgressStrip=document.getElementById('legProgressStrip');
@@ -2236,9 +2237,11 @@ Murray over 2.5 threes'></textarea>
     }
 
     function renderSlipProgress(payload){
+      slipProgressTitle.textContent='Slip Progress';
       const slipProgress=asNumber(payload&&payload.slip_progress);
       if(slipProgress===null){
-        slipProgressWrap.hidden=true;
+        slipProgressTitle.textContent='Slip Progress';
+      slipProgressWrap.hidden=true;
         return;
       }
       const capped=Math.max(0,Math.min(1,slipProgress));
@@ -2608,6 +2611,8 @@ Murray over 2.5 threes'></textarea>
           <div class='analyze-hero-badges'>
             <span class='analyze-hero-chip'>Advisory only</span>
             <span class='analyze-hero-chip'>Trap score ${trapScore}/10</span>
+            <span class='analyze-hero-chip'>Estimated Hit Rate ${(Number(payload.estimated_hit_rate||0)*100).toFixed(1)}%</span>
+            <span class='analyze-hero-chip'>Fair Odds ${escapeHtml(String(payload.fair_odds||'—'))}</span>
           </div>
         </div>
       </div>`;
@@ -2618,10 +2623,16 @@ Murray over 2.5 threes'></textarea>
       resultSummary.innerHTML=`
         <span class='result-chip'>Slip risk: ${escapeHtml(slipLabel.toUpperCase())}</span>
         <span class='result-chip'>Score: ${score}/10</span>
+        <span class='result-chip'>Estimated Hit Rate ${(Number(payload.estimated_hit_rate||0)*100).toFixed(1)}%</span>
+        <span class='result-chip'>Fair Odds ${escapeHtml(String(payload.fair_odds||'—'))}</span>
         <span class='result-chip'>Advisory only — not a guarantee</span>
       `;
       resultSummary.hidden=false;
-      slipProgressWrap.hidden=true;
+      slipProgressTitle.textContent='Analyze Mode';
+      slipProgressPercent.textContent='Advisory';
+      slipProgressFill.style.width='100%';
+      slipProgressFill.className='progress-fill complete';
+      slipProgressWrap.hidden=false;
 
       metaSummary.innerHTML=`
         <span class='meta-chip'>Supported legs: ${Number(payload.supported_leg_count||0)}</span>
@@ -2682,8 +2693,9 @@ Murray over 2.5 threes'></textarea>
               :"<div style='margin-top:6px;font-size:12px;color:var(--muted);'>Neutral Line</div>"));
         const marketLineValue=(typeof item.market_average_line==='number'?item.market_average_line:item.market_line);
         const marketLineText=typeof marketLineValue==='number' ? ` · Market: ${Number(marketLineValue).toFixed(1)}` : '';
-        riskCell.innerHTML=`<span class='risk-chip ${escapeHtml((item.risk_label||'medium').toLowerCase())}'>${escapeHtml(item.risk_label||'medium')}</span><div style='margin-top:6px;font-size:12px;color:var(--muted);'>Score: ${Number(item.risk_score||0).toFixed(1)}/10 · Confidence: ${Number(item.confidence||0).toFixed(2)}${marketLineText}</div>${lineBadge}`;
-        advisoryCell.innerHTML=`<div class='risk-card'>${escapeHtml(humanizeAdvisory(item))}</div><div style='margin-top:4px;font-size:12px;color:var(--muted);'>${escapeHtml(item.line_value_text||'Line value unknown')}</div>`;
+        const lineEdgeText=typeof item.line_edge==='number' ? ` · Edge: ${Number(item.line_edge).toFixed(1)}` : '';
+        riskCell.innerHTML=`<span class='risk-chip ${escapeHtml((item.risk_label||'medium').toLowerCase())}'>${escapeHtml(item.risk_label||'medium')}</span><div style='margin-top:6px;font-size:12px;color:var(--muted);'>Score: ${Number(item.risk_score||0).toFixed(1)}/10 · Confidence: ${Number(item.confidence||0).toFixed(2)}${marketLineText}${lineEdgeText}</div>${lineBadge}`;
+        advisoryCell.innerHTML=`<div class='risk-card'>${escapeHtml(humanizeAdvisory(item))}</div><div style='margin-top:4px;font-size:12px;color:var(--muted);'>${escapeHtml(item.line_value_text||'Line value unknown')}</div><div style='margin-top:4px;font-size:12px;color:var(--muted);'>${escapeHtml(item.consensus_note||'')}</div>`;
 
         tr.append(legCell,riskCell,advisoryCell);
         legsBody.appendChild(tr);

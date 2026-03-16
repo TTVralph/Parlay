@@ -68,6 +68,32 @@ def _implied_probability(american_odds: int | None) -> float | None:
     return abs(american_odds) / (abs(american_odds) + 100.0)
 
 
+
+
+def _format_american_odds_from_probability(probability: float) -> str:
+    p = _clamp(probability, 0.001, 0.999)
+    if p >= 0.5:
+        odds = int(round(-100.0 * p / (1.0 - p)))
+        return str(odds)
+    odds = int(round(100.0 * (1.0 - p) / p))
+    return f'+{odds}'
+
+
+def _risk_probability_modifier(risk_score: float) -> float:
+    return _clamp(1.0 - ((risk_score - 5.0) * 0.03), 0.72, 1.08)
+
+
+def _estimate_parlay_hit_rate(legs: list[AnalyzeLegRisk]) -> float:
+    if not legs:
+        return 0.0
+    total = 1.0
+    for leg in legs:
+        base_prob = _implied_probability(leg.offered_american_odds)
+        if base_prob is None:
+            base_prob = _clamp(0.66 - (leg.risk_score * 0.05), 0.15, 0.85)
+        adjusted = _clamp(base_prob * _risk_probability_modifier(leg.risk_score), 0.05, 0.95)
+        total *= adjusted
+    return _clamp(total, 0.0, 0.999)
 def _subject_name(leg: Leg) -> str:
     return leg.player or leg.team or leg.raw_text
 
@@ -123,9 +149,14 @@ def _odds_adjustment(odds_ctx: _OddsContext) -> tuple[float, list[str]]:
     return 0.2, codes
 
 
-def _line_value_text(line_label: str, has_market_data: bool, source: str | None = None) -> str:
+def _line_value_text(line_label: str, has_market_data: bool, source: str | None = None, line_edge: float | None = None) -> str:
     if not has_market_data:
         return 'Consensus line unavailable. Using statistical baseline.'
+    if line_edge is not None:
+        if line_edge >= 1.0:
+            return f'Consensus edge {line_edge:+.1f}: safer than market baseline'
+        if line_edge <= -1.0:
+            return f'Consensus edge {line_edge:+.1f}: inflated versus market baseline'
     if line_label == 'good':
         return 'Good line versus market consensus'
     if line_label == 'bad':
@@ -282,6 +313,16 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
                 providers_used=line_value.providers_used,
             )
     has_market_data = line_value.market_average_line is not None
+    line_edge: float | None = None
+    if has_market_data and line_value.user_line is not None:
+        line_edge = round(line_value.market_average_line - line_value.user_line, 2)
+        if line_edge >= 1.0:
+            risk_score = round(_clamp(risk_score - 0.8, 0.0, 10.0), 2)
+            reason_codes.append('consensus_edge_discount')
+        elif line_edge <= -1.0:
+            risk_score = round(_clamp(risk_score + 0.8, 0.0, 10.0), 2)
+            reason_codes.append('consensus_edge_penalty')
+        risk_label = classify_risk_label(risk_score)
     if leg.market_type in SUPPORTED_PROP_MARKETS and not has_market_data:
         reason_codes.append('line_value_missing_market_data')
 
@@ -292,7 +333,7 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
 
     explanation = _friendly_explanation(subject, market_type, risk_label, line_value.line_value_label, has_market_data, line_value.line_value_source)
     short_advisory_text = _short_advisory_text(risk_label, confidence, has_market_data, line_value.line_value_source)
-    line_value_text = _line_value_text(line_value.line_value_label, has_market_data, line_value.line_value_source)
+    line_value_text = _line_value_text(line_value.line_value_label, has_market_data, line_value.line_value_source, line_edge)
 
     return AnalyzeLegRisk(
         leg_id=leg.leg_id,
@@ -317,6 +358,9 @@ def analyze_leg_risk(leg: Leg, context: dict[str, Any] | None = None) -> Analyze
         line_value_label=line_value.line_value_label,
         line_value_text=line_value_text,
         line_value_source=line_value.line_value_source,
+        line_edge=line_edge,
+        consensus_available=has_market_data,
+        consensus_note='' if has_market_data else 'Consensus line unavailable. Using statistical baseline.',
         original_leg_text=leg.original_leg_text or leg.raw_text,
         normalized_line_value=leg.normalized_line_value if leg.normalized_line_value is not None else leg.line,
     )
@@ -348,6 +392,14 @@ def detect_trap_leg(parsed_legs: list[Leg], context: dict[str, Any] | None = Non
             trap_score += line_pressure
             if line_pressure > 0.0:
                 reason_codes.append('trap_line_distance_penalty')
+
+        if analyzed.line_edge is not None:
+            if analyzed.line_edge <= -1.0:
+                trap_score += 1.2
+                reason_codes.append('trap_negative_consensus_edge_penalty')
+            elif analyzed.line_edge >= 1.0:
+                trap_score -= 0.8
+                reason_codes.append('trap_positive_consensus_edge_discount')
 
         if leg.market_type in COMBO_MARKETS:
             trap_score += 1.5
@@ -397,6 +449,8 @@ def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
             same_game_leg_count=0,
             correlation_risk_label='low',
             correlation_note='No same-game grouping detected.',
+            estimated_hit_rate=0.0,
+            fair_odds='',
             advisory_only=True,
         )
 
@@ -417,6 +471,8 @@ def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
     supported_count = sum(1 for leg in analyzed if leg.supported_market)
     unsupported_count = len(analyzed) - supported_count
     group_count, leg_count, correlation_label, correlation_note = _analyze_same_game_correlation(parsed_legs)
+    estimated_hit_rate = round(_estimate_parlay_hit_rate(analyzed), 3)
+    fair_odds = _format_american_odds_from_probability(estimated_hit_rate) if estimated_hit_rate > 0 else ''
 
     return AnalyzeSlipResponse(
         ok=True,
@@ -436,5 +492,7 @@ def analyze_slip_risk(parsed_legs: list[Leg]) -> AnalyzeSlipResponse:
         same_game_leg_count=leg_count,
         correlation_risk_label=correlation_label,
         correlation_note=correlation_note,
+        estimated_hit_rate=estimated_hit_rate,
+        fair_odds=fair_odds,
         advisory_only=True,
     )

@@ -1,4 +1,5 @@
 from app.models import Leg
+from app.services.betstack_provider import BetStackProvider
 from app.services.slip_risk_analyzer import analyze_leg_risk, analyze_slip_risk, detect_trap_leg
 
 
@@ -51,8 +52,8 @@ def test_missing_market_data_uses_friendly_messages_and_internal_codes() -> None
     analyzed = analyze_leg_risk(leg)
 
     assert analyzed.line_value_label == 'unknown'
-    assert analyzed.line_value_text == 'Line value unknown'
-    assert 'Market comparison unavailable' in analyzed.explanation
+    assert analyzed.line_value_text == 'Consensus line unavailable. Using statistical baseline.'
+    assert 'Consensus line unavailable. Using statistical baseline.' in analyzed.explanation
     assert 'line_value_missing_market_data' in analyzed.advisory_reason_codes
     assert 'market_comparison_unavailable' in analyzed.advisory_reason_codes
 
@@ -108,3 +109,28 @@ def test_trap_leg_handles_unsupported_market_gracefully() -> None:
     assert trap_leg is not None
     assert trap_score >= 0
     assert isinstance(codes, list)
+
+
+def test_market_consensus_edge_adjusts_risk_and_exposes_fields(monkeypatch) -> None:
+    monkeypatch.setattr(BetStackProvider, 'from_env', classmethod(lambda cls: cls(api_key='unit-test')))
+    leg = Leg(raw_text='Dodgers over 8.5', sport='MLB', market_type='game_total', direction='over', line=8.5, confidence=0.9, american_odds=-110, event_id='event-1')
+    analyzed = analyze_leg_risk(leg, context={'betstack_odds_rows':[{'market_type':'game_total','event_id':'event-1','line':9.5,'direction':'over'}]})
+
+    assert analyzed.market_line == 9.5
+    assert analyzed.user_line == 8.5
+    assert analyzed.line_edge == 1.0
+    assert analyzed.consensus_available is True
+
+
+def test_analyze_slip_includes_hit_rate_and_fair_odds() -> None:
+    legs = [
+        Leg(raw_text='Dodgers ML -165', sport='MLB', market_type='moneyline', team='Dodgers', confidence=0.95, american_odds=-165),
+        Leg(raw_text='Yankees +1.5 -140', sport='MLB', market_type='spread', team='Yankees', line=1.5, confidence=0.9, american_odds=-140),
+        Leg(raw_text='Over 8.5 -110', sport='MLB', market_type='game_total', direction='over', line=8.5, confidence=0.88, american_odds=-110),
+    ]
+
+    result = analyze_slip_risk(legs)
+
+    assert 0 < result.estimated_hit_rate < 1
+    assert isinstance(result.fair_odds, str)
+    assert result.fair_odds

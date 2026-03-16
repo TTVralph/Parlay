@@ -422,6 +422,9 @@ class AnalyzeLegRisk(BaseModel):
     line_value_label: Literal['good', 'neutral', 'bad', 'unknown'] = 'unknown'
     line_value_text: str = 'Line value unknown'
     line_value_source: Optional[str] = None
+    line_edge: Optional[float] = None
+    consensus_available: bool = False
+    consensus_note: str = ''
     original_leg_text: Optional[str] = None
     normalized_line_value: Optional[float] = None
 
@@ -453,6 +456,8 @@ class AnalyzeSlipResponse(BaseModel):
     same_game_leg_count: int = 0
     correlation_risk_label: Literal['low', 'medium', 'high'] = 'low'
     correlation_note: str = ''
+    estimated_hit_rate: float = 0.0
+    fair_odds: str = ''
     advisory_only: bool = True
     rewritten_slip_text: str = ''
     rewritten_legs: list[RewrittenLegSuggestion] = Field(default_factory=list)
