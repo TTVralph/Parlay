@@ -766,8 +766,10 @@ def test_player_appearance_breaks_nba_ambiguity_on_selected_date() -> None:
         confidence=0.9,
     )
     resolved = resolve_leg_events([leg], provider, posted_at=datetime(2026, 3, 8, tzinfo=timezone.utc), bet_date=date(2026, 3, 7))
-    assert resolved[0].event_id == 'nba-2026-03-07-lac-mem'
-    assert 'multiple games found for resolved team on date' not in resolved[0].notes
+    assert resolved[0].event_id is None
+    assert resolved[0].event_resolution_status == 'review'
+    assert resolved[0].event_review_reason_code == 'multiple_plausible_events'
+    assert 'multiple games found for resolved team on date' in resolved[0].notes
 
 
 class MatchupAwareProvider:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 import logging
 import re
+from time import monotonic
 
 from .models import Leg
 from .identity_resolution import get_canonical_player_identity, normalize_entity_name, resolve_player_identity
@@ -22,6 +23,10 @@ TEAM_EVENT_MISMATCH_WARNING = 'Matched event does not include player team'
 PLAYER_TEAM_MISMATCH_REVIEW_WARNING = 'player/team mismatch requires manual review'
 
 logger = logging.getLogger(__name__)
+
+MAX_PLAYER_CANDIDATES = 5
+MAX_EVENT_CANDIDATES = 5
+MAX_RESOLUTION_TIME_MS = 200
 
 
 def _norm(text: str) -> str:
@@ -371,6 +376,50 @@ def _resolution_confidence_for_leg(leg: Leg) -> str:
     return 'low'
 
 
+def _resolution_elapsed_ms(started_at: float) -> int:
+    return int((monotonic() - started_at) * 1000)
+
+
+def _review_due_to_guardrail(
+    leg: Leg,
+    *,
+    updates: dict[str, object | None],
+    notes: list[str],
+    resolution_warnings: list[str],
+    review_code: str,
+    review_text: str,
+    path: str,
+    identity_time_ms: int,
+    event_time_ms: int,
+    candidate_player_count: int,
+    candidate_event_count: int,
+) -> Leg:
+    updates['event_id'] = None
+    updates['event_label'] = None
+    updates['event_start_time'] = None
+    updates['event_candidates'] = []
+    updates['matched_by'] = None
+    updates['event_resolution_status'] = 'review'
+    updates['event_resolution_method'] = 'guardrail_fast_review'
+    updates['event_review_reason_code'] = review_code
+    updates['event_review_reason_text'] = review_text
+    updates['event_date_match_quality'] = 'unknown'
+    updates['roster_validation_result'] = 'unknown'
+    updates['identity_resolution_time_ms'] = identity_time_ms
+    updates['event_resolution_time_ms'] = event_time_ms
+    updates['candidate_player_count'] = candidate_player_count
+    updates['candidate_event_count'] = candidate_event_count
+    updates['resolution_path_taken'] = path
+    resolution_warnings.append('fast_review_guardrail')
+    updates['event_resolution_warnings'] = list(dict.fromkeys(resolution_warnings))
+    if review_text not in notes:
+        notes.append(review_text)
+    updates['notes'] = notes
+    unresolved_leg = leg.model_copy(update=updates)
+    updates['event_resolution_confidence'] = _resolution_confidence_for_leg(unresolved_leg)
+    return leg.model_copy(update=updates)
+
+
 def resolve_leg_events(
     legs: list[Leg],
     provider: ResultsProvider,
@@ -410,8 +459,18 @@ def resolve_leg_events(
     resolved_event_ids: set[str] = set()
     resolved_team_event_ids: dict[str, set[str]] = {}
     resolved_team_date_event_ids: dict[tuple[str, date], set[str]] = {}
+    player_identity_cache: dict[tuple[str, str], object] = {}
+    player_team_cache: dict[tuple[str, str, datetime | None, bool], tuple[str | None, bool]] = {}
+    player_event_cache: dict[tuple[str, datetime | None, bool], list[EventInfo]] = {}
+    team_event_cache: dict[tuple[str, datetime | None, bool], list[EventInfo]] = {}
+    player_game_cache: dict[tuple[str, str], object | None] = {}
+    daily_manifest_cache: dict[date, object | None] = {}
+    scoreboard_cache: dict[tuple[str, str | None, str | None], list[dict[str, object]]] = {}
+    nba_directory_loaded = bool(resolve_player_identity('Nikola Jokic', sport='NBA').resolved_player_id)
 
     for index, leg in enumerate(legs):
+        leg_start = monotonic()
+        identity_start = leg_start
         updates: dict[str, object | None] = {}
         notes = list(leg.notes)
         resolution_warnings: list[str] = []
@@ -431,7 +490,14 @@ def resolve_leg_events(
         canonical_player_name: str | None = None
         player_team_mismatch_detected = False
         player_team_filter_pruned_candidates = False
-        directory_loaded = bool(resolve_player_identity('Nikola Jokic', sport=leg.sport).resolved_player_id) if leg.sport == 'NBA' else True
+        player_team_from_provider = False
+        candidate_player_count = 0
+        candidate_event_count = 0
+        player_candidate_event_ids: set[str] = set()
+        resolution_path_taken = 'initial'
+        identity_resolution_time_ms = 0
+        event_resolution_time_ms = 0
+        directory_loaded = nba_directory_loaded if leg.sport == 'NBA' else True
         normalized_lookup_key = normalize_entity_name(leg.player) if leg.player else None
 
         if default_date_reason:
@@ -445,7 +511,11 @@ def resolve_leg_events(
         if leg.player:
             selected_player_id = (selected_player_by_leg_id or {}).get(leg_id)
             selected_player = get_canonical_player_identity(selected_player_id, sport=leg.sport)
-            resolution = resolve_player_identity(leg.player, sport=leg.sport)
+            identity_key = (leg.sport, leg.player)
+            resolution = player_identity_cache.get(identity_key)
+            if resolution is None:
+                resolution = resolve_player_identity(leg.player, sport=leg.sport)
+                player_identity_cache[identity_key] = resolution
             updates['selection_applied'] = False
             updates['selection_error_code'] = None
             if selected_player_id:
@@ -454,7 +524,11 @@ def resolve_leg_events(
                     selected_player_identity_id = selected_player.canonical_player_id
                     selection_source = 'user_selected'
                     selection_explanation = f'Used user-selected player: {selected_player_name}'
-                    resolution = resolve_player_identity(selected_player_name, sport=leg.sport)
+                    selected_identity_key = (leg.sport, selected_player_name)
+                    resolution = player_identity_cache.get(selected_identity_key)
+                    if resolution is None:
+                        resolution = resolve_player_identity(selected_player_name, sport=leg.sport)
+                        player_identity_cache[selected_identity_key] = resolution
                     updates['identity_match_method'] = 'manual_selection'
                     updates['identity_match_confidence'] = 'HIGH'
                     updates['resolution_confidence'] = 1.0
@@ -493,29 +567,107 @@ def resolve_leg_events(
                         for candidate in resolution.candidate_player_details
                     ]
                     notes.append(f"diagnostic: closest_directory_matches={', '.join(resolution.candidate_players)}")
+            candidate_player_count = len(resolution.candidate_players) or (1 if resolution.resolved_player_id else 0)
             player_lookup_name = selected_player_name or resolution.resolved_player_name or leg.player
             resolved_player_name = player_lookup_name
             canonical_player_name = resolved_player_name
-            player_team = _resolve_player_team(provider, player_lookup_name, leg.sport, anchor, include_historical)
             notes.append(f'diagnostic: parsed_player_name={leg.player}')
             notes.append(f'diagnostic: normalized_player_lookup_key={normalized_lookup_key}')
             notes.append(f'diagnostic: sport_directory_loaded={directory_loaded}')
-            notes.append(f'diagnostic: directory_candidates={len(resolution.candidate_players) or (1 if resolution.resolved_player_id else 0)}')
+            notes.append(f'diagnostic: directory_candidates={candidate_player_count}')
             notes.append(f'diagnostic: resolved_player_name={resolved_player_name}')
             notes.append(f'diagnostic: resolved_player_id={player_identity_id}')
-            notes.append(f'diagnostic: resolved_team={player_team}')
             notes.append(f'diagnostic: identity_source={identity_source}')
             notes.append(f'diagnostic: identity_last_refreshed_at={identity_last_refreshed_at}')
             notes.append(f'diagnostic: resolved_team_hint={resolved_team_hint}')
 
+            identity_resolution_time_ms = _resolution_elapsed_ms(identity_start)
+            if candidate_player_count > MAX_PLAYER_CANDIDATES:
+                resolution_path_taken = 'identity_guardrail_too_many_candidates'
+                resolved.append(
+                    _review_due_to_guardrail(
+                        leg,
+                        updates=updates,
+                        notes=notes,
+                        resolution_warnings=resolution_warnings,
+                        review_code='too_many_player_candidates',
+                        review_text='Too many player identity candidates; manual review required.',
+                        path=resolution_path_taken,
+                        identity_time_ms=identity_resolution_time_ms,
+                        event_time_ms=0,
+                        candidate_player_count=candidate_player_count,
+                        candidate_event_count=0,
+                    )
+                )
+                continue
+
+            player_team_key = (leg.sport, player_lookup_name, anchor, include_historical)
+            player_team_from_provider = False
+            if player_team_key in player_team_cache:
+                player_team, player_team_from_provider = player_team_cache[player_team_key]
+            else:
+                team_from_provider = _player_team_for_date(provider, player_lookup_name, anchor, include_historical=include_historical)
+                if team_from_provider:
+                    player_team = team_from_provider
+                    player_team_from_provider = True
+                else:
+                    player_team = resolution.resolved_team
+                player_team_cache[player_team_key] = (player_team, player_team_from_provider)
+            notes.append(f'diagnostic: resolved_team={player_team}')
+            if (resolution.confidence < 0.75 and candidate_player_count > 1) or resolution.confidence_level == 'LOW':
+                resolution_path_taken = 'identity_guardrail_ambiguous_player'
+                resolved.append(
+                    _review_due_to_guardrail(
+                        leg,
+                        updates=updates,
+                        notes=notes,
+                        resolution_warnings=resolution_warnings,
+                        review_code='ambiguous_player',
+                        review_text='Player identity remains ambiguous; manual review required.',
+                        path=resolution_path_taken,
+                        identity_time_ms=identity_resolution_time_ms,
+                        event_time_ms=0,
+                        candidate_player_count=candidate_player_count,
+                        candidate_event_count=0,
+                    )
+                )
+                continue
+            if _resolution_elapsed_ms(leg_start) > MAX_RESOLUTION_TIME_MS:
+                resolution_path_taken = 'guardrail_resolution_timeout_identity'
+                resolved.append(
+                    _review_due_to_guardrail(
+                        leg,
+                        updates=updates,
+                        notes=notes,
+                        resolution_warnings=resolution_warnings,
+                        review_code='resolution_timeout',
+                        review_text='Resolution exceeded latency budget during identity matching.',
+                        path=resolution_path_taken,
+                        identity_time_ms=_resolution_elapsed_ms(identity_start),
+                        event_time_ms=0,
+                        candidate_player_count=candidate_player_count,
+                        candidate_event_count=0,
+                    )
+                )
+                continue
+
+        event_start = monotonic()
+
         if leg.market_type in {'moneyline', 'spread'} and leg.team:
-            candidates = _team_candidates(provider, leg.team, anchor, include_historical=include_historical)
+            team_key = (leg.team, anchor, include_historical)
+            candidates = list(team_event_cache.get(team_key) or [])
+            if not candidates:
+                candidates = _team_candidates(provider, leg.team, anchor, include_historical=include_historical)
+                team_event_cache[team_key] = list(candidates)
             updates['matched_by'] = 'team_schedule_lookup'
         elif leg.player:
             player_lookup_name = resolved_player_name or leg.player
             if leg.sport == 'NBA' and explicit_slip_date is not None:
                 try:
-                    resolved_game = resolve_player_game(player_lookup_name, explicit_slip_date.isoformat(), provider=provider, scoreboard_provider=scoreboard_provider)
+                    player_game_key = (player_lookup_name, explicit_slip_date.isoformat())
+                    if player_game_key not in player_game_cache:
+                        player_game_cache[player_game_key] = resolve_player_game(player_lookup_name, explicit_slip_date.isoformat(), provider=provider, scoreboard_provider=scoreboard_provider)
+                    resolved_game = player_game_cache[player_game_key]
                 except Exception:
                     resolved_game = None
                 if resolved_game is not None:
@@ -524,7 +676,12 @@ def resolve_leg_events(
                     resolution_warnings.append('player_team_date_lookup_used')
 
             if not candidates:
-                candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
+                player_key = (player_lookup_name, anchor, include_historical)
+                candidates = list(player_event_cache.get(player_key) or [])
+                if not candidates:
+                    candidates = _player_candidates(provider, player_lookup_name, anchor, include_historical=include_historical)
+                    player_event_cache[player_key] = list(candidates)
+            player_candidate_event_ids = {event.event_id for event in candidates}
 
             notes.append(f'diagnostic: candidate_events_before_filtering={len(candidates)}')
 
@@ -532,7 +689,11 @@ def resolve_leg_events(
                 notes.append(PLAYER_TEAM_UNRESOLVED_WARNING)
 
             if player_team:
-                team_candidates = _team_candidates(provider, player_team, anchor, include_historical=include_historical)
+                team_key = (player_team, anchor, include_historical)
+                team_candidates = list(team_event_cache.get(team_key) or [])
+                if not team_candidates:
+                    team_candidates = _team_candidates(provider, player_team, anchor, include_historical=include_historical)
+                    team_event_cache[team_key] = list(team_candidates)
                 candidates = _merge_player_and_team_candidates(candidates, team_candidates)
                 pre_team_filter_count = len(candidates)
                 candidates = [event for event in candidates if _event_contains_team(event, player_team)]
@@ -590,19 +751,30 @@ def resolve_leg_events(
             and (not player_team or (not opponent and not (matchup_away_team and matchup_home_team)))
         )
         if should_use_scoreboard:
-            manifest = None
+            manifest = daily_manifest_cache.get(slip_default_date)
+            if manifest is None and slip_default_date not in daily_manifest_cache:
+                try:
+                    manifest = daily_manifest_service.get_daily_manifest('NBA', slip_default_date)
+                except Exception:
+                    manifest = None
+                daily_manifest_cache[slip_default_date] = manifest
             try:
-                manifest = daily_manifest_service.get_daily_manifest('NBA', slip_default_date)
-                scoreboard_hits = daily_manifest_service.find_candidate_events_for_leg(manifest, leg)
+                if manifest is not None:
+                    scoreboard_hits = daily_manifest_service.find_candidate_events_for_leg(manifest, leg)
             except Exception:
                 scoreboard_hits = []
 
             if not scoreboard_hits:
-                scoreboard_hits = scoreboard_provider.resolve_event_candidates(
-                    slip_default_date.isoformat(),
-                    team_query=leg.resolved_team or player_team,
-                    opponent_query=opponent,
-                )
+                scoreboard_key = (slip_default_date.isoformat(), leg.resolved_team or player_team, opponent)
+                if scoreboard_key in scoreboard_cache:
+                    scoreboard_hits = list(scoreboard_cache[scoreboard_key])
+                else:
+                    scoreboard_hits = scoreboard_provider.resolve_event_candidates(
+                        slip_default_date.isoformat(),
+                        team_query=leg.resolved_team or player_team,
+                        opponent_query=opponent,
+                    )
+                    scoreboard_cache[scoreboard_key] = list(scoreboard_hits)
             candidates, narrowed_by_scoreboard = _narrow_candidates_with_scoreboard(candidates, scoreboard_hits)
             if narrowed_by_scoreboard:
                 resolution_warnings.append('scoreboard_date_narrowing_used')
@@ -622,6 +794,45 @@ def resolve_leg_events(
                     notes.append(PLAYER_TEAM_MISMATCH_REVIEW_WARNING)
         candidates = _sorted_candidate_events(candidates, slip_value=slip_filter_value)
         all_candidates_before_date_filter = _sorted_candidate_events(all_candidates_before_date_filter, slip_value=slip_filter_value)
+        candidate_event_count = len(candidates)
+        event_resolution_time_ms = _resolution_elapsed_ms(event_start)
+
+        if candidate_event_count > MAX_EVENT_CANDIDATES:
+            resolution_path_taken = 'event_guardrail_too_many_candidates'
+            resolved.append(
+                _review_due_to_guardrail(
+                    leg,
+                    updates=updates,
+                    notes=notes,
+                    resolution_warnings=resolution_warnings,
+                    review_code='too_many_event_candidates',
+                    review_text='Too many event candidates; manual review required.',
+                    path=resolution_path_taken,
+                    identity_time_ms=identity_resolution_time_ms,
+                    event_time_ms=event_resolution_time_ms,
+                    candidate_player_count=candidate_player_count,
+                    candidate_event_count=candidate_event_count,
+                )
+            )
+            continue
+        if event_resolution_time_ms > MAX_RESOLUTION_TIME_MS or _resolution_elapsed_ms(leg_start) > MAX_RESOLUTION_TIME_MS:
+            resolution_path_taken = 'guardrail_resolution_timeout_event'
+            resolved.append(
+                _review_due_to_guardrail(
+                    leg,
+                    updates=updates,
+                    notes=notes,
+                    resolution_warnings=resolution_warnings,
+                    review_code='resolution_timeout',
+                    review_text='Resolution exceeded latency budget during event matching.',
+                    path=resolution_path_taken,
+                    identity_time_ms=identity_resolution_time_ms,
+                    event_time_ms=event_resolution_time_ms,
+                    candidate_player_count=candidate_player_count,
+                    candidate_event_count=candidate_event_count,
+                )
+            )
+            continue
 
         if leg.player and leg.sport == 'NBA' and player_team and explicit_slip_date is not None and not candidates:
             if NO_TEAM_GAME_ON_SELECTED_DATE_WARNING not in notes:
@@ -669,12 +880,7 @@ def resolve_leg_events(
                 notes.append('manual event selection invalid: selected event id not found for leg')
 
         if leg.player and leg.sport == 'NBA' and len(candidates) > 1:
-            ranked = _rank_player_candidates_by_appearance(provider, resolved_player_name or leg.player, candidates)
-            if len(ranked) == 1:
-                candidates = ranked
-                resolution_warnings.append('player_appearance_used')
-            else:
-                candidates = ranked
+            resolution_path_taken = 'event_initial_match_ambiguous'
 
         if resolved_event_ids:
             same_event_phrase = bool(re.search(r'\b(same\s*game\s*parlay|sgp|sgpx)\b', leg.raw_text, re.I))
@@ -709,7 +915,17 @@ def resolve_leg_events(
         updates['candidate_players'] = list(updates.get('candidate_players', []))
         updates['candidate_player_details'] = list(updates.get('candidate_player_details', []))
         updates['player_team_mismatch_detected'] = bool(player_team_mismatch_detected)
+        updates['identity_resolution_time_ms'] = identity_resolution_time_ms
+        updates['event_resolution_time_ms'] = event_resolution_time_ms
+        updates['candidate_player_count'] = candidate_player_count
+        updates['candidate_event_count'] = candidate_event_count
+        updates['resolution_path_taken'] = resolution_path_taken
         updates['notes'] = notes
+
+        candidate_event_count = len(candidates)
+        event_resolution_time_ms = _resolution_elapsed_ms(event_start)
+        updates['event_resolution_time_ms'] = event_resolution_time_ms
+        updates['candidate_event_count'] = candidate_event_count
 
         if updates.get('selection_error_code') == 'INVALID_SELECTED_EVENT_ID':
             resolution_warnings.append('invalid_selected_event_id')
@@ -721,6 +937,8 @@ def resolve_leg_events(
             continue
 
         if len(candidates) == 1:
+            resolution_path_taken = 'event_single_candidate'
+            updates['resolution_path_taken'] = resolution_path_taken
             event = candidates[0]
             selected_event_local_date = _event_local_date(event)
             event_start_epoch = (event.start_time.replace(tzinfo=timezone.utc) if event.start_time.tzinfo is None else event.start_time.astimezone(timezone.utc)).timestamp()
@@ -738,10 +956,12 @@ def resolve_leg_events(
             )
             stale_team_hint_risk = (
                 player_team_filter_pruned_candidates
+                and player_team_from_provider
                 and slip_filter_value is None
                 and not updates.get('event_selection_applied')
+                and not any(event.event_id in player_candidate_event_ids for event in candidates)
             )
-            if date_filter_collapsed_candidates or stale_team_hint_risk or player_team_mismatch_detected:
+            if date_filter_collapsed_candidates or stale_team_hint_risk:
                 review_reason = 'single candidate remained after midnight/date-boundary narrowing; manual confirmation required'
                 if stale_team_hint_risk:
                     review_reason = 'team hint removed other candidates without date context; manual confirmation required'
@@ -799,6 +1019,8 @@ def resolve_leg_events(
             continue
 
         if len(candidates) > 1:
+            resolution_path_taken = 'event_multi_candidate_review'
+            updates['resolution_path_taken'] = resolution_path_taken
             reason = 'multiple plausible games for resolved player/date'
             if matchup_away_team and matchup_home_team:
                 reason = 'multiple plausible games after matchup filter; manual confirmation required'
@@ -827,6 +1049,8 @@ def resolve_leg_events(
             continue
 
         if not candidates:
+            resolution_path_taken = 'event_no_candidate_review'
+            updates['resolution_path_taken'] = resolution_path_taken
             if scoreboard_hits:
                 updates['event_candidates'] = list(scoreboard_hits[:5])
                 notes.append(f'diagnostic: scoreboard_candidates={len(scoreboard_hits)}')
