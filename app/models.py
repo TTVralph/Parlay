@@ -120,6 +120,11 @@ class Leg(BaseModel):
     possible_teams: list[str] = Field(default_factory=list)
     game_matchup: Optional[str] = None
     player_team_mismatch_detected: bool = False
+    identity_resolution_time_ms: Optional[int] = None
+    event_resolution_time_ms: Optional[int] = None
+    candidate_player_count: Optional[int] = None
+    candidate_event_count: Optional[int] = None
+    resolution_path_taken: Optional[str] = None
 
 
 class ParseResponse(BaseModel):
@@ -218,6 +223,11 @@ class GradedLeg(BaseModel):
     player_team_mismatch_detected: bool = False
     kill_moment: bool = False
     kill_reason: Optional[str] = None
+    identity_resolution_time_ms: Optional[int] = None
+    event_resolution_time_ms: Optional[int] = None
+    candidate_player_count: Optional[int] = None
+    candidate_event_count: Optional[int] = None
+    resolution_path_taken: Optional[str] = None
 
 
 class SettlementExplanation(BaseModel):

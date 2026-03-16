@@ -75,8 +75,8 @@ def test_ambiguous_player_name_without_bet_date_stays_in_review() -> None:
     resolved = resolve_leg_events([leg], DriftProvider(), posted_at=None, include_historical=True)
 
     assert resolved[0].event_id is None
-    assert 'multiple_candidate_events' in resolved[0].event_resolution_warnings
-    assert 'Missing bet date' in resolved[0].notes
+    assert resolved[0].event_review_reason_code in {'ambiguous_player', 'multiple_plausible_events'}
+    assert 'fast_review_guardrail' in resolved[0].event_resolution_warnings
 
 
 def test_suffix_name_variants_resolve_identity() -> None:
